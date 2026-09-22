@@ -81,6 +81,48 @@ export function resolveMelee(fighters, ctx) {
 }
 
 /**
+ * Dragon Dash trombando em alguém que NÃO está em dash.
+ *
+ * Sem isto, o dash atravessava o adversário e seguia reto — você mirava,
+ * chegava, e passava direto. No Tenkaichi o dash é barrado pelo corpo do outro:
+ * dá um toque de dano e PARA você ali, já na distância de combo. É o que
+ * transforma o dash em abertura de ataque em vez de só locomoção.
+ *
+ * Roda ANTES de resolveDashClash, porque dash-contra-dash tem regra própria.
+ */
+export function resolveDashImpact(fighters, ctx) {
+  for (const a of fighters) {
+    if (!a.alive || a.state !== 'dash') continue;
+
+    for (const b of fighters) {
+      if (b === a || !b.alive) continue;
+      if (b.state === 'dash') continue;          // isso é clash, não impacto
+      if (a.dashHits.has(b)) continue;           // um toque por dash
+      if (b.invulnerable) continue;
+
+      const reach = TUNING.fighter.radius * 2 + TUNING.dragonDash.impactReachBonus;
+      if (a.position.distanceToSquared(b.position) > reach * reach) continue;
+
+      // Vanish também salva de tromba de dash — é um golpe como outro qualquer.
+      if (b.vanishPressFrame <= TUNING.dragonDash.impactVanishWindow) {
+        if (b.doVanish(a, ctx)) {
+          const V = TUNING.defense.vanish;
+          ctx.juice?.impact({ hitstop: V.hitstop, shake: V.shake });
+          ctx.juice?.slowMo(V.slowMoFrames, V.slowMoScale);
+          ctx.onVanish?.(b, a, b.position.clone());
+          a.dashHits.add(b);
+          continue;
+        }
+      }
+
+      a.dashImpact(b, ctx);
+      ctx.onDashImpact?.(a, b);
+      break;                                      // o dash acabou; sai do laço
+    }
+  }
+}
+
+/**
  * Colisão de Dragon Dash: dois lutadores em dash que se encontram ricocheteiam.
  * Puro espetáculo, e é uma das imagens mais reconhecíveis do Tenkaichi.
  */

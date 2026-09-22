@@ -73,10 +73,29 @@ export const TUNING = {
     startupFrames: 6,
     maxFrames: 90,              // dura enquanto segurar, até este teto
     turnSpeed: 4.5,             // rad/s — curva durante o dash (baixo = compromisso)
-    impactDamage: 7,
-    impactKnockback: 18,
-    impactHitstop: 10,
-    impactShake: 0.4,
+
+    /* IMPACTO — trombar no adversário durante o dash.
+     * Dano quase simbólico de propósito: o dash é ferramenta de POSIÇÃO, não de
+     * dano. O valor dele é chegar perto e barrar o outro; se machucasse muito,
+     * spammar dash seria melhor que combar. */
+    impactDamage: 4,
+    impactPoiseDamage: 6,
+    impactKnockback: 11,
+    impactKnockup: 1.2,
+    impactHitstun: 18,
+    impactBlockstun: 12,
+    impactHitstop: 9,
+    impactShake: 0.3,
+    // Quanto da própria velocidade o atacante mantém ao trombar.
+    // 0.12 = praticamente para. É o que impede de atravessar e seguir reto.
+    impactSelfSlowdown: 0.12,
+    // Margem extra de colisão. A 62 m/s o corpo anda ~1 m por frame, então sem
+    // folga o teste de distância pula por cima do adversário entre dois frames.
+    impactReachBonus: 1.4,
+    impactVanishWindow: 10,     // dá pra vanishar de uma tromba de dash
+    // Após trombar, precisa SOLTAR e reapertar — e ainda esperar isto.
+    // Sem os dois, segurar o botão encadeia trombas e vira a melhor jogada.
+    impactCooldownFrames: 18,
     // Dash contra dash = clash (os dois ricocheteiam). Puro espetáculo.
     clashEnabled: true,
     clashKnockback: 24,
@@ -369,6 +388,10 @@ export const TUNING = {
       color: 0x88f0ff,
       cinematicFrames: 46,      // câmera dramática na largada
       causesBlowaway: true,
+      // 0 = a mira trava no disparo e o feixe vai reto (padrão, e o certo:
+      // um feixe que persegue é indesviável). Suba um pouco só se acertar
+      // estiver difícil demais. Acima de ~0.3 vira teleguiado.
+      aimTracking: 0,
     },
   },
 
@@ -435,8 +458,15 @@ export const TUNING = {
   /* ================================================================== */
   blowaway: {
     drag: 1.35,                 // desaceleração no ar (baixo = voa MUITO longe)
+
+    /* A saída do blowaway é por VELOCIDADE, nunca por tempo. Devolver o
+     * controle com o corpo ainda voando rápido cria um estado esquisito em que
+     * o jogador não consegue se mover (a inércia come o input) mas já pode
+     * atacar — parece socar estando desmaiado. */
     minSpeedToExit: 4.0,        // abaixo disso sai do estado
-    maxFrames: 150,
+    maxFrames: 150,             // a partir daqui começa a FREAR (não solta)
+    overtimeBrake: 6.0,         // força do freio depois do maxFrames
+    overtimeMaxFrames: 120,     // rede de segurança: nunca travar no estado
     groundBounceRestitution: 0.42,
     groundBounceDamage: 4,
     groundBounceShake: 0.35,

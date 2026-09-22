@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Sobe um servidor local. Abrir o index.html direto (file://) NÃO funciona:
-# módulos ES e carregamento de GLB/FBX são bloqueados por CORS.
+# Sobe o servidor de desenvolvimento (sem cache).
+#
+# Abrir o index.html direto (file://) NÃO funciona: módulos ES e carregamento
+# de GLB/FBX são bloqueados por CORS. Precisa de servidor HTTP.
 cd "$(dirname "$0")"
-PORT="${1:-8123}"
-echo "→ http://localhost:$PORT"
-python3 -m http.server "$PORT"
+exec python3 serve.py "${1:-8123}"

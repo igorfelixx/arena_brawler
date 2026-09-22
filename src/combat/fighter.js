@@ -96,6 +96,12 @@ export class Fighter {
 
     this.chargeFrames = 0;       // acumulador do blast carregado
     this.dashFrames = 0;
+    this.dashHits = new Set();   // quem já foi trombado neste dash (1 toque cada)
+    this.dashCooldown = 0;
+    /* Exige SOLTAR o botão antes de um novo dash. Sem isso, segurar Shift
+     * encadeia tromba atrás de tromba: no teste, 28 de dano em meio segundo,
+     * sem combo nenhum. Spammar dash não pode ser melhor do que lutar. */
+    this.dashBlocked = false;
 
     // Frames desde que o botão de vanish foi apertado. A resolução de acerto
     // compara isto com o `vanishWindow` do golpe recebido: apertar ANTES do
@@ -175,6 +181,9 @@ export class Fighter {
     // --- timers ---
     if (this.stepCooldown > 0) this.stepCooldown--;
     if (this.blastCooldown > 0) this.blastCooldown--;
+    if (this.dashCooldown > 0) this.dashCooldown--;
+    // Soltar o botão rearma o dash.
+    if (!cmd.dash) this.dashBlocked = false;
     if (this.invulnFrames > 0) this.invulnFrames--;
     if (this.flashFrames > 0) this.flashFrames--;
     if (this.vanishChainTimer > 0) {
@@ -247,10 +256,12 @@ export class Fighter {
       return;
     }
 
-    if (cmd.dash && this.ki >= TUNING.dragonDash.kiCost) {
+    if (cmd.dash && !this.dashBlocked && this.dashCooldown === 0
+        && this.ki >= TUNING.dragonDash.kiCost) {
       this.ki -= TUNING.dragonDash.kiCost;
       this._enter(S.DASH);
       this.dashFrames = 0;
+      this.dashHits.clear();
       this.char.play('dash', { fade: 0.1 });
       return;
     }
@@ -273,11 +284,24 @@ export class Fighter {
   }
 
   /* --- Dragon Dash -------------------------------------------------- */
+  /**
+   * O dash tem TRÊS usos, e a direção depende do que você está segurando:
+   *
+   *   sem direção + lock  → persegue o alvo          (atacar)
+   *   com direção         → vai pra onde você aponta (fugir, desviar pro lado)
+   *   sem lock            → vai pra onde você aponta / pra frente
+   *
+   * A primeira versão só perseguia o alvo, ignorando o direcional. Isso tirava
+   * do dash dois dos três usos que ele tem no Tenkaichi — dava pra atacar, mas
+   * não pra escapar nem contornar.
+   */
   _sDash(dt, cmd, ctx) {
     this.dashFrames++;
     const D = TUNING.dragonDash;
 
     if (!cmd.dash || this.dashFrames > D.maxFrames) {
+      // Estourou o tempo segurando: trava até soltar, senão reinicia sozinho.
+      if (this.dashFrames > D.maxFrames) this.dashBlocked = true;
       this._enter(S.IDLE);
       return;
     }
@@ -286,22 +310,82 @@ export class Fighter {
     if (cmd.rush && this._tryAttack('rush_1', ctx)) return;
     if (cmd.smash && this._tryAttack(this._smashKey(cmd.smashDir), ctx)) return;
 
-    // Direção: mira no alvo, curvando devagar (o compromisso do dash).
-    if (this.target && this.target.alive) {
+    const steering = Math.abs(cmd.moveX) > 0.3 || Math.abs(cmd.moveY) > 0.3 || Math.abs(cmd.vertical) > 0.3;
+    const chasing = this.lockOn && this.target && this.target.alive && !steering;
+
+    if (chasing) {
       this._tmp.subVectors(this.target.position, this.position).normalize();
-      const cur = this._tmp2.copy(this.velocity);
-      if (cur.lengthSq() < 1e-6) cur.copy(this._tmp);
-      cur.normalize();
-      const k = 1 - Math.exp(-D.turnSpeed * dt);
-      cur.lerp(this._tmp, k).normalize();
-      this.velocity.copy(cur).multiplyScalar(TUNING.flight.dashSpeed);
-      this.yaw = Math.atan2(cur.x, cur.z);
+    } else if (steering) {
+      const basis = ctx.moveBasis;
+      this._tmp.set(0, 0, 0)
+        .addScaledVector(basis.right, cmd.moveX)
+        .addScaledVector(basis.forward, cmd.moveY);
+      this._tmp.y += cmd.vertical;
+      if (this._tmp.lengthSq() < 1e-6) this._tmp.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+      this._tmp.normalize();
     } else {
-      const f = this._tmp.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
-      this.velocity.copy(f).multiplyScalar(TUNING.flight.dashSpeed);
+      this._tmp.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
     }
 
+    // Curva devagar: o compromisso do dash é não poder mudar de ideia na hora.
+    const cur = this._tmp2.copy(this.velocity);
+    if (cur.lengthSq() < 1e-6) cur.copy(this._tmp);
+    cur.normalize();
+    cur.lerp(this._tmp, 1 - Math.exp(-D.turnSpeed * dt)).normalize();
+
+    this.velocity.copy(cur).multiplyScalar(TUNING.flight.dashSpeed);
+    this.yaw = Math.atan2(cur.x, cur.z);
+
     this.char.play('dash', { fade: 0.1 });
+  }
+
+  /**
+   * Bateu em alguém durante o dash. Chamado por resolveDashImpact().
+   * O dash PARA aqui — no Tenkaichi você trombá no adversário e é barrado,
+   * não atravessa e segue reto.
+   */
+  dashImpact(victim, ctx) {
+    const D = TUNING.dragonDash;
+    this.dashHits.add(victim);
+
+    this._tmp.subVectors(victim.position, this.position).setY(0);
+    if (this._tmp.lengthSq() < 1e-6) this._tmp.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+    this._tmp.normalize();
+
+    victim.applyHit({
+      move: {
+        damage: D.impactDamage,
+        poiseDamage: D.impactPoiseDamage,
+        knockback: D.impactKnockback,
+        knockup: D.impactKnockup,
+        hitstun: D.impactHitstun,
+        blockstun: D.impactBlockstun,
+        chipDamage: D.impactDamage * 0.25,
+        hitstop: D.impactHitstop,
+        shake: D.impactShake,
+        causesBlowaway: false,
+        guardBreak: false,
+      },
+      attacker: this,
+      direction: this._tmp,
+      guarded: victim.guarding && this._facing(victim),
+      ctx,
+    });
+
+    // Freia o dash em vez de atravessar, e exige soltar o botão pra repetir.
+    this.velocity.multiplyScalar(D.impactSelfSlowdown);
+    this.dashBlocked = true;
+    this.dashCooldown = D.impactCooldownFrames;
+    this._enter(S.IDLE);
+    this.char.play('idle', { fade: 0.1 });
+    this.events.push({ type: 'dashImpact', victim });
+  }
+
+  /** A vítima está de frente pra mim? (usado pra decidir se a guarda vale) */
+  _facing(victim) {
+    this._tmp2.subVectors(victim.position, this.position).setY(0).normalize();
+    const fwd = this._tmp.set(Math.sin(victim.yaw), 0, Math.cos(victim.yaw));
+    return fwd.dot(this._tmp2) < -0.15;
   }
 
   /* --- ataque ------------------------------------------------------- */
@@ -544,9 +628,22 @@ export class Fighter {
     // arena pelo horizonte, reto, pra sempre.
     this.velocity.y -= TUNING.physics.gravity * 0.45 * dt;
 
+    /* Estouro de tempo: FREIA, não devolve o controle.
+     *
+     * Antes, `f > maxFrames` chutava direto pra IDLE. O resultado era devolver
+     * o controle com o corpo ainda voando a ~8 m/s: o jogador não conseguia se
+     * mover (a inércia comia o input) mas JÁ PODIA ATACAR. Na prática parecia
+     * que dava pra socar estando desmaiado — que foi exatamente o sintoma
+     * relatado. A saída tem que ser por VELOCIDADE; o tempo só aperta o freio. */
+    if (f > B.maxFrames) this.velocity.multiplyScalar(Math.exp(-B.overtimeBrake * dt));
+
     this.char.play('launched', { fade: 0.1 });
 
-    if (this.velocity.length() < B.minSpeedToExit || f > B.maxFrames) {
+    // Rede de segurança absoluta, pra nunca travar no estado.
+    const hardCap = f > B.maxFrames + B.overtimeMaxFrames;
+
+    if (this.velocity.length() < B.minSpeedToExit || hardCap) {
+      if (hardCap) this.velocity.multiplyScalar(0.2);
       this._enter(S.IDLE);
       this.char.play('idle', { fade: 0.2 });
     }
@@ -882,6 +979,12 @@ export class Fighter {
     this.invulnFrames = 0;
     this.flashFrames = 0;
     this.outOfBoundsFrames = 0;
+    this.dashFrames = 0;
+    this.dashHits.clear();
+    this.dashCooldown = 0;
+    this.dashBlocked = false;
+    this.vanishPressFrame = 999;
+    this.lockOn = true;
     this.alive = true;
     this.eliminated = false;
     this.ringOutCause = null;

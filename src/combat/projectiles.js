@@ -260,12 +260,33 @@ export class BeamSystem {
     this.hitCooldown = new Map();
   }
 
+  /**
+   * Trava a mira no momento do disparo.
+   *
+   * A primeira versão montava a direção só com o yaw
+   * (`set(sin(yaw), 0, cos(yaw))`), o que deixava o feixe SEMPRE horizontal.
+   * Num jogo aéreo isso é um bug grave e silencioso: com o adversário acima ou
+   * abaixo, a ultimate — o golpe mais caro do jogo — passava longe e parecia
+   * que o lock-on tinha falhado. Yaw sozinho não descreve direção em 3D.
+   */
   start(owner) {
     this.active = true;
     this.owner = owner;
     this.frame = 0;
     this.group.visible = true;
     this.hitCooldown.clear();
+
+    const chest = owner.char.socket('chest');
+    chest.getWorldPosition(this.origin);
+
+    if (owner.target && owner.target.alive) {
+      owner.target.center(_v);
+      this.dir.subVectors(_v, this.origin);
+      if (this.dir.lengthSq() < 1e-6) this.dir.set(Math.sin(owner.yaw), 0, Math.cos(owner.yaw));
+      this.dir.normalize();
+    } else {
+      this.dir.set(Math.sin(owner.yaw), 0, Math.cos(owner.yaw));
+    }
   }
 
   stop() {
@@ -282,10 +303,19 @@ export class BeamSystem {
 
     if (this.frame > U.durationFrames) { this.stop(); return; }
 
-    // Origem: entre as mãos, à frente do peito.
+    // Origem: entre as mãos, à frente do peito. A DIREÇÃO já foi travada em
+    // start() — o feixe não persegue. Se perseguisse, desviar seria impossível
+    // e o golpe mais caro do jogo viraria um acerto garantido.
     const chest = this.owner.char.socket('chest');
     chest.getWorldPosition(this.origin);
-    this.dir.set(Math.sin(this.owner.yaw), 0, Math.cos(this.owner.yaw));
+
+    const U0 = TUNING.blasts.ultimate;
+    if (U0.aimTracking > 0 && this.owner.target && this.owner.target.alive) {
+      this.owner.target.center(_v);
+      _v2.subVectors(_v, this.origin).normalize();
+      this.dir.lerp(_v2, 1 - Math.exp(-U0.aimTracking * 6 * dt)).normalize();
+    }
+
     this.origin.addScaledVector(this.dir, 0.55);
 
     // Cresce rápido, mantém, e afina no fim.

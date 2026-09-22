@@ -38,7 +38,7 @@ import { Arena } from './world/arena.js';
 import { CombatCamera } from './world/camera.js';
 import { VFX } from './world/vfx.js';
 import { Fighter, emptyCommand, S } from './combat/fighter.js';
-import { resolveMelee, resolveDashClash, resolveOverlap } from './combat/resolve.js';
+import { resolveMelee, resolveDashImpact, resolveDashClash, resolveOverlap } from './combat/resolve.js';
 import { ProjectileSystem, BeamSystem } from './combat/projectiles.js';
 import { BotController } from './ai/bot.js';
 import { HUD } from './ui/hud.js';
@@ -168,7 +168,7 @@ const moveBasis = { forward: new THREE.Vector3(), right: new THREE.Vector3() };
 
 const ctx = {
   arena, vfx, juice, projectiles, beam, moveBasis,
-  onHit, onVanish, onClash,
+  onHit, onVanish, onClash, onDashImpact,
 };
 
 /* ==========================================================================
@@ -311,6 +311,16 @@ function onVanish(victim, attacker, point) {
 
 function onClash(point) {
   hud.showBanner('CLASH!', 1000, 'big');
+}
+
+/* Tromba de dash: precisa de um baque visível, senão o dash parece ter
+ * "travado sozinho" em vez de ter sido barrado pelo adversário. */
+function onDashImpact(dasher, victim) {
+  const p = dasher.position.clone().lerp(victim.position, 0.5);
+  p.y += 0.9;
+  vfx.burst(p, { count: 20, color: 0xdff2ff, speed: 9, life: 0.32 });
+  vfx.ring(p, { billboard: true, color: 0xaee6ff, from: 0.4, to: 5.5, life: 0.34 });
+  if (dasher === player) hud.addCombo();
 }
 
 /** Eventos que o próprio Fighter emitiu neste frame. */
@@ -518,6 +528,9 @@ function step(dt) {
   opponent.update(dt, oCmd, ctx);
 
   resolveMelee(fighters, ctx);
+  // Dash-contra-dash (clash) tem regra própria e é testado depois do impacto
+  // normal, senão um dos dois seria tratado como tromba comum.
+  resolveDashImpact(fighters, ctx);
   resolveDashClash(fighters, ctx);
   projectiles.update(dt, fighters, ctx);
   beam.update(dt, fighters, ctx);
@@ -590,5 +603,18 @@ addEventListener('resize', () => {
 
 boot();
 
-// Atalho de console pra inspecionar/ajustar sem recarregar.
-window.PROTO = { TUNING, get player() { return player; }, get opponent() { return opponent; }, arena, vfx, juice, loop, resetRound };
+/* Atalho de console pra inspecionar/ajustar sem recarregar. Exemplos:
+ *     PROTO.TUNING.moves.smash_forward.knockback = 70
+ *     PROTO.player.ki = 100
+ *     PROTO.TUNING.ai.enabled = false
+ *     PROTO.resetRound()
+ */
+window.PROTO = {
+  TUNING,
+  get player() { return player; },
+  get opponent() { return opponent; },
+  get lockedOn() { return lockedOn; },
+  arena, vfx, juice, loop, camera, combatCam,
+  projectiles, beam, bot: () => bot,
+  resetRound,
+};

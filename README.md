@@ -22,6 +22,11 @@ carregamento de modelo são bloqueados por CORS. Precisa do servidor.
 
 Nada de `npm install`: o three.js está em `vendor/`, então funciona offline.
 
+> O servidor manda `Cache-Control: no-store` de propósito. Sem isso, o navegador
+> reaproveita o módulo já compilado: você edita `src/tuning.js`, recarrega, e o
+> jogo continua com os números antigos — parecendo bug de código. Com este
+> servidor, F5 sempre traz o arquivo do disco.
+
 ---
 
 ## Pra que este projeto existe
@@ -49,6 +54,7 @@ mannequin procedural. Isso é proposital — ver "Sobre o placeholder".
 | `WASD` | voar / orbitar o alvo |
 | `Espaço` / `C` | subir / descer |
 | `Shift` | Dragon Dash (segurar) — custa ki |
+| `Shift` + direção | dash **na direção apontada** — fugir, contornar, esquivar |
 | `J` / botão esq. | Rush — repita pro combo de 4 |
 | `K` / botão dir. | Smash — finaliza o combo e lança |
 | `Espaço`+`K` / `C`+`K` | smash pra cima / cravado no chão |

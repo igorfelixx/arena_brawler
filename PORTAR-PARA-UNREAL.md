@@ -166,8 +166,21 @@ e manda o adversário voando. **Três direções:**
 **Blasts** — `ki_blast` (barato, spam, rebatível pela guarda), `charged_blast`
 (segurar pra carregar), `ultimate` (70 de ki, 40 frames de startup, feixe).
 
-**Dragon Dash** (`Shift`) — fecha distância a 62 m/s, curva devagar (o
-compromisso), cancela em ataque. Dash contra dash = **clash**.
+**Dragon Dash** (`Shift`) — 62 m/s, curva devagar (o compromisso), cancela em
+ataque. Tem **três usos**, e a direção depende do direcional:
+
+| Entrada | Comportamento | Para quê |
+|---|---|---|
+| só `Shift` + lock | persegue o alvo | atacar |
+| `Shift` + direção | vai pra onde aponta | fugir, contornar, esquivar |
+| `Shift` sem lock | vai pra frente / pra onde aponta | reposicionar |
+
+Ao alcançar o adversário, o dash **para** e dá um toque de dano quase simbólico
+(4). Não atravessa. Isso é o que faz dele uma abertura de combo — você chega já
+na distância certa — em vez de só locomoção. Dano baixo é deliberado: o dash é
+ferramenta de POSIÇÃO; se machucasse, spammar seria melhor que combar.
+
+Dash contra dash = **clash** (os dois ricocheteiam).
 
 ### 3.4 Lock-on — travado e solto
 
@@ -556,7 +569,71 @@ comprimido. Além disso ficava opaca demais e escondia o corpo.
 **Regra:** a aura envolve, não tapa. A pose do golpe é a informação mais
 importante da tela num jogo de luta.
 
-### 8.9 Leitura de time: frio vs. quente
+### 8.9 Yaw NÃO descreve direção num jogo aéreo
+
+A ultimate saía sempre na horizontal porque a direção era montada como
+`(sin(yaw), 0, cos(yaw))` — com `y` fixo em zero. Com o adversário acima ou
+abaixo, o golpe mais caro do jogo passava longe, e o sintoma parecia ser falha
+do lock-on, não da mira.
+
+**A regra:** num jogo com voo livre, qualquer direção de golpe, projétil ou
+feixe tem que sair de um vetor 3D (`alvo - origem`), nunca do yaw. Yaw só serve
+para orientar o corpo.
+
+No Unreal o erro equivalente é usar `GetActorForwardVector()` de um Character
+cujo `bUseControllerRotationPitch` está desligado — o forward volta achatado no
+plano. Vale conferir isso em toda ability que mire.
+
+### 8.10 Colisão em alta velocidade precisa de margem (tunneling)
+
+O Dragon Dash corre a 62 m/s. A 60 fps, isso é **~1 metro por frame**. Um teste
+de sobreposição por distância simplesmente pula por cima do adversário entre
+dois frames, e o dash atravessa sem encostar.
+
+A correção aqui foi uma margem de colisão (`impactReachBonus: 1.4`), que é um
+paliativo barato e suficiente para o protótipo. **No Unreal, faça direito:** use
+*sweep* (`SweepSingleByChannel` / `bSweepCollision` no movimento), que testa o
+caminho inteiro percorrido no frame, não só a posição final. Physics Sub-Stepping
+também ajuda.
+
+### 8.11 Sair de um estado por TEMPO em vez de por CONDIÇÃO
+
+O blowaway encerrava em `maxFrames` (2,5 s) e devolvia o controle **com o corpo
+ainda voando a ~8 m/s**. O resultado era um estado meio-termo horrível: a
+inércia comia o input (parecia que não dava pra se mover), mas o ataque já
+estava liberado. O jogador descreveu exatamente assim — *"não consigo me mover,
+mas ainda consigo dar golpes, eu deveria estar desmaiado"*.
+
+**A regra:** estado de perda de controle sai pela CONDIÇÃO que o define (aqui,
+velocidade baixa). Temporizador serve para apertar o freio ou como rede de
+segurança — nunca para devolver o controle sozinho.
+
+Isso vale para qualquer *knockback*, *stagger* ou *stun* no Unreal.
+
+### 8.12 Botão segurado re-dispara a ação
+
+Assim que o dash passou a parar no adversário, segurar o botão passou a
+encadear tromba atrás de tromba: **28 de dano em meio segundo, sem combo
+nenhum** — spammar dash virou melhor que lutar.
+
+**A regra:** ação com impacto precisa de *release-gate* (exigir soltar o botão)
+**e** cooldown. Só o cooldown não basta se o botão fica pressionado.
+
+No Unreal, `UGameplayAbility` com `InstancingPolicy` e uma tag de bloqueio
+(`AbilityTagsToBlock`) resolve isso de forma nativa.
+
+### 8.13 Cache de módulo ES engana durante o ajuste
+
+Editar `src/tuning.js`, recarregar, e o jogo continuar com os números antigos —
+porque o navegador reaproveita o módulo já compilado. O sintoma imita um bug de
+código ("mudei o valor e não mudou nada") e faz perder tempo no lugar errado.
+
+Resolvido com `serve.py`, que manda `Cache-Control: no-store` em tudo.
+Equivalente no Unreal: lembrar que DataTable editada **em PIE** não persiste, e
+que alterar a asset com o jogo rodando pode não recarregar. Salve e reinicie o
+PIE antes de concluir que o número não fez efeito.
+
+### 8.14 Leitura de time: frio vs. quente
 
 Com os dois lutadores em tons de azul no meio de VFX ciano, era impossível dizer
 num relance quem era quem. **Jogador = cor fria, oponente = cor quente.** Não é
