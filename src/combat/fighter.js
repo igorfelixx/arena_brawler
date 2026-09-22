@@ -262,6 +262,24 @@ export class Fighter {
       this._enter(S.DASH);
       this.dashFrames = 0;
       this.dashHits.clear();
+
+      /* TRAVA A DIREÇÃO NO PRIMEIRO FRAME — seja perseguindo, seja fugindo.
+       *
+       * Antes, o dash herdava a direção da VELOCIDADE ATUAL e só ia curvando
+       * rumo à intenção a `turnSpeed`. Isso produziu os dois bugs de mira:
+       *
+       *   perseguindo: com o inimigo acima/abaixo, a componente vertical
+       *     demorava a ser adquirida, o dash chegava atrasado e ultrapassava
+       *     (distância mínima de 5,2 m — nunca encostava)
+       *   fugindo: uma deriva de 0,6 m/s definia o rumo de um dash de 62 m/s,
+       *     e recuar raspava no inimigo a 1,7 m antes de virar
+       *
+       * Nos dois casos a raiz é a mesma: velocidade residual não é intenção.
+       * Curvar devagar é o compromisso de MUDAR DE IDEIA no meio do dash. */
+      this.velocity
+        .copy(this._dashDirection(cmd, ctx, this._tmp))
+        .multiplyScalar(TUNING.flight.dashSpeed);
+
       this.char.play('dash', { fade: 0.1 });
       return;
     }
@@ -310,28 +328,18 @@ export class Fighter {
     if (cmd.rush && this._tryAttack('rush_1', ctx)) return;
     if (cmd.smash && this._tryAttack(this._smashKey(cmd.smashDir), ctx)) return;
 
-    const steering = Math.abs(cmd.moveX) > 0.3 || Math.abs(cmd.moveY) > 0.3 || Math.abs(cmd.vertical) > 0.3;
-    const chasing = this.lockOn && this.target && this.target.alive && !steering;
+    const chasing = this._isChasing(cmd);
+    this._dashDirection(cmd, ctx, this._tmp);
 
-    if (chasing) {
-      this._tmp.subVectors(this.target.position, this.position).normalize();
-    } else if (steering) {
-      const basis = ctx.moveBasis;
-      this._tmp.set(0, 0, 0)
-        .addScaledVector(basis.right, cmd.moveX)
-        .addScaledVector(basis.forward, cmd.moveY);
-      this._tmp.y += cmd.vertical;
-      if (this._tmp.lengthSq() < 1e-6) this._tmp.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
-      this._tmp.normalize();
-    } else {
-      this._tmp.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
-    }
+    /* Perseguindo com lock, o dash corrige bem (o alvo se move e a correção é
+     * o que torna o dash uma ferramenta de aproximação). Dirigindo na mão, ele
+     * curva devagar — aí sim vale o compromisso de não poder mudar de ideia. */
+    const turn = chasing ? D.chaseTurnSpeed : D.turnSpeed;
 
-    // Curva devagar: o compromisso do dash é não poder mudar de ideia na hora.
     const cur = this._tmp2.copy(this.velocity);
     if (cur.lengthSq() < 1e-6) cur.copy(this._tmp);
     cur.normalize();
-    cur.lerp(this._tmp, 1 - Math.exp(-D.turnSpeed * dt)).normalize();
+    cur.lerp(this._tmp, 1 - Math.exp(-turn * dt)).normalize();
 
     this.velocity.copy(cur).multiplyScalar(TUNING.flight.dashSpeed);
     this.yaw = Math.atan2(cur.x, cur.z);
@@ -379,6 +387,46 @@ export class Fighter {
     this._enter(S.IDLE);
     this.char.play('idle', { fade: 0.1 });
     this.events.push({ type: 'dashImpact', victim });
+  }
+
+  /**
+   * O jogador está mandando uma direção? Se sim, ela manda no dash — perseguir
+   * o alvo passa a ser secundário. É o que separa "investir" de "fugir".
+   */
+  _isSteering(cmd) {
+    return Math.abs(cmd.moveX) > 0.3
+        || Math.abs(cmd.moveY) > 0.3
+        || Math.abs(cmd.vertical) > 0.3;
+  }
+
+  /** Dash sem direção e com lock = perseguição. */
+  _isChasing(cmd) {
+    return this.lockOn && this.target && this.target.alive && !this._isSteering(cmd);
+  }
+
+  /**
+   * Para onde este dash deve ir NESTE frame.
+   *
+   * Usada em dois lugares — ao ENTRAR no dash (pra travar a direção inicial) e
+   * a cada frame (pra corrigir). É importante que seja a mesma função nos dois:
+   * quando eram lógicas separadas, o dash entrava numa direção e corrigia pra
+   * outra, e os dois bugs de mira vieram daí.
+   */
+  _dashDirection(cmd, ctx, out) {
+    if (this._isChasing(cmd)) {
+      out.subVectors(this.target.position, this.position);
+    } else if (this._isSteering(cmd)) {
+      const basis = ctx.moveBasis;
+      out.set(0, 0, 0)
+        .addScaledVector(basis.right, cmd.moveX)
+        .addScaledVector(basis.forward, cmd.moveY);
+      out.y += cmd.vertical;
+    } else {
+      out.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+    }
+
+    if (out.lengthSq() < 1e-6) out.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+    return out.normalize();
   }
 
   /** A vítima está de frente pra mim? (usado pra decidir se a guarda vale) */

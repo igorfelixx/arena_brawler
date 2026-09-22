@@ -72,7 +72,13 @@ export const TUNING = {
     kiCost: 14,
     startupFrames: 6,
     maxFrames: 90,              // dura enquanto segurar, até este teto
-    turnSpeed: 4.5,             // rad/s — curva durante o dash (baixo = compromisso)
+    // Curva DIRIGINDO NA MÃO (sem lock, ou segurando direção). Baixo de
+    // propósito: é o compromisso de não poder mudar de ideia no meio do dash.
+    turnSpeed: 4.5,             // rad/s
+    // Curva PERSEGUINDO com lock-on. Precisa ser bem maior, senão o dash chega
+    // atrasado num alvo que está acima/abaixo e passa reto. A mira INICIAL já
+    // sai travada no alvo; isto aqui é só a correção enquanto ele se move.
+    chaseTurnSpeed: 11.0,       // rad/s
 
     /* IMPACTO — trombar no adversário durante o dash.
      * Dano quase simbólico de propósito: o dash é ferramenta de POSIÇÃO, não de

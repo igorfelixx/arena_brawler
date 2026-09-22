@@ -622,7 +622,32 @@ nenhum** — spammar dash virou melhor que lutar.
 No Unreal, `UGameplayAbility` com `InstancingPolicy` e uma tag de bloqueio
 (`AbilityTagsToBlock`) resolve isso de forma nativa.
 
-### 8.13 Cache de módulo ES engana durante o ajuste
+### 8.13 Velocidade residual não é intenção
+
+O Dragon Dash tomava a direção da **velocidade atual** como ponto de partida e
+só ia curvando rumo à intenção a uma taxa lenta. Isso gerou dois bugs opostos
+com a mesma raiz:
+
+- **perseguindo:** com o inimigo acima ou abaixo, a componente vertical demorava
+  tanto a ser adquirida que o dash chegava atrasado e ultrapassava — distância
+  mínima de 5,2 m, nunca encostava. O jogador descreveu como *"passo reto toda
+  hora"*.
+- **fugindo:** uma deriva de **0,6 m/s** definia o rumo de um dash de **62 m/s**,
+  e recuar raspava no inimigo a 1,7 m antes de conseguir virar.
+
+**A regra:** ao iniciar um movimento comprometido (dash, investida, salto
+direcionado), trave a direção pela INTENÇÃO no primeiro frame. Interpolação
+lenta serve para *mudar de ideia no meio*, nunca para *acertar a mira inicial*.
+
+**Corolário de código:** a direção inicial e a correção por frame têm que sair
+da MESMA função. Enquanto foram duas lógicas separadas, o dash entrava numa
+direção e corrigia para outra — foi daí que os dois bugs nasceram.
+
+No Unreal isso aparece igual ao usar `GetVelocity().GetSafeNormal()` como base
+de um Motion Warping ou de um `LaunchCharacter`. Use o vetor para o alvo, ou o
+input do jogador — não a velocidade.
+
+### 8.14 Cache de módulo ES engana durante o ajuste
 
 Editar `src/tuning.js`, recarregar, e o jogo continuar com os números antigos —
 porque o navegador reaproveita o módulo já compilado. O sintoma imita um bug de
@@ -633,7 +658,7 @@ Equivalente no Unreal: lembrar que DataTable editada **em PIE** não persiste, e
 que alterar a asset com o jogo rodando pode não recarregar. Salve e reinicie o
 PIE antes de concluir que o número não fez efeito.
 
-### 8.14 Leitura de time: frio vs. quente
+### 8.15 Leitura de time: frio vs. quente
 
 Com os dois lutadores em tons de azul no meio de VFX ciano, era impossível dizer
 num relance quem era quem. **Jogador = cor fria, oponente = cor quente.** Não é
