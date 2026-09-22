@@ -1,0 +1,64 @@
+# ============================================================================
+#  .gitignore
+# ============================================================================
+
+# --- Assets baixados ou comprados -------------------------------------------
+#
+#  IGNORADOS DE PROPÓSITO, por dois motivos:
+#
+#  1. LICENÇA. Personagem comprado no Fab, ou baixado do Mixamo, quase sempre
+#     proíbe REDISTRIBUIÇÃO. Commitar num repositório público é redistribuir.
+#     Isso vale inclusive pro Mixamo, que é grátis mas não é livre.
+#  2. TAMANHO. Um FBX com skin passa fácil de 20 MB, e o git guarda cada versão
+#     inteira. Repositório vira gigabytes rápido.
+#
+#  O projeto foi feito pra isso: sem asset, ele cai no mannequin procedural e
+#  continua rodando. Quem clonar consegue jogar sem precisar dos seus arquivos.
+#
+#  Se algum dia você criar um asset PRÓPRIO e quiser versioná-lo, remova a linha
+#  correspondente ou force com `git add -f`.
+assets/models/*
+assets/anims/*
+assets/textures/*
+assets/audio/*
+!assets/**/.gitkeep
+!assets/**/README.md
+
+# --- Formatos de asset em qualquer lugar ------------------------------------
+*.fbx
+*.glb
+*.gltf
+*.blend
+*.blend1
+*.wav
+*.mp3
+*.ogg
+
+# --- Sistema / editor -------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~
+
+# --- Node (não usado hoje, mas provável se virar build) ---------------------
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# --- Runtime / debug --------------------------------------------------------
+*.log
+.playwright-mcp/
+*.png
+!docs/**/*.png
+
+# ============================================================================
+#  NOTA: `vendor/` NÃO está aqui — é commitado de propósito.
+#
+#  São os arquivos do three.js (~1.6 MB). Versioná-los é o que faz o projeto
+#  rodar com um `git clone` + `./serve.sh`, sem npm install e sem internet.
+#  Esse é um objetivo declarado do protótipo, não um descuido.
+# ============================================================================
