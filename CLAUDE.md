@@ -90,6 +90,27 @@ Quatro regras que sustentam isso, e que **não podem ser desfeitas por engano**:
 4. `homing.maxPull` limita o quanto um golpe te puxa. Antes puxava 3,1 m de
    uma vez: era o "boneco gruda".
 
+### O kit defensivo — quatro ferramentas, quatro papéis
+
+Nenhuma duplica a outra. Se uma parecer redundante, é sinal de que algum
+número saiu do lugar:
+
+| ferramenta | entrada | custo | timing | recompensa |
+|---|---|---|---|---|
+| Guarda | segurar F | estamina + ki/hit | nenhum | absorve; **+8 frames** |
+| **Sonic Sway** | F+direção **antes** | grátis (cooldown) | antecipar | evade, devolve ki e **rota nova** |
+| **Z-Counter** | **tocar** F no impacto | 12 ki | ~4 frames | **stun de 34f no atacante** |
+| Vanish | V na janela | 20 ki, escalando | 9–14 frames | reaparece **atrás** |
+
+Propriedade que emerge do frame data e que vale preservar: contra um rush
+(startup 4) o Z-Counter é **antecipação**; contra um smash (startup 13) dá
+tempo de **reagir**. Não foi desenhado — saiu da tabela, e é o que faz o golpe
+lento ser arriscado de verdade.
+
+**O Z-Counter só sai de pé** (`canAct`, sem blockstun). Escapar de um combo em
+andamento é trabalho do vanish, que custa ki e escala. Medido: martelando F sob
+pressão contínua por 10 s, saem 3 contras — e todos nas brechas entre rotas.
+
 ### O eixo ataque ↔ defesa (revisto e medido)
 
 Três resultados distintos de um golpe, e é a distinção que cria turnos:

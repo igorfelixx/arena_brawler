@@ -833,6 +833,38 @@ Com os dois lutadores em tons de azul no meio de VFX ciano, era impossível dize
 num relance quem era quem. **Jogador = cor fria, oponente = cor quente.** Não é
 estética, é leitura. Com 30 jogadores isso fica ainda mais crítico.
 
+### 8.25 ⚠️ Estado armado em `update()` vale em TODOS os estados — inclusive nos errados
+
+O Z-Counter arma quando a guarda é tocada, e o armar mora em `update()`. Só que
+`update()` roda em qualquer estado — então dava pra contra-atacar de dentro do
+HITSTUN. Na prática: martelar F escapava de qualquer combo de graça, o que
+anula o hitstun inteiro.
+
+Não apareceu em nenhuma medição: os testes espaçavam os golpes e o defensor
+sempre estava de pé. Apareceu **olhando a telemetria na tela**, que mostrava
+`estado hitstun f 5` no mesmo frame do banner "Z-COUNTER!".
+
+**A regra:** toda janela reativa precisa de um teste explícito de *quem pode
+usá-la*, não só de *quando*. No Unreal, `ActivationRequiredTags` /
+`ActivationBlockedTags` na ability — e conferir que o bloqueio cobre os estados
+de perda de controle, não só os de ocupação.
+
+### 8.26 Multa por tentativa desperdiçada cobrou da pessoa errada
+
+Martelar a guarda dava 8 contra-ataques em 30 golpes, contra 10 de quem lia —
+perto demais. A correção óbvia foi cobrar ki da tentativa que expira sem
+contra-atacar. Medindo depois: **quem lê caiu de 10 para 4**, e quem martela
+não se moveu.
+
+Causa: quando o ATACANTE erra o golpe, a tentativa do defensor expira sem que
+houvesse o que contra-atacar — e ele pagava por um erro que não foi dele, com
+um cooldown que engolia o golpe seguinte, em cascata.
+
+Revertida. Fica registrada porque a ideia é atraente e vai reaparecer. E o
+desequilíbrio era menor do que o número solto sugeria: quem martela F **não
+está segurando guarda**, e toma mais dano (90 contra 80) usando mais ki.
+Se um dia precisar apertar de verdade, estreite a JANELA — não invente multa.
+
 ### 8.23 ⚠️ "Teto de combo" que só vale dentro do estado de ataque não é teto
 
 O sintoma relatado pelo dono do projeto foi: *"se eu flodar o J, o boneco gruda

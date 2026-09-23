@@ -110,6 +110,13 @@ export class Fighter {
      * ki blast; segurar guarda absorve. Ver defense.guard.deflectWindowFrames. */
     this.guardPressFrame = 999;
     this._guardWasHeld = false;
+
+    /* Z-COUNTER: o toque de guarda ARMA o contador, e só um a cada
+     * `attemptCooldownFrames`. Separado de `guardPressFrame` (que serve ao
+     * rebate de blast) de propósito — se martelar a guarda armasse o contador
+     * a cada edge, F viraria o novo botão dominante. */
+    this.counterArm = 999;
+    this.counterCooldown = 0;
     this.vanishChain = 0;
     this.vanishChainTimer = 0;
     this.stepCooldown = 0;
@@ -270,8 +277,20 @@ export class Fighter {
     if (this._guardRegenDelay > 0) this._guardRegenDelay--;
 
     // Timing da guarda — só o TOQUE recente rebate projétil (segurar absorve).
-    if (cmd.guard && !this._guardWasHeld) this.guardPressFrame = 0;
+    const tocouGuarda = cmd.guard && !this._guardWasHeld;
+    if (tocouGuarda) this.guardPressFrame = 0;
     else if (this.guardPressFrame < 999) this.guardPressFrame++;
+
+    /* Z-Counter: um toque arma UMA tentativa; depois trava por um tempo.
+     * O cooldown é o ÚNICO freio contra martelada aqui — ver a nota longa em
+     * `zCounter` no tuning sobre a multa que foi tentada e revertida. */
+    if (this.counterCooldown > 0) this.counterCooldown--;
+    if (tocouGuarda && this.counterCooldown === 0) {
+      this.counterArm = 0;
+      this.counterCooldown = TUNING.defense.zCounter.attemptCooldownFrames;
+    } else if (this.counterArm < 999) {
+      this.counterArm++;
+    }
     this._guardWasHeld = !!cmd.guard;
 
     if (this.stepCooldown > 0) this.stepCooldown--;
@@ -973,6 +992,81 @@ export class Fighter {
     return true;
   }
 
+  /* --- Z-Counter / Sonic Sway ----------------------------------------- */
+  /**
+   * Tocou a guarda no momento exato do golpe: reverte a situação.
+   *
+   * Chamado pela resolução de acerto ANTES da checagem de guarda normal —
+   * a ordem importa, senão um jogador que tocou no tempo certo seria tratado
+   * como quem só estava segurando, e a leitura não valeria nada.
+   *
+   * @returns {boolean} true se o contra saiu
+   */
+  tryZCounter(attacker, ctx) {
+    const Z = TUNING.defense.zCounter;
+    if (this.counterArm > Z.window) return false;
+    if (this.ki < Z.kiCost) return false;
+
+    /* SÓ DE PÉ. Descoberto olhando a telemetria na tela: o contador era armado
+     * em `update()`, que roda em TODOS os estados, então dava pra contra-atacar
+     * de dentro do hitstun — martelar F escapava de qualquer combo de graça.
+     * Isso anularia o hitstun inteiro e devolveria ao jogo exatamente a doença
+     * que esta branch existe pra curar, só que pelo lado da defesa.
+     *
+     * Contra-atacar é uma leitura feita ANTES de apanhar. Quem já está sendo
+     * atingido tem o vanish (que custa ki e escala) — não o contra. */
+    if (!this.canAct || this.blockstunFrames > 0) return false;
+    // Contra-atacar de costas não faz sentido — é a mesma regra da guarda.
+    if (!attacker._facing(this)) return false;
+
+    this.ki -= Z.kiCost;
+    this.counterArm = 999;
+    this.invulnFrames = Math.max(this.invulnFrames, Z.iframes);
+    if (Z.clearsChain) { this.comboCount = 0; this.chainResetTimer = 0; }
+
+    // Vira pro atacante: quem contra-ataca assume a ofensiva.
+    this._tmp.subVectors(attacker.position, this.position);
+    if (this._tmp.lengthSq() > 1e-6) this.yaw = Math.atan2(this._tmp.x, this._tmp.z);
+
+    attacker.stagger(Z.attackerStunFrames);
+    this.events.push({ type: 'zCounter', attacker });
+    return true;
+  }
+
+  /**
+   * O step saiu no tempo certo e o golpe passou raspando.
+   *
+   * Não é um estado novo — é o `step` reconhecido quando bem cronometrado.
+   * Chamado quando um golpe bate em alguém invulnerável: se a invulnerabilidade
+   * veio de um step RECÉM-iniciado, foi leitura, não sorte.
+   */
+  trySonicSway(attacker, ctx) {
+    const SW = TUNING.defense.sonicSway;
+    const st = TUNING.defense.step;
+    if (this.state !== S.STEP) return false;
+    if (this.stateFrame > st.iframes[0] + SW.window) return false;
+
+    this.ki = Math.min(TUNING.ki.max, this.ki + SW.kiRefund);
+    if (SW.clearsStepCooldown) this.stepCooldown = 0;
+    if (SW.clearsChain) { this.comboCount = 0; this.chainResetTimer = 0; }
+    this.events.push({ type: 'sonicSway', attacker });
+    return true;
+  }
+
+  /**
+   * Trava este lutador por N frames, interrompendo o que ele estava fazendo.
+   * Usado pelo Z-Counter: o preço de ter o golpe lido é ficar exposto.
+   */
+  stagger(frames) {
+    this._stunFrames = frames;
+    this.comboCount = 0;
+    this.chainResetTimer = 0;
+    this.velocity.multiplyScalar(0.2);
+    this._enter(S.HITSTUN);
+    this.char.play('hit_react', { fade: 0.05, restart: true });
+    this.events.push({ type: 'staggered' });
+  }
+
   /* --- blast ---------------------------------------------------------- */
   _tryBlast(ctx) {
     const B = TUNING.blasts.ki_blast;
@@ -1607,6 +1701,13 @@ export class Fighter {
     this.vanishCooldown = 0;
     this.guardPressFrame = 999;
     this._guardWasHeld = false;
+
+    /* Z-COUNTER: o toque de guarda ARMA o contador, e só um a cada
+     * `attemptCooldownFrames`. Separado de `guardPressFrame` (que serve ao
+     * rebate de blast) de propósito — se martelar a guarda armasse o contador
+     * a cada edge, F viraria o novo botão dominante. */
+    this.counterArm = 999;
+    this.counterCooldown = 0;
     this.noReaction = false;
     this.autoRecover = false;
     this.immortal = false;

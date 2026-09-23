@@ -200,6 +200,9 @@ export class HUD {
     // --- recursos e estados defensivos ---
     L.push(`ki ${nf(player.ki, 0)}  poise ${nf(player.poise, 0)}  guarda ${nf(player.guardStamina, 0)}`
          + `  blockstun ${player.blockstunFrames}`);
+    L.push(`contra  armado ${player.counterArm > 900 ? '--' : player.counterArm}f`
+         + `  (janela ${extra.zWindow}f)  recarga ${player.counterCooldown}f`
+         + (player.counterArm <= extra.zWindow ? '   ◄ Z-COUNTER PRONTO' : ''));
     L.push(`vanish  cadeia ${player.vanishChain}/${extra.vanishMaxChain}`
          + `  pressF ${player.vanishPressFrame > 900 ? '--' : player.vanishPressFrame}`
          + `  cooldown ${player.vanishCooldown}`);

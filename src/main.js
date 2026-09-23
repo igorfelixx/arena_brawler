@@ -223,7 +223,7 @@ const moveBasis = { forward: new THREE.Vector3(), right: new THREE.Vector3() };
 
 const ctx = {
   arena, vfx, juice, projectiles, beam, moveBasis,
-  onHit, onVanish, onClash, onDashImpact,
+  onHit, onVanish, onClash, onDashImpact, onZCounter, onSway,
   /* Chamado pelo Fighter no início de CADA golpe. É o que permite trocar de
    * alvo no meio do combo: a direção que você segura escolhe em quem bate. */
   pickTarget: (f, cmd) => pickAttackTarget(f, fighters, cmd, moveBasis, f.target),
@@ -419,6 +419,26 @@ function onVanish(victim, attacker, point) {
   else hud.resetCombo();
 }
 
+/* Z-COUNTER — o momento de maior reviravolta do kit. Precisa de leitura forte:
+ * quem estava atacando virou alvo, e a janela de punição é curta. */
+function onZCounter(victim, attacker, point) {
+  vfx.burst(point, { count: 40, color: 0xffe9a0, speed: 15, life: 0.5 });
+  vfx.ring(point, { billboard: true, color: 0xffd36e, from: 0.5, to: 10, life: 0.5 });
+  for (let i = 0; i < 4; i++) vfx.afterimage(attacker.char, 0xffd36e);
+  if (victim === player) hud.showBanner('Z-COUNTER!', 1100, 'big');
+  else { hud.showBanner('CONTRA-ATAQUE', 1000, 'warn'); hud.resetCombo(); }
+}
+
+/* SONIC SWAY — o golpe passou raspando. Deliberadamente mais discreto que o
+ * Z-Counter: é uma esquiva grátis, não uma reviravolta. Se gritasse igual, o
+ * jogador leria os dois como a mesma coisa. */
+function onSway(victim, attacker, point) {
+  for (let i = 0; i < 3; i++) vfx.afterimage(victim.char, victim.auraColor);
+  vfx.burst(point, { count: 12, color: 0xcfe8ff, speed: 6, life: 0.3 });
+  if (victim === player) hud.showBanner('SONIC SWAY', 800);
+  else hud.resetCombo();
+}
+
 function onClash(point) {
   hud.showBanner('CLASH!', 1000, 'big');
 }
@@ -533,6 +553,10 @@ function drainEvents(f) {
         if (f === player) hud.showBanner('ALCANÇOU!', 700, 'big');
         juice.impact({ shake: 0.3, zoom: 0.4 });
         vfx.ring(f.position, { billboard: true, color: f.auraColor, from: 0.5, to: 6, life: 0.35 });
+        break;
+
+      case 'staggered':
+        vfx.burst(f.position, { count: 14, color: 0xffd36e, speed: 7, life: 0.35 });
         break;
 
       case 'vanishWhiff':
@@ -1016,6 +1040,7 @@ function render(alpha, dtReal) {
       debug: {
         maxChain: TUNING.combo.maxChain,
         vanishMaxChain: TUNING.defense.vanish.maxChain,
+        zWindow: TUNING.defense.zCounter.window,
         hitstop: juice.hitstopFrames,
         slowMo: juice.slowMoFrames,
         perfil: PERFIS_IA[perfilIA],
@@ -1065,4 +1090,9 @@ window.PROTO = {
   arena, vfx, juice, loop, camera, combatCam,
   projectiles, beam,
   resetRound,
+  ctx,
+  /* Resolução de acerto exposta pra instrumentação. Medir "em que frame do
+   * golpe o Z-Counter ainda sai" exige dirigir os lutadores na mão, fora do
+   * step normal — e sem isto não há como responder essa pergunta. */
+  resolveMelee,
 };

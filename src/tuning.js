@@ -847,6 +847,91 @@ export const TUNING = {
       maxUsefulWindow: 16,
     },
 
+    /* ================================================================
+     *  Z-COUNTER  —  a guarda que REVERTE em vez de aguentar
+     * ================================================================
+     *  O buraco que ele preenche: a defesa era toda passiva. Guardar dava
+     *  +8 frames, o step tirava você da frente e o vanish te punha atrás —
+     *  nenhuma delas TOMAVA o turno de volta na hora. Faltava a opção de alto
+     *  risco e alta recompensa, que é o que dá teto competitivo.
+     *
+     *  Regra: TOCAR a guarda (não segurar) dentro de `window` frames do golpe
+     *  que está chegando. Acertou — você não toma dano, o atacante trava em
+     *  `attackerStunFrames`, e a rota dele zera. Você fica com a vez.
+     *
+     *  Por que TOCAR e não segurar: é a mesma gramática do rebate de ki blast
+     *  (`deflectWindowFrames`). O botão de guarda passa a ter profundidade —
+     *  segurar absorve e gasta estamina, tocar no tempo certo vira a mesa.
+     *
+     *  ANTI-MARTELADA: cada TOQUE de guarda arma o contador UMA vez e trava
+     *  por `attemptCooldownFrames`. Sem isso, martelar F daria uma janela
+     *  quase permanente — que é exatamente o defeito que passamos esta
+     *  sessão inteira tirando do jogo do outro lado.
+     *
+     *  Ninguém reage a 4 frames de startup (ver 8.15). Isto é ANTECIPAÇÃO:
+     *  você conta com o golpe vindo. Errar custa a guarda que você não segurou.
+     */
+    zCounter: {
+      window: 5,                  // frames desde o toque
+      kiCost: 12,
+      attemptCooldownFrames: 24,  // um contador armado a cada 0,4 s
+
+      /* TENTADO E REVERTIDO — multa por tentativa desperdiçada.
+       *
+       * Martelar F a cada 6 frames dava 8 contras em 30 golpes contra 10 de
+       * quem lê — perto demais. A correção óbvia era cobrar ki da tentativa
+       * que expira sem contra-atacar. Medindo depois: quem LÊ caiu de 10 para
+       * 4 contras e quem martela não se moveu.
+       *
+       * A causa é que a multa cobrava da pessoa errada. Se o ATACANTE erra o
+       * golpe, a tentativa do defensor expira sem que houvesse o que
+       * contra-atacar — e ele pagava por um erro que não foi dele, com um
+       * cooldown de 40 frames que engolia o golpe seguinte. Em cascata.
+       *
+       * Fica registrado porque a ideia vai reaparecer: martelar F JÁ é pior
+       * que ler (8 contras contra 10) e JÁ custa mais dano (90 contra 80),
+       * porque quem martela não está segurando guarda. O desequilíbrio que
+       * parecia existir é menor do que o número solto sugere. Se um dia
+       * precisar mesmo apertar, estreite a JANELA — não invente multa.        */
+      attackerStunFrames: 34,     // o atacante fica exposto — é aqui que se pune
+      iframes: 10,                // o contra-atacante não come o golpe seguinte
+      hitstop: 16,
+      slowMoFrames: 20,
+      slowMoScale: 0.28,
+      shake: 0.5,
+      /* Reverter a situação devolve a rota: quem leu o golpe ganha o direito
+       * de atacar, e não só de não apanhar. */
+      clearsChain: true,
+    },
+
+    /* ================================================================
+     *  SONIC SWAY  —  o step que sai no tempo certo
+     * ================================================================
+     *  NÃO é um botão novo. É o `step` que já existe, reconhecido quando foi
+     *  bem cronometrado — a mesma tecla, resultado diferente conforme o
+     *  timing. Preferi isto a inventar mais uma entrada: o pedido era melhor
+     *  INTERAÇÃO entre as mecânicas existentes, não mais mecânicas.
+     *
+     *  Step normal    esquiva e recua       → você sai da frente
+     *  Sonic Sway     esquiva NO impacto    → sai da frente E ganha a vez
+     *
+     *  O que o separa do vanish: o sway é GRÁTIS mas exige ANTECIPAR e
+     *  comprometer uma direção; o vanish é caro mas responde depois. Um é
+     *  leitura barata e arriscada, o outro é recurso. */
+    sonicSway: {
+      /* Quão cedo nos i-frames o golpe precisa cair pra contar como perfeito.
+       * Os i-frames do step vão de 2 a 11: parado aqui em 2..6, de modo que
+       * stepar muito antes ainda te salva, mas não premia. */
+      window: 4,
+      kiRefund: 6,                // devolve um pouco: esquivar bem é sustentável
+      clearsStepCooldown: true,   // encadeia leitura: pode stepar de novo já
+      clearsChain: true,
+      slowMoFrames: 14,
+      slowMoScale: 0.35,
+      hitstop: 8,
+      shake: 0.22,
+    },
+
     /* Step dodge — esquiva curta, barata, sem custo de ki. */
     step: {
       clip: 'dodge',
@@ -1187,6 +1272,17 @@ export const DEBUG_SLIDERS = [
   ['defense.guard.staminaRegenPerSec', 0, 80, 1, 'Guarda: recuperação'],
   ['defense.guard.breakStunFrames', 0, 90,  1,   'Exposto após guarda esgotar'],
   ['defense.guard.deflectWindowFrames', 0, 20, 1,'Janela de rebater blast'],
+
+  /* Z-Counter e Sonic Sway são as duas opções de ALTO RISCO do kit. O ponto
+   * entre "impossível" e "dominante" é estreito e só sai de playtest — por
+   * isso as janelas estão aqui, e não só no arquivo. */
+  ['__group', 'Z-Counter / Sonic Sway'],
+  ['defense.zCounter.window',       1, 20,  1,   'Z-Counter: janela (frames)'],
+  ['defense.zCounter.kiCost',       0, 40,  1,   'Z-Counter: custo de ki'],
+  ['defense.zCounter.attackerStunFrames', 5, 90, 1, 'Z-Counter: stun no atacante'],
+  ['defense.zCounter.attemptCooldownFrames', 0, 90, 1, 'Z-Counter: recarga da tentativa'],
+  ['defense.sonicSway.window',      0, 12,  1,   'Sonic Sway: janela (frames)'],
+  ['defense.sonicSway.kiRefund',    0, 30,  1,   'Sonic Sway: ki devolvido'],
 
   ['__group', 'Vanish / Defesa'],
   ['moves.smash_forward.vanishWindow', 0, 30, 1, 'Janela de vanish (smash)'],
