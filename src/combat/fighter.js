@@ -28,6 +28,7 @@ export const S = {
   IDLE: 'idle',
   MOVE: 'move',
   DASH: 'dash',
+  APPROACH: 'approach',   // voando até o alvo pra emendar o combo
   ATTACK: 'attack',
   GUARD: 'guard',
   STEP: 'step',
@@ -139,7 +140,7 @@ export class Fighter {
   /*  Consultas                                                          */
   /* ================================================================== */
   get busy() {
-    return this.state === S.ATTACK || this.state === S.HITSTUN
+    return this.state === S.ATTACK || this.state === S.APPROACH || this.state === S.HITSTUN
         || this.state === S.BLOWAWAY || this.state === S.KNOCKDOWN
         || this.state === S.GETUP || this.state === S.VANISH
         || this.state === S.BLAST || this.state === S.ULTIMATE
@@ -224,6 +225,7 @@ export class Fighter {
       case S.IDLE:
       case S.MOVE:      this._sFree(dt, cmd, ctx); break;
       case S.DASH:      this._sDash(dt, cmd, ctx); break;
+      case S.APPROACH:  this._sApproach(dt, cmd, ctx); break;
       case S.ATTACK:    this._sAttack(dt, cmd, ctx); break;
       case S.GUARD:     this._sGuard(dt, cmd, ctx); break;
       case S.STEP:      this._sStep(dt, cmd, ctx); break;
@@ -245,6 +247,8 @@ export class Fighter {
     if (cmd.ultimate && this._tryUltimate(ctx)) return;
     if (cmd.charge) { this._enter(S.CHARGE); this.char.play('charge', { fade: 0.1 }); return; }
     if (cmd.smash && this._tryAttack(this._smashKey(cmd.smashDir), ctx)) return;
+    // Rush longe = INVESTIDA (voa até o alvo). Rush perto = soco.
+    if (cmd.rush && this._tryRushApproach(ctx)) return;
     if (cmd.rush && this._tryAttack('rush_1', ctx)) return;
     if (cmd.blast && this._tryBlast(ctx)) return;
 
@@ -347,6 +351,69 @@ export class Fighter {
     this.char.play('dash', { fade: 0.1 });
   }
 
+  /* --- Investida de rush ------------------------------------------- */
+  /**
+   * Apertar rush longe do alvo não soca o ar: LEVA você até ele.
+   *
+   * É a ferramenta que faz o combate acontecer. Sem ela, atacar congela o
+   * movimento (o estado de ataque não lê o direcional) e os dois lutadores
+   * ficam voando sem se tocar — medido: 0 de dano em 25 s de luta.
+   *
+   * Barato e sem custo de ki de propósito: engajar é a ação BÁSICA, e cobrar
+   * por ela puniria justamente quem ainda não domina o jogo.
+   */
+  _tryRushApproach(ctx) {
+    const A = TUNING.rushApproach;
+    if (!this.lockOn || !this.target || !this.target.alive) return false;
+
+    const d = this.position.distanceTo(this.target.position);
+    if (d <= A.attackAt || d > A.range) return false;
+    if (this.ki < A.kiCost) return false;
+
+    this.ki -= A.kiCost;
+    this._enter(S.APPROACH);
+    this.char.play('dash', { fade: 0.08 });
+    this.events.push({ type: 'rushApproach' });
+    return true;
+  }
+
+  _sApproach(dt, cmd, ctx) {
+    const A = TUNING.rushApproach;
+    const f = this.stateFrame;
+
+    if (!this.target || !this.target.alive) {
+      this._enter(S.IDLE);
+      this.char.play('idle', { fade: 0.15 });
+      return;
+    }
+
+    // Cancelamentos: a investida é comprometida, mas não é uma prisão.
+    if (cmd.guard) { this._enter(S.GUARD); this.char.play('block', { fade: 0.08 }); return; }
+    if (cmd.smash && this._tryAttack(this._smashKey(cmd.smashDir), ctx)) return;
+
+    const d = this.position.distanceTo(this.target.position);
+
+    // Chegou: emenda no primeiro elo do combo.
+    if (d <= A.attackAt) { this._tryAttack('rush_1', ctx); return; }
+
+    // Desistiu (alvo fugiu, ou tempo esgotado).
+    if (f > A.maxFrames || d > A.range * 1.4) {
+      this._enter(S.IDLE);
+      this.char.play('idle', { fade: 0.15 });
+      return;
+    }
+
+    this._tmp.subVectors(this.target.position, this.position).normalize();
+    const cur = this._tmp2.copy(this.velocity);
+    if (cur.lengthSq() < 1e-6) cur.copy(this._tmp);
+    cur.normalize();
+    cur.lerp(this._tmp, 1 - Math.exp(-A.turnSpeed * dt)).normalize();
+
+    this.velocity.copy(cur).multiplyScalar(A.speed);
+    this.yaw = Math.atan2(cur.x, cur.z);
+    this.char.play('dash', { fade: 0.1 });
+  }
+
   /**
    * Bateu em alguém durante o dash. Chamado por resolveDashImpact().
    * O dash PARA aqui — no Tenkaichi você trombá no adversário e é barrado,
@@ -446,9 +513,19 @@ export class Fighter {
     // jogo aéreo. Sem isso, o combo erra e a culpa parece ser do jogador.
     if (f <= m.startup) this._applyHoming(dt, m, ctx);
 
+    /* Impulso pra frente durante o golpe.
+     *
+     * Atenção à forma: isto DEFINE a velocidade alvo, não acumula. A versão
+     * anterior fazia `addScaledVector(fwd, advanceSpeed * 60 * dt)`, e como
+     * `60 * dt` vale 1, somava a velocidade inteira a cada frame da janela —
+     * um avanço de 7 m/s virava 42 m/s em seis frames. */
     if (m.advanceFrames && f >= m.advanceFrames[0] && f <= m.advanceFrames[1]) {
       const fwd = this._tmp.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
-      this.velocity.addScaledVector(fwd, m.advanceSpeed * 60 * dt);
+      this._desired.copy(fwd).multiplyScalar(m.advanceSpeed);
+      this.velocity.lerp(this._desired, 1 - Math.exp(-20 * dt));
+    } else if (f > (m.advanceFrames ? m.advanceFrames[1] : 0)) {
+      // Depois da janela, freia — senão o lutador desliza pelo recovery inteiro.
+      this.velocity.multiplyScalar(Math.exp(-5 * dt));
     }
 
     // Cancelar pro próximo elo do combo.

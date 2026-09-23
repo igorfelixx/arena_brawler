@@ -83,6 +83,7 @@ netcode. **Naraka: Bladepoint** é a outra referência (60 jogadores, melee).
 
 | Sistema | Verificação |
 |---|---|
+| Investida de rush (engajar) | dano em 25 s: 0 → 100; distância mediana 14,7 m → 1,3 m |
 | Combo de 4 elos com cancel | `rush_1→2→3→4→smash`, HP 100→96→91→85→69 |
 | Homing no startup | fecha 2.32 m → 1.45 m durante o startup |
 | Smash / blowaway | lança a 46.1 m/s, arrasto leva a 24 → 22 |
@@ -647,7 +648,56 @@ No Unreal isso aparece igual ao usar `GetVelocity().GetSafeNormal()` como base
 de um Motion Warping ou de um `LaunchCharacter`. Use o vetor para o alvo, ou o
 input do jogador — não a velocidade.
 
-### 8.14 Cache de módulo ES engana durante o ajuste
+### 8.14 Atacar não pode congelar o movimento
+
+O defeito mais grave que o protótipo teve, e o mais difícil de enxergar lendo
+código. Medição de 25 s de luta real, jogador segurando "frente" e martelando
+o botão de ataque:
+
+```
+dano causado        0
+dano tomado         0
+distância mediana   14,7 m
+tempo no alcance    20%
+```
+
+Os dois lutadores voavam sem nunca se tocar. Três causas somadas:
+
+1. o estado de ataque **não lê o direcional** — atacar parava o movimento
+2. os golpes **não tinham avanço** (`advanceSpeed` se perdeu numa refatoração e
+   o código tinha um `if` que falhava em silêncio)
+3. o homing só valia durante o startup
+
+Como o jogador ficava em estado de ataque quase o tempo todo, ele ficava
+parado. Ninguém alcançava ninguém.
+
+**A correção que importa** é conceitual, não numérica: no Tenkaichi, apertar
+ataque a média distância **te leva até o adversário**. O ataque É a ferramenta
+de aproximação. Isso virou o estado `APPROACH` (ver `rushApproach` no tuning).
+Resultado depois: 100 de dano, distância mediana 1,3 m, 59% do tempo em alcance.
+
+No Unreal isso é **Motion Warping** com um alvo, ou uma ability de investida que
+encadeia na de combo. Não deixe para depois: sem ela, o jogo não tem neutro.
+
+### 8.15 IA com decisão por frame nunca segura um botão
+
+A IA sorteava "bloquear?" a cada frame e devolvia `guard = true` por um frame só.
+Como a guarda exige o botão **pressionado**, ela piscava e não bloqueava nada —
+1% de tempo em guarda enquanto apanhava sem reagir.
+
+**A regra:** toda ação de IA que no controle é "segurar" (guarda, carregar ki,
+dash, correr) precisa de um contador de COMPROMISSO — decide uma vez, mantém por
+N frames. Com isso: 1% → 37–66% de guarda.
+
+Relacionado: o limiar de reação era comparado com o startup do golpe
+(`reactionFrames` 10–24 contra um rush de 4 frames de startup). A condição era
+matematicamente impossível e a IA nunca se defendia. **Ninguém reage a 4 frames,
+nem humano** — a correção não é acelerar a reação, é separar *antecipar* (golpe
+rápido: você segura guarda por leitura) de *reagir* (golpe lento: dá tempo de
+ver). No Unreal, mesma coisa: Behavior Tree com nó de decisão + duração, nunca
+um `Random` avaliado a cada tick.
+
+### 8.16 Cache de módulo ES engana durante o ajuste
 
 Editar `src/tuning.js`, recarregar, e o jogo continuar com os números antigos —
 porque o navegador reaproveita o módulo já compilado. O sintoma imita um bug de
@@ -658,7 +708,7 @@ Equivalente no Unreal: lembrar que DataTable editada **em PIE** não persiste, e
 que alterar a asset com o jogo rodando pode não recarregar. Salve e reinicie o
 PIE antes de concluir que o número não fez efeito.
 
-### 8.15 Leitura de time: frio vs. quente
+### 8.17 Leitura de time: frio vs. quente
 
 Com os dois lutadores em tons de azul no meio de VFX ciano, era impossível dizer
 num relance quem era quem. **Jogador = cor fria, oponente = cor quente.** Não é
@@ -759,6 +809,11 @@ Especificamente não validado:
 - [ ] A arena encolhendo muda a luta, ou é só um relógio?
 - [ ] Carregar ki é um risco interessante ou uma pausa chata?
 - [ ] A IA é um oponente ou um saco de pancada?
+- [ ] **Martelar um botão é forte demais?** Contra a IA atual, sim — mas isso
+      diz pouco. A IA não *pune*: ela não espera o recovery do adversário pra
+      contra-atacar. Profundidade em jogo de luta nasce entre dois humanos que
+      punem o erro um do outro, e isso NÃO é mensurável com bot roteirizado.
+      Só playtest humano responde.
 
 **Antes do porte:** jogar, ajustar no painel (`P`), gravar os valores em
 `src/tuning.js`, e atualizar esta seção marcando o que foi validado.

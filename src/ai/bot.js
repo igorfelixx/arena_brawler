@@ -44,6 +44,14 @@ export class BotController {
     this._strafeDir = this._rand() > 0.5 ? 1 : -1;
     this._strafeTimer = 0;
     this._blastHold = 0;
+
+    /* Quantos frames ainda vai SEGURAR a guarda.
+     *
+     * Sem isto a IA sorteava "bloquear?" a cada frame e devolvia guard=true por
+     * um frame só. Como a guarda exige o botão pressionado, ela piscava e nunca
+     * bloqueava de fato — medido: 1% de tempo em guarda, enquanto apanhava.
+     * Decisão por frame não produz input segurado: é preciso COMPROMISSO. */
+    this._holdGuard = 0;
   }
 
   /** @returns {object} command */
@@ -66,32 +74,58 @@ export class BotController {
     _toFoe.y = 0;
     _toFoe.normalize();
 
-    /* ---------- 1. defesa reativa ---------- */
-    // Reagir ao golpe do adversário é o que separa saco de pancada de oponente.
-    const incoming = foe.state === S.ATTACK && foe.attackPhase === 'startup' && dist < 4.5;
-
+    /* ---------- 1. defesa ---------- */
+    /* Defesa NÃO é reação frame-a-frame.
+     *
+     * A versão anterior exigia `foe.stateFrame >= reactionFrames` para reagir,
+     * mas o rush tem 4 frames de startup e o limiar era 10–24. A condição era
+     * impossível: a IA nunca bloqueava nem vanishava contra o combo. Resultado
+     * medido — martelar um botão dava KO sem resposta.
+     *
+     * A correção não é acelerar a reação (ninguém reage a 4 frames, nem humano).
+     * É separar as duas coisas que jogos de luta separam de verdade:
+     *
+     *   ANTECIPAR  golpe rápido → você segura guarda ANTES, por leitura
+     *   REAGIR     golpe lento (smash, investida) → dá tempo de ver e responder
+     */
     if (f.state === S.BLOWAWAY) {
       if (this._roll(A.recoverChance * diff)) { c.guard = true; }
       return c;
     }
 
-    if (incoming) {
-      const canVanish = f.ki >= TUNING.defense.vanish.kiCost;
-      // Só reage se o "tempo de reação" já passou desde o início do golpe.
-      const reacted = foe.stateFrame >= this._reactionFrames();
+    const canVanish = f.ki >= TUNING.defense.vanish.kiCost;
+    const investindo = foe.state === S.APPROACH && dist < TUNING.rushApproach.range;
+    const atacandoPerto = foe.state === S.ATTACK && dist < 4.5;
+    const golpeLento = foe.moveKey?.startsWith('smash') || investindo;
 
-      if (reacted && canVanish && this._roll(A.vanishChance * diff)) {
+    // Já se comprometeu a bloquear: segura até o fim.
+    if (this._holdGuard > 0) {
+      this._holdGuard--;
+      c.guard = true;
+      // Guarda quebrada ou vindo smash: tenta escapar em vez de comer o golpe.
+      if (f.state === S.HITSTUN && canVanish && this._roll(A.vanishChance * diff * 0.5)) {
         c.vanish = true;
-        return c;
+        this._holdGuard = 0;
       }
-      if (reacted && this._roll(A.guardChance)) {
+      return c;
+    }
+
+    // REAGIR: golpe lento o bastante pra ser lido.
+    if (golpeLento && (investindo || foe.stateFrame >= this._reactionFrames())) {
+      if (canVanish && this._roll(A.vanishChance * diff)) { c.vanish = true; return c; }
+      if (this._roll(A.guardChance + 0.25)) {
+        this._holdGuard = A.guardHoldFrames;
         c.guard = true;
-        // Guarda + direção = step, que é melhor que guarda parada contra smash.
-        if (foe.moveKey?.startsWith('smash') && this._roll(A.stepChance + 0.3)) {
-          c.moveX = this._strafeDir;
-        }
+        if (this._roll(A.stepChance + 0.3)) c.moveX = this._strafeDir;
         return c;
       }
+    }
+
+    // ANTECIPAR: adversário colado e agressivo — segura guarda por leitura.
+    if (atacandoPerto && this._roll(A.anticipateGuardChance * diff)) {
+      this._holdGuard = A.guardHoldFrames;
+      c.guard = true;
+      return c;
     }
 
     /* ---------- 2. sem ki ---------- */
@@ -140,6 +174,14 @@ export class BotController {
       case 'attack':
         this._setMoveToward(c, _toFoe, ctx, dist > A.attackRange ? 1 : 0.2);
         c.vertical = clampSign(vertical, 0.8);
+
+        // A IA usa a MESMA investida que o jogador: apertar rush a média
+        // distância a leva até o alvo. Sem isto ela ficaria parada a 15 m
+        // socando o ar — que é o que acontecia antes de a investida existir.
+        if (dist > A.attackRange && dist <= TUNING.rushApproach.range) {
+          c.rush = true;
+          break;
+        }
 
         if (dist <= A.attackRange) {
           const inCombo = f.state === S.ATTACK;
@@ -235,6 +277,7 @@ export class BotController {
     this._decisionTimer = 0;
     this._comboCount = 0;
     this._blastHold = 0;
+    this._holdGuard = 0;
     resetCommand(this.cmd);
   }
 }

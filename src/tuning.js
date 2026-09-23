@@ -58,7 +58,10 @@ export const TUNING = {
     verticalSpeed: 11.0,        // m/s — subir/descer
     turnSpeed: 9.0,             // rad/s — giro do corpo (baixo = mais peso)
     strafeMul: 0.9,             // orbitar o alvo é um pouco mais lento
-    backMul: 0.7,               // recuar é mais lento
+    // Recuar é um COMPROMISSO, não fuga grátis. A 0.7 dava 9,1 m/s de ré —
+    // o adversário escapava de qualquer aproximação só segurando pra trás,
+    // que foi exatamente a reclamação ("o cara só apertando S se esquiva").
+    backMul: 0.48,
 
     // Altura livre. O chão existe só como referência visual e pra slam.
     minY: 0.6,
@@ -163,10 +166,42 @@ export const TUNING = {
   },
 
   /* ================================================================== */
+  /*  INVESTIDA DE RUSH  —  apertar ataque de longe te LEVA até o inimigo */
+  /* ================================================================== */
+  /*  A mecânica que faltava, e a mais importante deste arquivo pro jogo
+   *  ser divertido.
+   *
+   *  Sem ela, medido em 25 s de luta real: 0 de dano dos dois lados,
+   *  distância mediana de 14,7 m, 20% do tempo dentro do alcance. Os dois
+   *  lutadores voavam sem nunca se tocar. O motivo é que atacar CONGELA o
+   *  movimento (o estado de ataque não lê o direcional), então martelar o
+   *  botão deixava o jogador parado enquanto o adversário se afastava.
+   *
+   *  No Tenkaichi, apertar rush a média distância faz você voar até o
+   *  adversário e emendar o combo. O ataque É a ferramenta de aproximação.
+   *
+   *  Isto baixa o piso (qualquer um encosta no inimigo) sem baixar o teto:
+   *  a investida é comprometida e em linha reta, então dá pra ser bloqueada,
+   *  punida com smash, ou passada com vanish. Quem lê ganha. */
+  rushApproach: {
+    range: 17.0,                // até esta distância, J vira investida
+    speed: 40.0,                // m/s
+    turnSpeed: 13.0,            // rad/s — persegue bem, o alvo se move
+    maxFrames: 50,              // desiste depois disso
+    attackAt: 2.3,              // ao chegar aqui, emenda no rush_1
+    kiCost: 0,                  // de graça: é a ferramenta básica de engajar
+  },
+
+  /* ================================================================== */
   /*  RUSH COMBO  —  a sequência rápida de socos                         */
   /* ================================================================== */
   /*  Cada elo é curto (~14 frames total) e emenda no seguinte. O ÚLTIMO
-   *  elo é o SMASH: lento, forte, manda voando. É o ritmo do Tenkaichi.  */
+   *  elo é o SMASH: lento, forte, manda voando. É o ritmo do Tenkaichi.
+   *
+   *  REGRA DE BALANCEAMENTO: `blockstun` é MENOR que o recovery do golpe.
+   *  Isso significa que quem BLOQUEIA sai do stun antes de quem atacou, e
+   *  ganha o turno. É o que pune martelar botão na guarda alheia — sem isso,
+   *  o atacante mantém a vez pra sempre e apertar rush vira a jogada ótima.  */
   moves: {
     rush_1: {
       clip: 'attack_light_1',
@@ -184,7 +219,7 @@ export const TUNING = {
       hitstop: 4,
       shake: 0.09,
       hitstun: 13,
-      blockstun: 8,
+      blockstun: 4,
       chipDamage: 0.3,
       cancelInto: ['rush_2'],
       cancelWindow: [5, 15],
@@ -192,6 +227,10 @@ export const TUNING = {
       // sem isso o combo erra o tempo todo e o jogo vira frustração.
       homingRange: 4.5,
       homingStrength: 0.85,
+      // Impulso pra frente durante o golpe. Sem isto, atacar congela
+      // o movimento e o adversário simplesmente anda pra trás.
+      advanceSpeed: 7.0,
+      advanceFrames: [1, 6],
       vanishWindow: 9,          // frames em que a vítima pode dar vanish
     },
 
@@ -207,12 +246,16 @@ export const TUNING = {
       hitstop: 4,
       shake: 0.10,
       hitstun: 13,
-      blockstun: 8,
+      blockstun: 4,
       chipDamage: 0.3,
       cancelInto: ['rush_3'],
       cancelWindow: [5, 15],
       homingRange: 4.5,
       homingStrength: 0.85,
+      // Impulso pra frente durante o golpe. Sem isto, atacar congela
+      // o movimento e o adversário simplesmente anda pra trás.
+      advanceSpeed: 7.0,
+      advanceFrames: [1, 6],
       vanishWindow: 9,
     },
 
@@ -228,12 +271,16 @@ export const TUNING = {
       hitstop: 5,
       shake: 0.12,
       hitstun: 14,
-      blockstun: 9,
+      blockstun: 5,
       chipDamage: 0.4,
       cancelInto: ['rush_4', 'smash_forward', 'smash_up', 'smash_down'],
       cancelWindow: [6, 17],
       homingRange: 4.5,
       homingStrength: 0.85,
+      // Impulso pra frente durante o golpe. Sem isto, atacar congela
+      // o movimento e o adversário simplesmente anda pra trás.
+      advanceSpeed: 8.0,
+      advanceFrames: [1, 7],
       vanishWindow: 9,
     },
 
@@ -249,12 +296,16 @@ export const TUNING = {
       hitstop: 6,
       shake: 0.15,
       hitstun: 16,
-      blockstun: 10,
+      blockstun: 6,
       chipDamage: 0.5,
       cancelInto: ['smash_forward', 'smash_up', 'smash_down'],
       cancelWindow: [6, 20],
       homingRange: 4.0,
       homingStrength: 0.8,
+      // Impulso pra frente durante o golpe. Sem isto, atacar congela
+      // o movimento e o adversário simplesmente anda pra trás.
+      advanceSpeed: 8.0,
+      advanceFrames: [1, 7],
       vanishWindow: 10,
     },
 
@@ -279,6 +330,10 @@ export const TUNING = {
       cancelWindow: null,
       homingRange: 5.5,
       homingStrength: 0.9,
+      // Impulso pra frente durante o golpe. Sem isto, atacar congela
+      // o movimento e o adversário simplesmente anda pra trás.
+      advanceSpeed: 11.0,
+      advanceFrames: [6, 16],
       vanishWindow: 14,         // janela generosa — smash tem que ser evitável
       causesBlowaway: true,     // vítima entra em estado "voando descontrolado"
       trail: true,
@@ -304,6 +359,10 @@ export const TUNING = {
       cancelWindow: null,
       homingRange: 5.5,
       homingStrength: 0.9,
+      // Impulso pra frente durante o golpe. Sem isto, atacar congela
+      // o movimento e o adversário simplesmente anda pra trás.
+      advanceSpeed: 10.0,
+      advanceFrames: [6, 15],
       vanishWindow: 14,
       causesBlowaway: true,
       trail: true,
@@ -328,6 +387,10 @@ export const TUNING = {
       cancelWindow: null,
       homingRange: 5.5,
       homingStrength: 0.9,
+      // Impulso pra frente durante o golpe. Sem isto, atacar congela
+      // o movimento e o adversário simplesmente anda pra trás.
+      advanceSpeed: 11.0,
+      advanceFrames: [7, 17],
       vanishWindow: 14,
       causesBlowaway: true,
       groundSlam: true,         // impacto extra + cratera ao bater no chão
@@ -593,15 +656,31 @@ export const TUNING = {
     enabled: true,
     difficulty: 0.6,            // 0..1 — afeta reação, agressão e uso de vanish
 
-    reactionFramesMin: 10,
-    reactionFramesMax: 24,
-    preferredRange: 6.0,
+    /* Tempo de reação, em frames desde o início do golpe adversário.
+     *
+     * ATENÇÃO: isto só funciona se for MENOR que o startup do golpe. Com
+     * min 10 / max 24 e o rush tendo 4 frames de startup, a IA nunca
+     * conseguia reagir a nada — nem guarda, nem vanish. Ela parecia difícil
+     * por outros motivos, mas estava desarmada na defesa. */
+    reactionFramesMin: 2,
+    reactionFramesMax: 9,
+    // Distância que tenta manter. Estava em 6 e a luta acontecia a ~15 m.
+    preferredRange: 4.0,
     engageRange: 45.0,
     attackRange: 2.6,
     dashRange: 22.0,
 
     aggression: 0.58,
     guardChance: 0.40,
+    /* Chance de segurar guarda por ANTECIPAÇÃO com o adversário colado —
+     * não por reação. É este número que impede "martelar um botão" de ser uma
+     * estratégia vencedora, sem exigir da IA reflexos impossíveis.
+     * Suba pra deixar a IA mais paredão; baixe pra deixar a luta mais solta. */
+    anticipateGuardChance: 0.55,
+    /* Por quantos frames a IA SEGURA a guarda depois de decidir bloquear.
+     * Decisão por frame não produz input segurado — sem este compromisso a
+     * guarda pisca e não bloqueia nada. Alto demais vira paredão passivo. */
+    guardHoldFrames: 26,
     stepChance: 0.26,
     vanishChance: 0.45,         // chance de escapar de um golpe (se tiver ki)
     smashChance: 0.34,          // chance de finalizar combo com smash
