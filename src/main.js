@@ -503,6 +503,38 @@ function drainEvents(f) {
        * instante — o feedback é discreto de propósito: quem leu certo não
        * precisa ver nada, e quem está martelando V precisa perceber a conta
        * chegando. A barra de ki caindo já é o recado. */
+      /* O disjuntor desarmou: a vítima foi arrancada da pressão e lançada.
+       * Precisa de leitura própria — é o momento em que a interação MUDA de
+       * "estou combando" para "ele está voando, e agora?". */
+      case 'poiseBreak': {
+        const p = f.position.clone(); p.y += 0.9;
+        vfx.burst(p, { count: 30, color: 0xfff0c0, speed: 12, life: 0.45 });
+        vfx.ring(p, { billboard: true, color: 0xffe3a0, from: 0.5, to: 8, life: 0.4 });
+        juice.impact({ hitstop: 10, shake: 0.5, zoom: 0.5 });
+        if (f === opponent) hud.showBanner('SE SOLTOU', 800);
+        else if (f === player) hud.showBanner('VOCÊ SE SOLTOU', 800);
+        break;
+      }
+
+      /* A janela de perseguição precisa ser ANUNCIADA, senão ela não existe
+       * pro jogador: ele lança o adversário, não sabe que pode ir atrás, e o
+       * lançamento volta a ser um beco sem saída. */
+      case 'pursuitOpen':
+        if (f === player) hud.showBanner('PERSEGUIR  ·  Shift', 700);
+        break;
+
+      case 'pursuitStart':
+        vfx.burst(f.position, { count: 18, color: f.auraColor, speed: 11, life: 0.3 });
+        juice.shake(0.2);
+        break;
+
+      // Leu o lançamento e chegou: rota nova, e isso merece leitura na tela.
+      case 'pursuitHit':
+        if (f === player) hud.showBanner('ALCANÇOU!', 700, 'big');
+        juice.impact({ shake: 0.3, zoom: 0.4 });
+        vfx.ring(f.position, { billboard: true, color: f.auraColor, from: 0.5, to: 6, life: 0.35 });
+        break;
+
       case 'vanishWhiff':
         if (f === player) {
           vfx.burst(f.position, { count: 6, color: 0x88a0b8, speed: 3.5, life: 0.25 });
@@ -531,7 +563,18 @@ function postoDeTreino(out = new THREE.Vector3()) {
   const T = TUNING.training;
   combatCam.getMoveBasis(moveBasis);
   out.copy(player.position).addScaledVector(moveBasis.forward, T.practiceDistance);
-  out.y = Math.max(TUNING.flight.minY + 0.4, T.practiceHeight);
+
+  /* NA SUA ALTURA, não numa altitude fixa.
+   *
+   * Descoberto olhando a tela: com `out.y = practiceHeight` o boneco nascia
+   * sempre a 14 m do chão. Treinando a 22 m de altura, ele aparecia 8 m ABAIXO
+   * — e a "distância de treino de 3 m" virava 8,5 m na prática. Os golpes
+   * saíam no vazio e a rota era consumida por erros.
+   *
+   * `practiceHeight` continua existindo, mas só como altura de RESSURREIÇÃO
+   * quando o boneco foi mandado pra fora da arena e não há de onde herdar. */
+  out.y = Math.max(TUNING.flight.minY + 0.4,
+    player.alive ? player.position.y : T.practiceHeight);
   return out;
 }
 

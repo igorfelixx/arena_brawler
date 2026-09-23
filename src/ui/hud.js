@@ -177,6 +177,17 @@ export class HUD {
       L.push(`estado  ${player.state}  f ${player.stateFrame}`);
     }
 
+    /* ROTA e PERSEGUIÇÃO são os dois conceitos novos do combate, e os dois
+     * são invisíveis sem isto: o jogador precisa ver que a rota esgotou (e
+     * por isso J parou de sair) e que existe uma janela pra perseguir. */
+    const rotaCheia = player.comboCount >= extra.maxChain;
+    L.push(`rota    ${player.comboCount}/${extra.maxChain}`
+         + `  reset em ${player.chainResetTimer}f`
+         + (rotaCheia ? '   ◄ ESGOTADA: só ender / reposicionar' : ''));
+    if (player.pursuitFrames > 0) {
+      L.push(`PERSEGUIR ${player.pursuitFrames}f   (Shift persegue · K spike)`);
+    }
+
     // --- vantagem de frames: o número que decide o jogo de turnos ---
     const meu = HUD._framesAteAgir(player);
     const dele = HUD._framesAteAgir(opponent);

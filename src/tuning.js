@@ -164,10 +164,29 @@ export const TUNING = {
     //  brigaria com o homing e com o avanço do golpe, e o combate ficaria
     //  escorregadio justamente na distância em que ele acontece.)
 
-    // Poise: quantos golpes aguenta sem cambalear. Impede stunlock eterno.
+    /* POISE — o disjuntor anti-stunlock.
+     *
+     * Ele existia, armava e disparava. E não desarmava nada.
+     *
+     * Ao quebrar, a vítima ia pra BLOWAWAY carregando a velocidade DO GOLPE
+     * que quebrou — um rush, 1.8 m/s. Só que o blowaway só se sustenta acima
+     * de `blowaway.minSpeedToExit` (4.0), então o estado terminava no frame
+     * seguinte. Medido: o poise quebrou 16 vezes em 30 s de martelada e o
+     * blowaway durou 4 FRAMES em média. A vítima voltava exatamente pro lugar
+     * onde estava apanhando.
+     *
+     * Agora a quebra tem impulso PRÓPRIO, independente do golpe. Ele existe
+     * pra fazer uma coisa só: SEPARAR OS CORPOS e devolver o neutro. E, de
+     * quebra, abre a janela de perseguição — o disjuntor vira oportunidade em
+     * vez de anticlímax.
+     *
+     * 18 m/s com arrasto 1.35 ≈ 13 m de separação: longe o bastante pra sair
+     * do alcance do rush (2.6 m) e perto o bastante pra valer perseguir. */
     maxPoise: 34,
     poiseRegenPerSec: 14,
     poiseBreakStunFrames: 30,
+    poiseBreakKnockback: 18.0,
+    poiseBreakKnockup: 4.0,
   },
 
   /* ================================================================== */
@@ -300,11 +319,42 @@ export const TUNING = {
      * devolve o comportamento antigo na hora, pra comparar lado a lado. */
     cancelOnBlock: false,
 
-    /* Teto de elos antes de ser obrigado a finalizar (ou soltar).
-     * Com golpes direcionais emendando uns nos outros livremente, sem teto o
-     * combo vira laço infinito e a vítima nunca joga. Ao estourar, só resta
-     * smash — que é lento e vanishável, devolvendo a chance de escapar. */
-    maxChain: 6,
+    /* ================================================================
+     *  A ROTA — e por que o teto antigo não segurava nada
+     * ================================================================
+     *  `maxChain` existia e era verificado assim:
+     *
+     *      const emendando = this.state === S.ATTACK;
+     *      if (emendando && comboCount >= maxChain) return false;
+     *
+     *  Ou seja: só valia DENTRO do estado de ataque. Quando o último elo
+     *  terminava sozinho, `_sAttack` zerava `comboCount` e voltava pra IDLE —
+     *  e o próximo J começava uma cadeia nova do zero.
+     *
+     *  Medido, martelando J por 30 s contra boneco parado:
+     *      elo máximo atingido     6     (o teto "funcionava")
+     *      acertos                126    (21 cadeias de 6, emendadas)
+     *      vítima presa           77% do tempo
+     *      janelas livres >=12f     5    em 30 segundos
+     *
+     *  A correção é que a ROTA tem dono e tem fim. Ao esgotar, rush deixa de
+     *  sair — de verdade, inclusive vindo da IDLE — até a interação resetar.
+     *  Sobram os ENDERS (smash) e o reposicionamento. É a diferença entre
+     *  "quem segura o combo?" e "quem ganha a próxima troca?".
+     */
+    maxChain: 4,
+
+    /* Quantos frames sem atacar para a rota zerar e o neutro voltar.
+     *
+     * É o beat de respiro que o combate não tinha. Baixo demais e martelar
+     * volta a funcionar; alto demais e o jogo fica lento e punitivo com quem
+     * está aprendendo. 36f = 0,6 s — tempo de o defensor decidir alguma coisa,
+     * não só de segurar guarda. */
+    chainResetFrames: 36,
+
+    /* Acertar o ENDER (smash) libera a rota na hora. Finalizar direito é
+     * recompensado: você fica livre pra reengajar ou perseguir sem esperar. */
+    enderClearsChain: true,
   },
 
   /* ================================================================== */
@@ -326,12 +376,112 @@ export const TUNING = {
    *  a investida é comprometida e em linha reta, então dá pra ser bloqueada,
    *  punida com smash, ou passada com vanish. Quem lê ganha. */
   rushApproach: {
-    range: 17.0,                // até esta distância, J vira investida
+    /* 17 m era uma COLEIRA, não uma ferramenta de engajar: qualquer distância
+     * criada abaixo disso era anulada por um único J, inclusive logo depois de
+     * um lançamento. 9 m ainda resolve o problema que a investida veio
+     * resolver (armadilha 8.14 — sem ela, 0 de dano em 25 s de luta), mas
+     * deixa de cobrir meia arena. Acima disso, aproximar é trabalho do Dragon
+     * Dash — que custa ki e é uma decisão. */
+    range: 9.0,                 // até esta distância, J vira investida
     speed: 40.0,                // m/s
     turnSpeed: 13.0,            // rad/s — persegue bem, o alvo se move
     maxFrames: 50,              // desiste depois disso
     attackAt: 2.3,              // ao chegar aqui, emenda no rush direcional
     kiCost: 0,                  // de graça: é a ferramenta básica de engajar
+  },
+
+  /* ================================================================== */
+  /*  HOMING  —  assistência de mira, NÃO ímã                            */
+  /* ================================================================== */
+  /*  O homing era a maior causa isolada do "boneco gruda no adversário".
+   *
+   *  Ele escreve em POSITION direto, não em velocidade — o corpo atravessa o
+   *  espaço sem física. Com `homingRange: 5.0` e nenhum teto, medido durante
+   *  os 4 frames de startup de um rush:
+   *
+   *      de 2 m → 1.34 m   (puxou 0.66 m)
+   *      de 3 m → 1.52 m   (puxou 1.48 m)
+   *      de 4 m → 1.71 m   (puxou 2.29 m)
+   *      de 5 m → 1.89 m   (puxou 3.11 m)   ← três metros em 4 frames
+   *
+   *  Apertar J resolvia distância, ângulo e trajetória sozinho. O jogador não
+   *  contribuía com posicionamento nenhum, e é por isso que o combate parecia
+   *  uma macro de teclado em vez de uma disputa.
+   *
+   *  A correção NÃO é remover (ver armadilha 8.4 do doc de passagem: sem
+   *  homing os dois primeiros socos erram e o jogador culpa o controle). É
+   *  limitar o que ele resolve:
+   *
+   *    1. alcance curto  — ele fecha o ÚLTIMO pedaço, não a distância toda
+   *    2. teto por golpe — nunca puxa mais que `maxPull` metros
+   *
+   *  Resultado pretendido: dentro de ~2,8 m o soco perdoa a mira; fora disso
+   *  você precisa ter chegado com movimento. Posição volta a ser do jogador. */
+  homing: {
+    // Teto absoluto de quanto um único golpe pode te puxar. É este número que
+    // separa "assistência" de "teleporte".
+    maxPull: 1.1,
+    // Distância que o homing tenta manter (centro a centro). Encostado, mas
+    // não dentro do outro.
+    idealGap: 1.4,
+  },
+
+  /* ================================================================== */
+  /*  PURSUIT  —  a segunda disputa, depois do lançamento                */
+  /* ================================================================== */
+  /*  A peça que faltava pro combate ter IDA E VOLTA.
+   *
+   *  Antes, lançar alguém era um beco sem saída: o corpo voava, você
+   *  re-aproximava com um J (a investida cobria 17 m) e recomeçava a mesma
+   *  cadeia. O lançamento não era um evento — era uma pausa.
+   *
+   *  No Tenkaichi, o lançamento ABRE uma janela em que o atacante precisa
+   *  ESCOLHER, e o defensor precisa responder:
+   *
+   *      LANÇOU ──→ ╔══════ JANELA DE PERSEGUIÇÃO ══════╗
+   *                 ║  Shift  perseguir (custa ki)      ║
+   *                 ║  K      spike / re-lançar         ║
+   *                 ║  L      blast à distância         ║
+   *                 ║  nada   deixar voltar, reposicionar║
+   *                 ╚═══════════════════╤═══════════════╝
+   *      defensor:  recuperar / vanish / cair e levantar
+   *
+   *  REGRA QUE NÃO PODE SER QUEBRADA: perseguir NÃO é combo infinito.
+   *  A perseguição custa ki, é comprometida em linha reta, e o defensor tem
+   *  recuperação aérea pra puni-la. Ela é uma LEITURA, não uma continuação.
+   *
+   *  O prêmio de acertar a leitura é uma ROTA NOVA (`clearsChainOnArrive`):
+   *  é assim que a pressão se estende por mérito, e não por martelar.        */
+  pursuit: {
+    // Quanto tempo a janela fica aberta depois de você lançar alguém.
+    windowFrames: 75,
+    speed: 52.0,                // m/s — mais rápido que voar, menos que dash
+    turnSpeed: 12.0,
+    maxFrames: 60,
+    attackAt: 2.4,              // chegou: devolve o controle EM ALCANCE
+    /* Quanto da velocidade do alvo você HERDA ao alcançá-lo.
+     *
+     * Medido no navegador: sem isto, a perseguição terminava com você parado
+     * e a vítima ainda voando a 12 m/s — você encostava e ela ia embora no
+     * mesmo instante. "Alcancei" virava "toquei". Herdando a velocidade, os
+     * dois viajam juntos por um momento, que é o tempo de você emendar o
+     * golpe e é a imagem que esses jogos vendem: dois corpos cruzando o céu
+     * na mesma trajetória. */
+    carryVelocity: 0.88,
+    /* Por quantos frames você VOA JUNTO com ele depois de alcançar.
+     *
+     * Só herdar a velocidade não bastou: medido no navegador, o controle de
+     * voo normal desacelera pra zero no frame seguinte (não há direcional
+     * apertado) e a vítima ia embora do mesmo jeito — o banner dizia
+     * "ALCANÇOU!" e a distância virava 13 m. Estes frames são a janela em que
+     * os dois corpos cruzam o céu na mesma trajetória e você decide o
+     * follow-up. É a imagem que esses jogos vendem. */
+    carryFrames: 18,
+    kiCost: 12,                 // perseguir é decisão, não reflexo
+    /* Chegar perseguindo abre uma rota nova. É a recompensa por ler o
+     * lançamento — e é o que separa "estender a pressão por perícia" de
+     * "estender a pressão por martelar". */
+    clearsChainOnArrive: true,
   },
 
   /* ================================================================== */
@@ -378,7 +528,7 @@ export const TUNING = {
       cancelInto: ['rush_r', 'rush_l', 'rush_u', 'rush_d',
                    'smash_forward', 'smash_up', 'smash_down'],
       cancelWindow: [5, 16],
-      homingRange: 5.0,
+      homingRange: 2.8,
       homingStrength: 0.85,
       advanceSpeed: 7.0,
       advanceFrames: [1, 6],
@@ -402,7 +552,7 @@ export const TUNING = {
       cancelInto: ['rush_r', 'rush_l', 'rush_u', 'rush_d',
                    'smash_forward', 'smash_up', 'smash_down'],
       cancelWindow: [5, 16],
-      homingRange: 5.0,
+      homingRange: 2.8,
       homingStrength: 0.85,
       advanceSpeed: 7.0,
       advanceFrames: [1, 6],
@@ -426,7 +576,7 @@ export const TUNING = {
       cancelInto: ['rush_r', 'rush_l', 'rush_u', 'rush_d',
                    'smash_forward', 'smash_up', 'smash_down'],
       cancelWindow: [7, 20],
-      homingRange: 5.0,
+      homingRange: 2.8,
       homingStrength: 0.85,
       advanceSpeed: 6.0,
       advanceFrames: [1, 7],
@@ -450,7 +600,7 @@ export const TUNING = {
       cancelInto: ['rush_r', 'rush_l', 'rush_u', 'rush_d',
                    'smash_forward', 'smash_up', 'smash_down'],
       cancelWindow: [7, 21],
-      homingRange: 5.0,
+      homingRange: 2.8,
       homingStrength: 0.85,
       advanceSpeed: 6.0,
       advanceFrames: [1, 7],
@@ -476,7 +626,7 @@ export const TUNING = {
       guardBreak: true,
       cancelInto: [],
       cancelWindow: null,
-      homingRange: 5.5,
+      homingRange: 3.2,
       homingStrength: 0.9,
       // Impulso pra frente durante o golpe. Sem isto, atacar congela
       // o movimento e o adversário simplesmente anda pra trás.
@@ -505,7 +655,7 @@ export const TUNING = {
       guardBreak: true,
       cancelInto: [],
       cancelWindow: null,
-      homingRange: 5.5,
+      homingRange: 3.2,
       homingStrength: 0.9,
       // Impulso pra frente durante o golpe. Sem isto, atacar congela
       // o movimento e o adversário simplesmente anda pra trás.
@@ -533,7 +683,7 @@ export const TUNING = {
       guardBreak: true,
       cancelInto: [],
       cancelWindow: null,
-      homingRange: 5.5,
+      homingRange: 3.2,
       homingStrength: 0.9,
       // Impulso pra frente durante o golpe. Sem isto, atacar congela
       // o movimento e o adversário simplesmente anda pra trás.

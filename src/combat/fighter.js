@@ -29,6 +29,7 @@ export const S = {
   MOVE: 'move',
   DASH: 'dash',
   APPROACH: 'approach',   // voando até o alvo pra emendar o combo
+  PURSUIT: 'pursuit',     // perseguindo quem você acabou de lançar
   ATTACK: 'attack',
   GUARD: 'guard',
   STEP: 'step',
@@ -120,7 +121,14 @@ export class Fighter {
     this.chargeFrames = 0;       // acumulador do blast carregado
     this.dashFrames = 0;
     this.dashHits = new Set();   // quem já foi trombado neste dash (1 toque cada)
-    this.comboCount = 0;         // elos encadeados (teto em combo.maxChain)
+    this.comboCount = 0;         // elos da rota atual (teto em combo.maxChain)
+    this.chainResetTimer = 0;    // enquanto corre, a rota ainda é a mesma
+
+    /* JANELA DE PERSEGUIÇÃO. Aberta quando VOCÊ lança alguém; enquanto correr,
+     * o dash vira perseguição em vez de locomoção. É a segunda disputa. */
+    this.pursuitFrames = 0;
+    this.pursuitTarget = null;
+    this._pursuitCarry = 0;
     this.dashCooldown = 0;
     /* Exige SOLTAR o botão antes de um novo dash. Sem isso, segurar Shift
      * encadeia tromba atrás de tromba: no teste, 28 de dano em meio segundo,
@@ -157,6 +165,7 @@ export class Fighter {
     this.trail = null;
 
     this._afterimageTick = 0;
+    this._homingPulled = 0;
     this._bobT = 0;
     this._tmp = new THREE.Vector3();
     this._tmp2 = new THREE.Vector3();
@@ -172,7 +181,8 @@ export class Fighter {
   /*  Consultas                                                          */
   /* ================================================================== */
   get busy() {
-    return this.state === S.ATTACK || this.state === S.APPROACH || this.state === S.HITSTUN
+    return this.state === S.ATTACK || this.state === S.APPROACH || this.state === S.PURSUIT
+        || this.state === S.HITSTUN
         || this.state === S.BLOWAWAY || this.state === S.KNOCKDOWN
         || this.state === S.GETUP || this.state === S.VANISH
         || this.state === S.BLAST || this.state === S.ULTIMATE
@@ -241,7 +251,21 @@ export class Fighter {
     }
 
     // --- timers ---
+    /* Relógio da ROTA. Enquanto correr, o combo continua sendo o MESMO combo,
+     * mesmo que você tenha voltado pra IDLE entre um golpe e outro. É o que
+     * transforma "quem segura a cadeia" em "quem ganha a próxima troca". */
+    if (this.chainResetTimer > 0) {
+      this.chainResetTimer--;
+      if (this.chainResetTimer === 0 && this.state !== S.ATTACK) this.comboCount = 0;
+    }
     if (this.vanishCooldown > 0) this.vanishCooldown--;
+    if (this.pursuitFrames > 0) {
+      this.pursuitFrames--;
+      // Alvo se recuperou ou morreu: não há mais o que perseguir.
+      if (!this.pursuitTarget || !this.pursuitTarget.alive
+          || this.pursuitTarget.state !== S.BLOWAWAY) this.pursuitFrames = 0;
+      if (this.pursuitFrames === 0) this.pursuitTarget = null;
+    }
     if (this.blockstunFrames > 0) this.blockstunFrames--;
     if (this._guardRegenDelay > 0) this._guardRegenDelay--;
 
@@ -315,6 +339,7 @@ export class Fighter {
       case S.MOVE:      this._sFree(dt, cmd, ctx); break;
       case S.DASH:      this._sDash(dt, cmd, ctx); break;
       case S.APPROACH:  this._sApproach(dt, cmd, ctx); break;
+      case S.PURSUIT:   this._sPursuit(dt, cmd, ctx); break;
       case S.ATTACK:    this._sAttack(dt, cmd, ctx); break;
       case S.GUARD:     this._sGuard(dt, cmd, ctx); break;
       case S.STEP:      this._sStep(dt, cmd, ctx); break;
@@ -348,6 +373,11 @@ export class Fighter {
       this.char.play('block', { fade: 0.08 });
       return;
     }
+
+    /* Dash DURANTE a janela = PERSEGUIÇÃO. A mesma tecla, outro significado —
+     * de propósito: no Tenkaichi perseguir não é um botão novo, é reconhecer
+     * a situação. Vem antes do dash normal justamente por isso. */
+    if (cmd.dash && !this.dashBlocked && this.pursuitFrames > 0 && this._tryPursuit(ctx)) return;
 
     if (cmd.dash && !this.dashBlocked && this.dashCooldown === 0
         && this.ki >= TUNING.dragonDash.kiCost) {
@@ -455,6 +485,10 @@ export class Fighter {
     const A = TUNING.rushApproach;
     if (!this.lockOn || !this.target || !this.target.alive) return false;
 
+    // Rota esgotada: a investida também não sai. Sem isto, J te levava até o
+    // alvo e não acontecia nada — pior que o botão simplesmente não responder.
+    if (this.comboCount >= TUNING.combo.maxChain) return false;
+
     const d = this.position.distanceTo(this.target.position);
     if (d <= A.attackAt || d > A.range) return false;
     if (this.ki < A.kiCost) return false;
@@ -499,6 +533,96 @@ export class Fighter {
     cur.lerp(this._tmp, 1 - Math.exp(-A.turnSpeed * dt)).normalize();
 
     this.velocity.copy(cur).multiplyScalar(A.speed);
+    this.yaw = Math.atan2(cur.x, cur.z);
+    this.char.play('dash', { fade: 0.1 });
+  }
+
+  /* --- perseguição --------------------------------------------------- */
+  /**
+   * Abre a janela. Chamado pela resolução de acerto quando este lutador
+   * MANDA alguém pro blowaway — inclusive por quebra de poise.
+   */
+  openPursuit(victim) {
+    this.pursuitFrames = TUNING.pursuit.windowFrames;
+    this.pursuitTarget = victim;
+    this.events.push({ type: 'pursuitOpen', victim });
+  }
+
+  _tryPursuit(ctx) {
+    const P = TUNING.pursuit;
+    const alvo = this.pursuitTarget;
+    if (!alvo || !alvo.alive || this.ki < P.kiCost) return false;
+
+    this.ki -= P.kiCost;
+    this.dashBlocked = true;          // exige soltar e reapertar, como o dash
+    this._pursuitCarry = 0;
+    this._enter(S.PURSUIT);
+    this.char.play('dash', { fade: 0.08 });
+    this.events.push({ type: 'pursuitStart', victim: alvo });
+    return true;
+  }
+
+  /**
+   * Voar até quem você lançou. NÃO ataca sozinho ao chegar — devolve o
+   * controle em alcance e a decisão continua sua. É a diferença entre uma
+   * segunda disputa e uma continuação automática do combo.
+   */
+  _sPursuit(dt, cmd, ctx) {
+    const P = TUNING.pursuit;
+    const alvo = this.pursuitTarget;
+    const f = this.stateFrame;
+
+    if (!alvo || !alvo.alive) { this._enter(S.IDLE); this.char.play('idle', { fade: 0.15 }); return; }
+
+    // A perseguição é comprometida, mas cancelável em ataque — é o que
+    // permite chegar e emendar de imediato quem leu certo.
+    if (cmd.smash && this._tryAttack(this._smashKey(cmd.smashDir), ctx, cmd)) return;
+
+    const d = this.position.distanceTo(alvo.position);
+
+    /* FASE DE ACOMPANHAMENTO — alcançou, agora voa junto.
+     *
+     * Aqui o controle de voo NÃO entra: é ele que matava a velocidade herdada
+     * e fazia o alcance durar um frame. Rush e smash cancelam desta fase, que
+     * é justamente a decisão de follow-up. */
+    if (this._pursuitCarry > 0) {
+      this._pursuitCarry--;
+      if (alvo.alive) this.velocity.copy(alvo.velocity).multiplyScalar(P.carryVelocity);
+      if (cmd.rush && this._tryAttack(this._rushKey(cmd), ctx, cmd)) return;
+      this._faceTarget(dt, 3.0);
+      if (this._pursuitCarry === 0) { this._enter(S.IDLE); this.char.play('idle', { fade: 0.12 }); }
+      return;
+    }
+
+    if (d <= P.attackAt || f > P.maxFrames) {
+      /* Chegou: ROTA NOVA. É o prêmio por ter lido o lançamento, e é o único
+       * jeito legítimo de estender a pressão — martelar não abre rota. */
+      if (d <= P.attackAt && P.clearsChainOnArrive) {
+        this.comboCount = 0;
+        this.chainResetTimer = TUNING.combo.chainResetFrames;
+        this.events.push({ type: 'pursuitHit', victim: alvo });
+      }
+      this.pursuitFrames = 0;
+      this.pursuitTarget = null;
+
+      /* Alcançar é VIAJAR JUNTO, não encostar e parar. */
+      if (d <= P.attackAt) {
+        this.velocity.copy(alvo.velocity).multiplyScalar(P.carryVelocity);
+        this._pursuitCarry = P.carryFrames;
+        return;                       // continua no estado, agora acompanhando
+      }
+
+      this.velocity.multiplyScalar(0.25);
+      this._enter(S.IDLE);
+      this.char.play('idle', { fade: 0.12 });
+      return;
+    }
+
+    this._tmp.subVectors(alvo.position, this.position).normalize();
+    const cur = this._tmp2.copy(this.velocity);
+    if (cur.lengthSq() < 1e-6) cur.copy(this._tmp);
+    cur.normalize().lerp(this._tmp, 1 - Math.exp(-P.turnSpeed * dt)).normalize();
+    this.velocity.copy(cur).multiplyScalar(P.speed);
     this.yaw = Math.atan2(cur.x, cur.z);
     this.char.play('dash', { fade: 0.1 });
   }
@@ -644,6 +768,21 @@ export class Fighter {
       this.velocity.multiplyScalar(Math.exp(-5 * dt));
     }
 
+    /* CANCELAR O RECOVERY EM PERSEGUIÇÃO.
+     *
+     * A janela de perseguição abre no frame do lançamento — ou seja, enquanto
+     * o smash ainda está nos seus 24 frames de recovery. Sem este cancel, o
+     * Shift instintivo logo depois do impacto era simplesmente engolido, e a
+     * janela só respondia depois que o golpe terminava. Medido: apertei Shift
+     * 260 ms após lançar e nada aconteceu — o corpo estava em `attack`.
+     *
+     * Deixar o recovery ser cancelado SÓ em perseguição é o que torna
+     * "lancei, vou atrás" um gesto contínuo em vez de um tempo de espera.
+     * Não é grátis: a perseguição custa ki e o defensor tem a recuperação
+     * aérea pra puni-la. */
+    if (this.pursuitFrames > 0 && cmd.dash && !this.dashBlocked
+        && f > m.startup + m.active && this._tryPursuit(ctx)) return;
+
     /* Cancelar pro próximo elo do combo.
      *
      * Três resultados distintos, e é a distinção que faz o jogo ter turnos:
@@ -669,8 +808,13 @@ export class Fighter {
       }
     }
 
+    /* O golpe acabar NÃO acaba a rota.
+     *
+     * Aqui havia um `this.comboCount = 0`, e era ele que tornava o teto de
+     * elos decorativo: bastava deixar o último golpe terminar pra recomeçar do
+     * zero. Quem zera a rota agora é `chainResetTimer` — tempo real sem
+     * atacar — ou um ender acertado. */
     if (f >= total) {
-      this.comboCount = 0;
       this._enter(S.IDLE);
       this.char.play('idle', { fade: 0.14 });
     }
@@ -1033,12 +1177,20 @@ export class Fighter {
     const m = TUNING.moves[key];
     if (!m) return false;
 
-    // Teto de elos: sem ele, golpes direcionais emendando uns nos outros
-    // viram laço infinito e a vítima nunca volta a jogar.
-    const emendando = this.state === S.ATTACK;
-    if (emendando && !key.startsWith('smash') && this.comboCount >= TUNING.combo.maxChain) {
-      return false;
-    }
+    const ender = key.startsWith('smash');
+
+    /* A ROTA TEM FIM — e o fim vale inclusive vindo da IDLE.
+     *
+     * Antes este teto era `emendando && comboCount >= maxChain`, ou seja, só
+     * valia DENTRO do estado de ataque. O último elo terminava sozinho,
+     * `_sAttack` zerava `comboCount`, e o próximo J começava uma cadeia nova.
+     * Medido: elo máximo 6 (o teto "funcionava") e 126 acertos em 30 s de
+     * martelada — vinte e uma cadeias emendadas uma na outra.
+     *
+     * Agora, esgotada a rota, rush NÃO SAI até a interação resetar
+     * (`chainResetFrames` sem atacar). Sobram os enders e o reposicionamento —
+     * que é exatamente o ponto de decisão que faltava. */
+    if (!ender && this.comboCount >= TUNING.combo.maxChain) return false;
 
     // Reavalia a mira. Com lock-on solto, cada golpe procura o melhor alvo na
     // direção apontada — é assim que se troca de vítima no meio da sequência.
@@ -1057,12 +1209,22 @@ export class Fighter {
       }
     }
 
-    this.comboCount = emendando ? this.comboCount + 1 : 1;
+    /* Enders não contam como elo e, ao serem usados, ABREM a rota de novo
+     * (`enderClearsChain`). Finalizar direito é recompensado: você fica livre
+     * pra reengajar ou perseguir sem esperar o reset. */
+    if (ender) {
+      if (TUNING.combo.enderClearsChain) this.comboCount = 0;
+    } else {
+      this.comboCount += 1;
+    }
+    this.chainResetTimer = TUNING.combo.chainResetFrames;
+
     this.move = m;
     this.moveKey = key;
     this.hitThisMove.clear();
     this.hitConfirmThisMove = false;
     this.blockConfirmThisMove = false;
+    this._homingPulled = 0;      // teto de homing é POR GOLPE
     this._enter(S.ATTACK);
     this.char.play(m.clip, { fade: 0.05, restart: true });
 
@@ -1098,15 +1260,30 @@ export class Fighter {
     if (dist > m.homingRange || dist < 1e-4) { this._faceTarget(dt, 1.6); return; }
 
     // Distância ideal: encostado, mas não dentro do outro.
-    const ideal = TUNING.fighter.radius * 2 + 0.3;
-    const gap = dist - ideal;
+    const H = TUNING.homing;
+    const gap = dist - H.idealGap;
 
     if (gap > 0) {
       this._tmp.divideScalar(dist);
-      // 30 é calibrado pra fechar ~80% da distância nos ~4 frames de startup
-      // de um rush. Menos que isso e o primeiro soco do combo erra.
       const k = 1 - Math.exp(-m.homingStrength * 30 * dt);
-      this.position.addScaledVector(this._tmp, gap * k);
+      let passo = gap * k;
+
+      /* TETO POR GOLPE — é este limite que separa assistência de teleporte.
+       *
+       * Sem ele, medido nos 4 frames de startup de um rush: de 5 m o corpo
+       * atravessava 3,11 m sem física nenhuma. Apertar J resolvia distância,
+       * ângulo e trajetória sozinho, e o jogador não contribuía com
+       * posicionamento — era a maior causa isolada do "boneco gruda".
+       *
+       * Com teto, o homing fecha o ÚLTIMO pedaço (perdoa mira imprecisa, que
+       * é a armadilha 8.4) e devolve ao jogador a responsabilidade de ter
+       * chegado perto. */
+      const restante = Math.max(0, H.maxPull - this._homingPulled);
+      passo = Math.min(passo, restante);
+      if (passo > 0) {
+        this.position.addScaledVector(this._tmp, passo);
+        this._homingPulled += passo;
+      }
     }
 
     this._faceTarget(dt, 4.0);
@@ -1259,7 +1436,26 @@ export class Fighter {
       this._enter(S.GUARD, false);
       this.stateFrame = 0;
     } else if (move.causesBlowaway || result === 'guardbreak' || this.poise <= 0) {
-      if (this.poise <= 0) this.poise = TUNING.fighter.maxPoise;
+      /* QUEBRA DE POISE — o disjuntor tem que DESARMAR, não só disparar.
+       *
+       * Antes, a vítima entrava em blowaway carregando a velocidade do golpe
+       * que quebrou: um rush, 1.8 m/s. Como `blowaway.minSpeedToExit` é 4.0, o
+       * estado terminava no frame seguinte. Medido em 30 s de martelada: o
+       * poise quebrou 16 vezes e o blowaway durou 4 FRAMES em média — a vítima
+       * voltava exatamente pro lugar onde estava apanhando.
+       *
+       * Agora a quebra tem impulso próprio, independente do golpe. O objetivo
+       * dele não é dano: é SEPARAR OS CORPOS, devolver o neutro e abrir a
+       * janela de perseguição. O disjuntor vira oportunidade. */
+      if (this.poise <= 0 && !move.causesBlowaway && result !== 'guardbreak') {
+        const F = TUNING.fighter;
+        this.poise = F.maxPoise;
+        this.velocity.copy(this._tmp).multiplyScalar(F.poiseBreakKnockback);
+        this.velocity.y += F.poiseBreakKnockup;
+        this.events.push({ type: 'poiseBreak', attacker });
+      } else if (this.poise <= 0) {
+        this.poise = TUNING.fighter.maxPoise;
+      }
       this._enterBlowaway(move);
     } else {
       this._enter(S.HITSTUN);
@@ -1397,9 +1593,14 @@ export class Fighter {
     this.move = null;
     this.moveKey = null;
     this.comboCount = 0;
+    this.chainResetTimer = 0;
+    this.pursuitFrames = 0;
+    this.pursuitTarget = null;
+    this._pursuitCarry = 0;
     this.hitThisMove.clear();
     this.hitConfirmThisMove = false;
     this.blockConfirmThisMove = false;
+    this._homingPulled = 0;      // teto de homing é POR GOLPE
     this.guardStamina = TUNING.defense.guard.maxStamina;
     this._guardRegenDelay = 0;
     this.blockstunFrames = 0;

@@ -228,6 +228,19 @@ export class BotController {
       return c;
     }
 
+    /* ---------- 1.5 PERSEGUIR ----------
+     *
+     * A IA precisa participar da segunda disputa, senão ela só existe pro
+     * jogador e o lançamento volta a ser um beco sem saída do outro lado.
+     * Vem cedo na ordem de propósito: a janela é curta e perder ela é perder
+     * a leitura inteira. */
+    if (f.pursuitFrames > 0 && f.ki >= TUNING.pursuit.kiCost
+        && this._roll(A.aggression * 0.8 + diff * 0.2)) {
+      c.dash = true;
+      this._setMoveToward(c, _toFoe, ctx);
+      return c;
+    }
+
     /* ---------- 2. sem ki ---------- */
     if (f.ki < A.chargeKiBelow && dist > 8) {
       c.charge = true;
@@ -271,9 +284,23 @@ export class BotController {
         this._intent = 'approach';
         break;
 
-      case 'attack':
+      case 'attack': {
         this._setMoveToward(c, _toFoe, ctx, dist > A.attackRange ? 1 : 0.2);
         c.vertical = clampSign(vertical, 0.8);
+
+        /* ROTA ESGOTADA: martelar rush não sai mais (nem a investida). Se a IA
+         * insistisse, ela ficaria apertando um botão morto — que é exatamente
+         * a experiência que estamos tirando do jogador. Ela tem que tomar a
+         * MESMA decisão que o humano: finalizar ou sair. */
+        if (f.comboCount >= TUNING.combo.maxChain) {
+          if (dist <= A.attackRange * 1.3) {
+            c.smash = true;
+            c.smashDir = this._pickSmashDir(foe, ctx);
+          } else {
+            this._intent = 'reposition';
+          }
+          break;
+        }
 
         // A IA usa a MESMA investida que o jogador: apertar rush a média
         // distância a leva até o alvo. Sem isto ela ficaria parada a 15 m
@@ -301,6 +328,7 @@ export class BotController {
           }
         }
         break;
+      }
 
       case 'reposition':
       default: {

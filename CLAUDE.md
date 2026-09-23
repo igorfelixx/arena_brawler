@@ -55,6 +55,8 @@ para os números):
   **Está em 1 de propósito** — o MVP a validar é o duelo; subir é uma linha
 - **bancada de treino** (`T` cicla, `G` recoloca): NORMAL / PARADO / GUARDA /
   SEM REAÇÃO / KNOCKBACK / RECUPERAÇÃO. Boneco reage, não morre e volta sozinho
+- **perseguição** (`Shift` na janela): lançou → 75 frames pra decidir ir atrás.
+  Cancela o recovery do smash, custa ki, e alcançar dá **rota nova**
 - **perfis de IA** (`B` cicla): EQUILIBRADO / PRESSÃO / DEFESA / BORDA /
   AGRESSIVO / EVASIVO — servem pra testar o sistema contra estilos diferentes
 - **telemetria ao vivo** (`H`): frame do golpe, janela de cancelamento,
@@ -62,6 +64,31 @@ para os números):
 - IA com punição de recovery baseada em frame data real
 
 Não implementado: **áudio**, **rede**, troca de alvo por gamepad no ciclo.
+
+### O loop de combate (reconstruído — leia antes de mexer no J)
+
+O protótipo tinha uma ESTEIRA de combo. Agora tem uma ROTA com fim e uma
+segunda disputa depois do lançamento:
+
+```
+NEUTRO → aproximar → ROTA (até 4 elos) → ENDER (smash) → LANÇAMENTO
+                          │                                   ↓
+                     esgotou? só                    ╔═ PERSEGUIR (Shift) ═╗
+                     ender/reposicionar             ║ custa ki · 75f      ║
+                          ↓                         ╚═════════╤═══════════╝
+                       NEUTRO                    alcançou → voa JUNTO 18f
+                     (0,6 s sem J)                        → ROTA NOVA
+```
+
+Quatro regras que sustentam isso, e que **não podem ser desfeitas por engano**:
+
+1. `combo.maxChain` vale **inclusive vindo da IDLE**. Antes só valia dentro do
+   estado de ataque, e bastava deixar o golpe terminar pra recomeçar do zero.
+2. A rota só zera por TEMPO (`chainResetFrames`) ou por um **ender acertado**.
+3. Quebra de poise tem impulso PRÓPRIO (`poiseBreakKnockback`) — antes ela
+   herdava os 1,8 m/s do rush e o blowaway acabava em 4 frames.
+4. `homing.maxPull` limita o quanto um golpe te puxa. Antes puxava 3,1 m de
+   uma vez: era o "boneco gruda".
 
 ### O eixo ataque ↔ defesa (revisto e medido)
 

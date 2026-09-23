@@ -833,6 +833,55 @@ Com os dois lutadores em tons de azul no meio de VFX ciano, era impossível dize
 num relance quem era quem. **Jogador = cor fria, oponente = cor quente.** Não é
 estética, é leitura. Com 30 jogadores isso fica ainda mais crítico.
 
+### 8.23 ⚠️ "Teto de combo" que só vale dentro do estado de ataque não é teto
+
+O sintoma relatado pelo dono do projeto foi: *"se eu flodar o J, o boneco gruda
+no adversário e fica batendo infinitamente"*. O teto de elos existia e
+funcionava — o elo máximo medido era exatamente `maxChain`. E mesmo assim eram
+**126 acertos em 30 s**, porque a verificação era:
+
+```js
+const emendando = this.state === S.ATTACK;
+if (emendando && comboCount >= maxChain) return false;   // ← só dentro do ataque
+```
+
+Deixar o último golpe terminar zerava `comboCount` e o próximo J começava uma
+cadeia nova. Vinte e uma cadeias de seis, emendadas.
+
+**A regra:** o limite de uma sequência tem que viver num relógio PRÓPRIO
+(tempo sem atacar, ou um ender confirmado), nunca no ciclo de vida do golpe.
+No Unreal, uma GameplayTag de "rota em andamento" com duração, e não um contador
+zerado no `EndAbility`.
+
+E somaram-se outras quatro causas, todas medidas:
+
+| causa | medição |
+|---|---|
+| poise quebrava e não separava | blowaway durava **4 frames** (herdava 1,8 m/s do rush, e `minSpeedToExit` é 4,0) |
+| homing teleportava | de 5 m puxava **3,11 m** em 4 frames, escrevendo em `position` |
+| investida era coleira | cobria **17 m** e atacava sozinha ao chegar |
+| não havia neutro | vítima presa **77%** do tempo; 5 janelas ≥12f em 30 s |
+
+Depois das correções, contra IA: acertos 129 → **63**, vítima presa 82% → **47%**,
+janelas reagíveis 11 → **24**. E a taxa de conexão do combo ficou em **83%** em
+todas as distâncias normais — a armadilha 8.4 não reabriu.
+
+### 8.24 A janela de perseguição abre DENTRO do recovery do golpe que lançou
+
+Construída a perseguição, ela não respondia: apertar Shift logo depois do smash
+não fazia nada. Causa — a janela abre no frame do impacto, e o smash ainda tem
+24 frames de recovery; `_sFree` não roda em `ATTACK`, então o input morria.
+
+**A regra:** toda janela reativa que nasce de um golpe precisa ser alcançável
+DE DENTRO do recovery desse golpe. Aqui virou um cancel específico (só
+perseguição cancela o recovery).
+
+E alcançar precisou de uma segunda correção pelo mesmo motivo: só herdar a
+velocidade do alvo não bastava, porque o controle de voo normal desacelera pra
+zero no frame seguinte. Foi preciso uma fase de ACOMPANHAMENTO (`carryFrames`)
+em que o controle de voo não entra — é ela que produz a imagem de dois corpos
+cruzando o céu na mesma trajetória.
+
 ### 8.19 ⚠️ Frame data que ninguém lê é pior que frame data errado
 
 Auditando o projeto, **onze campos de `tuning.js` nunca eram lidos por ninguém**:

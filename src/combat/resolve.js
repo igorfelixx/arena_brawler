@@ -83,6 +83,15 @@ export function resolveMelee(fighters, ctx) {
       if (result === 'guard') attacker.blockConfirmThisMove = true;
       else attacker.hitConfirmThisMove = true;
 
+      /* MANDOU PRA LONGE → abre a JANELA DE PERSEGUIÇÃO.
+       *
+       * Vale pra qualquer coisa que produza blowaway: smash, guard break e
+       * também a quebra de poise (a vítima se soltando da pressão). Até aqui,
+       * lançar alguém era um beco sem saída — o corpo voava e você
+       * re-aproximava com um J. Agora é o começo da SEGUNDA disputa: o
+       * atacante escolhe perseguir e o defensor escolhe como voltar. */
+      if (victim.state === 'blowaway') attacker.openPursuit(victim);
+
       ctx.onHit?.({ attacker, victim, move, result, point: _hitPos.clone() });
     }
   }
