@@ -207,6 +207,14 @@ Kael Vorn: The Conductor Concept Sheet
 
 ---
 
+## Second Character
+Zara Vex: The Radiant Character Sheet
+
+<img width="1024" height="1536" alt="ChatGPT Image Sep 23, 2026, 04_44_17 PM" src="https://github.com/user-attachments/assets/34be7064-1bf8-4f79-9520-343b4fc15121" />
+
+
+---
+
 ## Estrutura
 
 ```
