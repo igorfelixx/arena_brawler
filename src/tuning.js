@@ -138,7 +138,9 @@ export const TUNING = {
     gravity: 26,                // m/s² — só em blowaway/knockdown
     knockbackDecay: 4.5,        // quão rápido o empurrão do hitstun morre
     maxFlightSpeed: 90,         // teto duro de velocidade (anti-explosão numérica)
-    airDrag: 0.3,
+    // (`airDrag` foi removido: nunca foi lido. O arrasto do voo normal já sai
+    //  de `flight.decel`, e o do blowaway de `blowaway.drag`. Número que não é
+    //  lido mente sobre o que o jogo faz — e este arquivo é o produto.)
   },
 
   /* ================================================================== */
@@ -157,7 +159,10 @@ export const TUNING = {
     maxHealth: 100,
     radius: 0.55,               // raio de colisão
     height: 1.8,
-    pushForce: 7,
+    // (`pushForce` removido: nunca foi lido. A separação de corpos em
+    //  `resolveOverlap` é POSICIONAL de propósito — um empurrão por velocidade
+    //  brigaria com o homing e com o avanço do golpe, e o combate ficaria
+    //  escorregadio justamente na distância em que ele acontece.)
 
     // Poise: quantos golpes aguenta sem cambalear. Impede stunlock eterno.
     maxPoise: 34,
@@ -182,8 +187,8 @@ export const TUNING = {
     stickyBonus: 0.35,          // histerese: evita troca nervosa entre dois alvos
     helplessBonus: 0.5,         // combar quem está indefeso é a jogada certa
 
-    // Quantos inimigos a IA considera. Mantém o custo previsível com 30 na arena.
-    aiScanLimit: 6,
+    // (`aiScanLimit` removido: nunca foi lido. Era otimização para 20–30
+    //  lutadores, e a escala é outro problema — volta quando for encarado.)
   },
 
   /* ================================================================== */
@@ -197,21 +202,56 @@ export const TUNING = {
    *    2. não morrer no meio do treino
    *    3. voltar sozinho quando você mandar ele pra fora com um smash
    *
-   *  Os modos são NORMAL → PARADO → GUARDA. O de guarda existe porque treinar
-   *  contra guarda é outro exercício: é onde se aprende que só o smash abre. */
+   *  A bancada tem SEIS modos, um por pergunta que o combate precisa responder:
+   *
+   *    NORMAL       IA ligada — o jogo de verdade
+   *    PARADO       não age, mas reage       → ritmo do combo, cancels
+   *    GUARDA       segura guarda            → é aqui que se aprende que só o
+   *                                            smash abre, e onde se sente o
+   *                                            relógio da estamina de guarda
+   *    SEM REAÇÃO   toma dano e não sai do lugar → hitbox, alcance, frame data
+   *                                            sem perseguir o alvo pela arena
+   *    KNOCKBACK    não se recupera nunca    → ler a TRAJETÓRIA do smash e
+   *                                            medir quanto falta pro ring-out
+   *    RECUPERAÇÃO  sempre recupera na 1ª chance → treinar a leitura da
+   *                                            recuperação, que é a segunda
+   *                                            disputa depois do smash
+   *
+   *  T cicla, G recoloca os bonecos na distância de treino. */
   training: {
     healDelayFrames: 75,        // sem levar dano por isto, a vida volta ao cheio
     respawnDelayFrames: 45,     // mandou pra fora? volta sozinho
+
+    /* Onde o boneco reaparece. A distância importa: 3 m é logo depois do
+     * `rushApproach.attackAt` (2.3), então cada repetição começa com uma
+     * investida curta — que é exatamente o começo do loop real de combate.
+     * Se ele voltasse colado, você treinaria um jogo que não existe. */
+    practiceDistance: 3.0,
+    practiceHeight: 14.0,
+
+    /* Recolocar o boneco sozinho depois de mandá-lo longe. Sem isto, cada
+     * smash bem-sucedido cobra uma viagem de 34 m de volta, e você para de
+     * testar smash — que é justamente a mecânica mais importante do MVP. */
+    autoReturnDistance: 22.0,   // passou disto, volta sozinho
+    autoReturnDelayFrames: 70,  // mas só depois de você ver a trajetória inteira
   },
 
   /* ================================================================== */
   /*  PARTIDA                                                            */
   /* ================================================================== */
   match: {
-    /* Nº de oponentes controlados por IA. Suba pra sentir o tumulto que o
-     * jogo final propõe (o alvo é 20–30 no total). Custa CPU: cada um roda
-     * uma máquina de estados e uma árvore de decisão por frame. */
-    opponents: 2,
+    /* Nº de oponentes controlados por IA.
+     *
+     * Está em 1 porque o MVP a validar é 1 jogador × 1 oponente: com um
+     * terceiro na arena é impossível julgar uma troca — você nunca sabe se
+     * apanhou porque leu errado ou porque alguém chegou por trás. Primeiro o
+     * duelo fica bom; só depois a escala vira pergunta.
+     *
+     * Subir este número continua funcionando (IAs brigam entre si, mira por
+     * direção, HUD do alvo atual). Custa CPU: cada um roda uma máquina de
+     * estados e uma árvore de decisão por frame, e o teto real na sua máquina
+     * ainda é desconhecido. */
+    opponents: 1,
   },
 
   /* ================================================================== */
@@ -233,6 +273,32 @@ export const TUNING = {
      * Ou seja: o piso continua baixo (encostar é fácil) e o teto sobe
      * (atacar no vazio passa a custar caro). */
     cancelOnlyOnContact: true,
+
+    /* E BLOQUEAR conta como "encostou"?  NÃO.
+     *
+     * Esta é a regra que o comentário do bloco `moves` sempre afirmou e que o
+     * código nunca implementou: "quem BLOQUEIA sai do stun antes de quem
+     * atacou, e ganha o turno". Não ganhava, porque a emenda era liberada por
+     * QUALQUER contato — inclusive bloqueio. Na prática:
+     *
+     *   bloqueei o golpe 1 → ele emenda no 2 → emenda no 3 → …
+     *
+     * O atacante nunca ficava exposto contra a guarda, então defender não
+     * cobrava preço nenhum e a única saída era gastar ki no vanish. Com
+     * `cancelOnBlock: false` as três situações passam a ser distintas:
+     *
+     *   acertou   → emenda, o combo flui           (piso baixo, é gostoso)
+     *   bloqueou  → NÃO emenda, come o recovery    (o turno vira)
+     *   errou     → NÃO emenda, come o recovery    (punição)
+     *
+     * Com o rush_r (recovery 9, blockstun 4) isso dá ~+9 de vantagem pro
+     * defensor: tempo de sobra pra revidar com um rush de 4 de startup. É o
+     * que obriga o atacante a misturar SMASH (que quebra guarda) em vez de
+     * martelar — e é o eixo ATAQUE ↔ BLOCK ↔ COUNTER que faltava.
+     *
+     * Está no painel (P) porque é a alavanca mais forte do arquivo: ligar isto
+     * devolve o comportamento antigo na hora, pra comparar lado a lado. */
+    cancelOnBlock: false,
 
     /* Teto de elos antes de ser obrigado a finalizar (ou soltar).
      * Com golpes direcionais emendando uns nos outros livremente, sem teto o
@@ -553,11 +619,42 @@ export const TUNING = {
     guard: {
       damageReduction: 0.80,
       knockbackReduction: 0.60,
-      enterFrames: 2,
-      exitFrames: 4,
+      // (`enterFrames`/`exitFrames` removidos: nunca foram lidos — a guarda
+      //  sempre foi instantânea. E deve continuar: responder na hora é o §7.1,
+      //  e o preço de defender agora é a ESTAMINA abaixo, que é um custo de
+      //  decisão, não de latência.)
       kiPerHit: 3,              // guarda gasta ki no Tenkaichi
-      guardBreakStunFrames: 42,
-      // Rebater ki blast: apertar guarda no timing devolve o projétil.
+
+      /* ESTAMINA DE GUARDA — o relógio que impede turtle.
+       *
+       * O campo `guardStamina` existia no Fighter desde o começo: era
+       * inicializado, regenerado e zerado no guard break. E NUNCA era lido por
+       * ninguém. Mecânica fantasma — segurar F era essencialmente grátis.
+       *
+       * Agora ela é o contrapeso de `combo.cancelOnBlock: false`. Se bloquear
+       * devolve o turno, defender precisa custar ALGUMA coisa, senão a resposta
+       * ótima vira "segure F pra sempre" e o jogo trava no outro extremo.
+       *
+       * O drena por TEMPO (segurar) e por HIT (aguentar pressão) são separados
+       * de propósito: segurar guarda no vazio é barato, aguentar um combo é
+       * caro. Ao zerar, a guarda arrebenta sozinha — e aí você fica exposto em
+       * pé por `breakStunFrames`, que é punível mas não é morte.
+       *
+       * Note a diferença deliberada entre as DUAS quebras de guarda:
+       *   por SMASH     → blowaway, voa longe  → é a ferramenta de RING-OUT
+       *   por EXAUSTÃO  → stun em pé, punível  → é a ferramenta de PRESSÃO
+       */
+      maxStamina: 100,
+      staminaPerHit: 13,          // cada golpe aparado
+      staminaDrainPerSec: 8,      // custo de só ficar segurando
+      staminaRegenPerSec: 26,
+      staminaRegenDelayFrames: 34, // só volta a encher N frames depois de soltar
+      breakStunFrames: 42,        // exposto em pé após a guarda arrebentar
+
+      /* Rebater ki blast. `deflectWindowFrames` existia e não era usado: o
+       * projétil voltava por SÓ ESTAR de guarda, sem timing nenhum — perícia
+       * zero. Agora exige apertar a guarda perto do impacto; segurar guarda
+       * continua ABSORVENDO (o normal), mas só o timing rebate. */
       deflectWindowFrames: 8,
       deflectSpeedMul: 1.25,
     },
@@ -581,6 +678,23 @@ export const TUNING = {
       // Chain limit: impede vanish-war infinito entre dois jogadores cheios.
       maxChain: 4,
       chainKiMultiplier: 1.4,   // cada vanish seguido custa 40% a mais
+
+      /* ERRAR O VANISH PRECISA CUSTAR.
+       *
+       * Antes você só pagava ki quando o vanish FUNCIONAVA. Apertar V no vazio
+       * era de graça, então martelar V era estritamente melhor que ler o
+       * adversário — e a mecânica assinatura do jogo virava botão de pânico
+       * sem multa. Não existe leitura onde chutar não custa.
+       *
+       * Agora, se o toque expira sem nenhum golpe ter chegado, cobra-se uma
+       * fração do ki e um cooldown curto. Pequeno de propósito: é pra punir
+       * quem MARTELA, não quem tenta e erra o timing por pouco. */
+      whiffKiCost: 7,
+      whiffCooldownFrames: 22,
+      /* A partir de quantos frames um toque de vanish é considerado chute.
+       * Tem que ser >= a maior `vanishWindow` de qualquer golpe (hoje 14, do
+       * smash), senão você seria cobrado por um vanish que ainda ia funcionar. */
+      maxUsefulWindow: 16,
     },
 
     /* Step dodge — esquiva curta, barata, sem custo de ki. */
@@ -622,8 +736,8 @@ export const TUNING = {
     groundBounceDamage: 4,
     groundBounceShake: 0.35,
     craterOnImpact: true,
-    // Perseguir quem está voando (dash + soco) = a jogada mais satisfatória.
-    chaseWindowFrames: 60,
+    // (`chaseWindowFrames` removido: nunca foi lido. A janela de perseguir quem
+    //  está voando já é o próprio tempo de blowaway — não havia segundo relógio.)
   },
 
   /* ================================================================== */
@@ -793,6 +907,87 @@ export const TUNING = {
     edgeAwareness: 0.7,
     // Quanto a IA tenta posicionar o JOGADOR de costas pra borda.
     ringOutIntent: 0.55,
+
+    /* ================================================================
+     *  PERFIS — estilos de bot para TESTAR o sistema (tecla B)
+     * ================================================================
+     *  Não é "IA melhor". É instrumento de medição.
+     *
+     *  Um bot só responde uma pergunta: "o combate funciona contra ISTO?".
+     *  Com um estilo só, você afina o jogo contra um comportamento e descobre
+     *  tarde que ele quebra contra outro. Cada perfil abaixo existe pra
+     *  estressar um eixo diferente do design:
+     *
+     *    PRESSÃO    não larga de você        → a DEFESA tem resposta?
+     *    DEFESA     bloqueia e pune          → o ATAQUE tem como abrir?
+     *    BORDA      luta perto da borda      → o RING-OUT é justo ou roleta?
+     *    AGRESSIVO  quer te jogar pra fora   → dá pra ler e virar o jogo?
+     *    EVASIVO    foge, esquiva, recupera  → dá pra ALCANÇAR quem não quer
+     *                                          lutar? (o pior cenário do voo
+     *                                          livre, e o mais revelador)
+     *
+     *  São só sobreposições dos campos acima — o que não estiver listado
+     *  continua vindo de `ai`, inclusive ajustado ao vivo pelo painel (P). */
+    profiles: {
+      EQUILIBRADO: {},
+
+      'PRESSÃO': {
+        aggression: 0.92,
+        preferredRange: 2.6,
+        guardChance: 0.12,
+        anticipateGuardChance: 0.15,
+        punishChance: 0.45,
+        smashChance: 0.42,
+        blastChance: 0.06,
+        vanishChance: 0.25,
+        decisionIntervalFrames: 8,
+      },
+
+      DEFESA: {
+        aggression: 0.22,
+        preferredRange: 5.5,
+        guardChance: 0.85,
+        anticipateGuardChance: 0.90,
+        guardHoldFrames: 40,
+        // Bloquear só neutraliza; o que torna a defesa uma AMEAÇA é punir.
+        punishChance: 0.95,
+        punishCooldownFrames: 14,
+        smashChance: 0.50,
+        blastChance: 0.15,
+      },
+
+      BORDA: {
+        // Sobreviver encostado no limite: é o teste do §17.
+        edgeAwareness: 1.0,
+        ringOutIntent: 0.10,
+        aggression: 0.30,
+        preferredRange: 7.0,
+        vanishChance: 0.70,
+        recoverChance: 0.95,
+        blastChance: 0.50,
+      },
+
+      AGRESSIVO: {
+        // Só quer te empurrar pra fora, e aceita o risco de se expor por isso.
+        aggression: 0.80,
+        ringOutIntent: 1.0,
+        smashChance: 0.70,
+        edgeAwareness: 0.25,
+        punishChance: 0.60,
+        preferredRange: 3.0,
+      },
+
+      EVASIVO: {
+        aggression: 0.25,
+        preferredRange: 9.0,
+        stepChance: 0.80,
+        vanishChance: 0.85,
+        recoverChance: 1.0,
+        guardChance: 0.50,
+        blastChance: 0.60,
+        dashRange: 14.0,
+      },
+    },
   },
 };
 
@@ -829,9 +1024,25 @@ export const DEBUG_SLIDERS = [
   ['ki.passiveRegenPerSec',         0, 20,  0.2, 'Regen passivo'],
   ['defense.vanish.kiCost',         0, 60,  1,   'Vanish: custo de ki'],
 
+  /* ---- O eixo ataque ↔ defesa. É aqui que mora a maior diferença desta
+   * passada: bloquear passou a devolver o turno, e defender passou a ter um
+   * relógio. Os dois são ajustáveis ao vivo porque o ponto certo entre
+   * "turtle domina" e "pressão domina" só sai de playtest. ---- */
+  ['__group', 'Guarda / Turnos'],
+  ['combo.cancelOnBlock',           0, 1,   1,   'Bloqueio deixa emendar? (liga = antigo)'],
+  ['moves.rush_r.blockstun',        0, 30,  1,   'Blockstun do rush'],
+  ['moves.smash_forward.blockstun', 0, 60,  1,   'Blockstun do smash'],
+  ['defense.guard.staminaPerHit',   0, 50,  1,   'Guarda: desgaste por golpe'],
+  ['defense.guard.staminaDrainPerSec', 0, 40, 1, 'Guarda: desgaste por segundo'],
+  ['defense.guard.staminaRegenPerSec', 0, 80, 1, 'Guarda: recuperação'],
+  ['defense.guard.breakStunFrames', 0, 90,  1,   'Exposto após guarda esgotar'],
+  ['defense.guard.deflectWindowFrames', 0, 20, 1,'Janela de rebater blast'],
+
   ['__group', 'Vanish / Defesa'],
   ['moves.smash_forward.vanishWindow', 0, 30, 1, 'Janela de vanish (smash)'],
   ['moves.rush_r.vanishWindow',     0, 30,  1,   'Janela de vanish (rush)'],
+  ['defense.vanish.whiffKiCost',    0, 40,  1,   'Custo de ERRAR o vanish'],
+  ['defense.vanish.whiffCooldownFrames', 0, 60, 1, 'Cooldown após errar vanish'],
   ['combo.maxChain',                1, 12,  1,   'Máx. de elos no combo'],
   ['ai.punishChance',               0, 1,   0.02,'IA: chance de punir recovery'],
   ['ai.anticipateGuardChance',      0, 1,   0.02,'IA: guarda por antecipação'],
@@ -855,6 +1066,19 @@ export const DEBUG_SLIDERS = [
   ['ai.aggression',                 0, 1,   0.02,'Agressividade'],
   ['ai.vanishChance',               0, 1,   0.02,'Chance de vanish'],
   ['ai.smashChance',                0, 1,   0.02,'Chance de smash'],
+  /* Medido: contra quem martela, o bot DEFESA passa 37% do tempo em guarda e
+   * ainda assim leva 88 golpes limpos contra 32 aparados. O gargalo não é a
+   * chance de decidir bloquear — é por quanto tempo ele SUSTENTA a decisão.
+   * Esta é a alavanca pra isso. */
+  ['ai.guardHoldFrames',            4, 90,  1,   'IA: frames segurando a guarda'],
+  // Lembrete: o perfil (tecla B) SOBRESCREVE estes campos. Se arrastar um
+  // slider aqui e a IA ignorar, é porque o perfil ativo define aquele valor.
+  ['match.opponents',               1, 12,  1,   'Oponentes (recarregue p/ valer)'],
+
+  ['__group', 'Treino'],
+  ['training.practiceDistance',     1, 20,  0.5, 'Distância do boneco'],
+  ['training.autoReturnDistance',   5, 60,  1,   'Boneco volta se passar de'],
+  ['training.healDelayFrames',     15, 300, 5,   'Boneco se cura após (frames)'],
 ];
 
 /* Lê/escreve TUNING por caminho ('moves.smash_forward.knockback'). */

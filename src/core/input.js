@@ -38,6 +38,9 @@ const BINDINGS = {
   lockCycle:  { keys: ['KeyQ'], pad: [8] },          // troca de alvo
   lockToggle: { keys: ['KeyE', 'Tab'], pad: [11] },  // solta/retoma o lock-on
   training:   { keys: ['KeyT'] },                   // cicla o modo treino
+  trainReset: { keys: ['KeyG'] },                   // recoloca os bonecos
+  botProfile: { keys: ['KeyB'] },                   // cicla o estilo da IA
+  debugHud:   { keys: ['KeyH'] },                   // telemetria de frame data
   debugPanel: { keys: ['KeyP'] },
   reset:      { keys: ['Backspace'] },
 };
@@ -225,16 +228,20 @@ export const KEYMAP_HELP = [
   ['WASD',            'Voar / orbitar o alvo'],
   ['Espaço / C',      'Subir / descer'],
   ['Shift',           'Dragon Dash (segure)'],
-  ['J  ou  Botão esq.','Rush — segure/repita pro combo'],
+  // Um TOQUE = um elo. Segurar não emenda: a direção escolhe o golpe, então a
+  // decisão tem que estar em algum lugar, e ela está no toque.
+  ['J  ou  Botão esq.','Rush — 1 toque = 1 elo · a direção escolhe o golpe'],
   ['K  ou  Botão dir.','Smash — com direção manda pra cima/baixo'],
   ['L',               'Ki blast (segure = carregado)'],
-  ['F',               'Guarda  ·  F + direção = step'],
-  ['V',               'Vanish — some atrás de quem te bate'],
+  ['F',               'Guarda  ·  F + direção = step  ·  toque = rebate blast'],
+  ['V',               'Vanish — some atrás de quem te bate (errar custa ki)'],
   ['R',               'Carregar ki (segure)'],
   ['X',               'Ultimate'],
   ['Q',               'Trocar de alvo'],
   ['E',               'Soltar / retomar o lock-on'],
-  ['T',               'Modo treino: parado / guarda / normal'],
+  ['T',               'Modo treino (6 modos)  ·  G recoloca o boneco'],
+  ['B',               'Estilo da IA: pressão / defesa / borda / …'],
+  ['H',               'Telemetria (frame data ao vivo)'],
   ['P',               'Painel de tuning'],
   ['Backspace',       'Reiniciar a luta'],
 ];

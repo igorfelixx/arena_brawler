@@ -94,6 +94,12 @@
     background: linear-gradient(180deg, #ffe89a, var(--ki-full));
     box-shadow: 0 0 12px rgba(255,210,74,.7);
   }
+  /* Ki abaixo de `ki.lowKiThreshold`: sem vanish, sem dash, sem escape.
+     É informação de sobrevivência — tem que ser vista de canto de olho. */
+  .bar.ki .bar-fill.low {
+    background: linear-gradient(180deg, #ff9a9a, #d94a4a);
+    animation: blink .62s steps(2) infinite;
+  }
 
   .hud-center { text-align: center; flex: 1; padding-top: 2px; }
   .timer {
@@ -237,6 +243,25 @@
     font-family: ui-monospace, 'SF Mono', Menlo, monospace;
     color: var(--dim); opacity: .5;
     font-variant-numeric: tabular-nums;
+  }
+
+  /* ================= telemetria (tecla H) =================
+     Instrumento, não interface: fica no canto, em monoespaçada, e só aparece
+     quando pedido. O §23 avisa — não transformar o jogo num Excel voador. */
+  .telemetry {
+    position: fixed; left: 26px; top: 96px; z-index: 30;
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 11px; line-height: 1.45;
+    white-space: pre;
+    color: #cfe6ff;
+    background: rgba(8,12,20,.72);
+    border: 1px solid rgba(255,255,255,.10);
+    border-left: 2px solid #59d2ff;
+    border-radius: 4px;
+    padding: 9px 13px;
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 1px 3px rgba(0,0,0,.9);
+    pointer-events: none;
   }
 
   /* ================= painel de debug ================= */

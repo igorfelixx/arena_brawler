@@ -51,6 +51,8 @@ export class HUD {
       </div>
       <div class="lock-state" id="lockState"></div>
 
+      <div class="telemetry" id="telemetry"></div>
+
       <div class="hud-bottom">
         <div class="help" id="help"></div>
         <div class="stats" id="stats"></div>
@@ -71,6 +73,11 @@ export class HUD {
     this.aliveEl = $('alive');
     this.trainingEl = $('training');
     this.p2name = $('p2name');
+    this.telemetry = $('telemetry');
+
+    // Telemetria começa DESLIGADA: o §23 pede a ferramenta, não um Excel voador.
+    this.debug = false;
+    this.telemetry.style.display = 'none';
 
     $('help').innerHTML = KEYMAP_HELP
       .map(([k, d]) => `<div><kbd>${k}</kbd><span>${d}</span></div>`).join('');
@@ -91,7 +98,7 @@ export class HUD {
   addCombo() {
     this._comboCount++;
     this._comboTimer = 1.1;
-    this.combo.textContent = `${this._comboCount} HITS`;
+    this.combo.textContent = `${this._comboCount} HIT${this._comboCount > 1 ? 'S' : ''}`;
     this.combo.className = 'combo show';
     // Re-dispara a animação de "pop" a cada hit.
     this.combo.style.animation = 'none';
@@ -120,8 +127,103 @@ export class HUD {
     this.lockReticle.style.transform = `translate(${screen.x}px, ${screen.y}px) translate(-50%, -50%)`;
   }
 
+  /* ================================================================== */
+  /*  TELEMETRIA  (tecla H)                                             */
+  /* ================================================================== */
+  /*  O que um jogo de luta precisa mostrar pra ser AFINÁVEL, e que só se
+   *  descobre errado medindo: em que frame do golpe você está, se a janela de
+   *  cancelamento está aberta, quanto blockstun o outro comeu, e sobretudo a
+   *  VANTAGEM em frames — quem sai primeiro depois de uma troca.
+   *
+   *  A vantagem é o número que decide se "bloquear devolve o turno" é verdade
+   *  ou é só um comentário no tuning.js. Aqui ela fica na tela.
+   *
+   *  Desligada por padrão: instrumento não pode virar interface.            */
+  toggleDebug() {
+    this.debug = !this.debug;
+    this.telemetry.style.display = this.debug ? '' : 'none';
+    return this.debug;
+  }
+
+  /** Quantos frames faltam pro lutador poder agir de novo. */
+  static _framesAteAgir(f) {
+    if (!f) return 0;
+    if (f.blockstunFrames > 0) return f.blockstunFrames;
+    if (f.state === 'hitstun') return Math.max(0, (f._stunFrames || 0) - f.stateFrame);
+    if (f.state === 'attack' && f.move) {
+      const total = f.move.startup + f.move.active + f.move.recovery;
+      return Math.max(0, total - f.stateFrame);
+    }
+    if (f.state === 'blowaway' || f.state === 'knockdown' || f.state === 'getup') return 999;
+    return 0;
+  }
+
+  _linhasTelemetria(player, opponent, arena, extra) {
+    const L = [];
+    const nf = (v, d = 1) => (v === undefined || v === null ? '--' : v.toFixed(d));
+
+    // --- golpe atual ---
+    const m = player.move;
+    if (m && player.state === 'attack') {
+      const total = m.startup + m.active + m.recovery;
+      const cw = m.cancelWindow;
+      const naJanela = cw && player.stateFrame >= cw[0] && player.stateFrame <= cw[1];
+      L.push(`golpe   ${player.moveKey}  f ${player.stateFrame}/${total}  [${player.attackPhase}]`);
+      L.push(`        startup ${m.startup} · active ${m.active} · recovery ${m.recovery}`);
+      L.push(`cancel  ${cw ? `${cw[0]}–${cw[1]}` : 'nenhum'}   ${naJanela ? '◄ ABERTA' : 'fechada'}`
+           + `   emenda: ${player.contactAllowsChain ? 'LIBERADA' : 'travada'}`);
+      L.push(`combo   elo ${player.comboCount}/${extra.maxChain}   vanishWindow ${m.vanishWindow ?? '--'}`);
+    } else {
+      L.push(`estado  ${player.state}  f ${player.stateFrame}`);
+    }
+
+    // --- vantagem de frames: o número que decide o jogo de turnos ---
+    const meu = HUD._framesAteAgir(player);
+    const dele = HUD._framesAteAgir(opponent);
+    if (opponent && meu < 999 && dele < 999) {
+      const adv = dele - meu;
+      const sinal = adv > 0 ? '+' : '';
+      L.push(`VANTAGEM ${sinal}${adv} frames  ${adv > 0 ? '(seu turno)' : adv < 0 ? '(turno dele)' : '(neutro)'}`);
+    }
+
+    // --- recursos e estados defensivos ---
+    L.push(`ki ${nf(player.ki, 0)}  poise ${nf(player.poise, 0)}  guarda ${nf(player.guardStamina, 0)}`
+         + `  blockstun ${player.blockstunFrames}`);
+    L.push(`vanish  cadeia ${player.vanishChain}/${extra.vanishMaxChain}`
+         + `  pressF ${player.vanishPressFrame > 900 ? '--' : player.vanishPressFrame}`
+         + `  cooldown ${player.vanishCooldown}`);
+
+    // --- espaço: é onde o ring-out vive ---
+    const dBorda = arena.radius - arena.distanceFromCenter(player.position);
+    const dTeto = arena.ceiling - player.position.y;
+    L.push(`borda   ${nf(dBorda)} m   teto ${nf(dTeto)} m   alt ${nf(player.position.y)} m`);
+    L.push(`vel     ${nf(player.velocity.length())} m/s   fora ${player.outOfBoundsFrames}f`);
+
+    // --- alvo ---
+    if (opponent) {
+      const om = opponent.move;
+      L.push(`ALVO    ${opponent.name}  ${opponent.state} f ${opponent.stateFrame}`
+           + (om && opponent.state === 'attack' ? ` (${opponent.moveKey})` : ''));
+      L.push(`        dist ${nf(player.position.distanceTo(opponent.position))} m`
+           + `   |v| ${nf(opponent.velocity.length())} m/s`
+           + `   borda ${nf(arena.radius - arena.distanceFromCenter(opponent.position))} m`);
+      L.push(`        hp ${nf(opponent.health, 0)}  ki ${nf(opponent.ki, 0)}`
+           + `  guarda ${nf(opponent.guardStamina, 0)}  blockstun ${opponent.blockstunFrames}`);
+    }
+
+    // --- juice ---
+    L.push(`hitstop ${extra.hitstop}f   slowmo ${extra.slowMo}f   IA: ${extra.perfil}`);
+
+    return L;
+  }
+
   /* ---------------------------------------------------------------- */
-  update(dt, { player, opponent, arena, loop, fighters, treino }) {
+  update(dt, { player, opponent, arena, loop, fighters, treino, debug }) {
+    if (this.debug) {
+      this.telemetry.textContent =
+        this._linhasTelemetria(player, opponent, arena, debug || {}).join('\n');
+    }
+
     // Modo treino tem que ser VISÍVEL o tempo todo: descobrir depois de dois
     // minutos que os bonecos estavam parados é frustrante.
     if (treino && treino !== 'NORMAL') {
@@ -164,6 +266,14 @@ export class HUD {
     // Ki cheio o bastante pro ultimate: a barra avisa.
     this.p1ki.classList.toggle('full', player.ki >= TUNING.blasts.ultimate.kiCost);
     this.p2ki.classList.toggle('full', !!opponent && opponent.ki >= TUNING.blasts.ultimate.kiCost);
+
+    /* Ki BAIXO precisa ser legível sem olhar número. `ki.lowKiThreshold`
+     * existia no tuning e nunca era consultado — e é justamente o momento mais
+     * importante do recurso: abaixo dele você não tem mais vanish nem dash, ou
+     * seja, perdeu as ferramentas de escape. Isso é informação de sobrevivência
+     * e tem que gritar, não ficar escondida numa barra. */
+    this.p1ki.classList.toggle('low', player.ki < TUNING.ki.lowKiThreshold);
+    this.p2ki.classList.toggle('low', !!opponent && opponent.ki < TUNING.ki.lowKiThreshold);
 
     // --- tempo e estado da arena ---
     const t = arena.elapsed;

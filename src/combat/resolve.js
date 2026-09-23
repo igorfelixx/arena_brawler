@@ -75,6 +75,14 @@ export function resolveMelee(fighters, ctx) {
 
       /* --- 7. aplica --- */
       const result = victim.applyHit({ move, attacker, direction: _dir, guarded, ctx });
+
+      /* O atacante precisa saber QUE TIPO de contato foi, não só que houve um.
+       * É isso que decide se o combo pode emendar: acerto libera, bloqueio não
+       * (ver combo.cancelOnBlock). Sem esta distinção, martelar contra a guarda
+       * mantinha o turno pra sempre. */
+      if (result === 'guard') attacker.blockConfirmThisMove = true;
+      else attacker.hitConfirmThisMove = true;
+
       ctx.onHit?.({ attacker, victim, move, result, point: _hitPos.clone() });
     }
   }

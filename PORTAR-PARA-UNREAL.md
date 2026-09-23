@@ -86,10 +86,15 @@ netcode. **Naraka: Bladepoint** é a outra referência (60 jogadores, melee).
 | Rush direcional (J+dir) | 4/4 golpes corretos; gancho +6,7 m/s, chute −8,8 m/s |
 | Troca de alvo por direção | alterna entre rivais conforme a direção apontada |
 | Vários lutadores | 3 na arena, 60 fps, IAs brigando entre si |
-| Modo treino | boneco parado reage e não morre; volta após ring-out |
+| Bancada de treino | 6 modos; boneco reage, não morre, volta sozinho |
 | Investida de rush (engajar) | dano em 25 s: 0 → 100; distância mediana 14,7 m → 1,3 m |
 | Combo só emenda ao encostar | encostando: 4 elos; no vazio: 1 elo e recovery exposto |
-| Martelar botão não domina | saldo de martelar: +109 → +10 |
+| ~~Martelar botão não domina~~ | **medição inválida** — ver 8.20 e seção 11 |
+| Blockstun / turnos | bloquear deixa o defensor **+8 frames** |
+| Estamina de guarda | 7 golpes aparados esgotam; **1 smash abre na hora** |
+| Hitstop congela a pose | mixer parado 0 s durante o congelamento |
+| Buffer de input | smash no frame 2 do rush sai; 1 toque = 1 elo |
+| Knockback do dash | aponta pro impacto em 4/4 orientações da vítima |
 | Combo de 4 elos com cancel | `rush_1→2→3→4→smash`, HP 100→96→91→85→69 |
 | Homing no startup | fecha 2.32 m → 1.45 m durante o startup |
 | Smash / blowaway | lança a 46.1 m/s, arrasto leva a 24 → 22 |
@@ -110,9 +115,9 @@ afterimages, speed lines, HUD, painel de tuning ao vivo.
   consciente: beep sintético soa pior que silêncio.
 - **Escala de 20–30 jogadores.** A arquitetura agora é multi-lutador de fato
   (alvo por pontuação, HUD do alvo atual, IAs que brigam entre si), e `match.opponents`
-  controla quantos. Verificado com 3 a 60 fps; contagens altas NÃO foram testadas
-  em hardware real — o navegador headless usado nos testes renderiza por software
-  e trava bem antes do que uma GPU de verdade.
+  controla quantos. **Está em 1 agora**, de propósito: o MVP a validar é o duelo,
+  e com um terceiro na arena não dá pra julgar uma troca. Verificado com 3 a
+  60 fps; contagens altas NÃO foram testadas em hardware real.
 - **Rede.** Nada. Ver seção 10 para o que foi preparado.
 
 ---
@@ -266,14 +271,46 @@ Três ferramentas com custos diferentes, de propósito:
 
 | Ferramenta | Custo | O que faz | Quando usar |
 |---|---|---|---|
-| **Guarda** (`F`) | ki por hit | reduz 80% do dano | pressão contínua |
+| **Guarda** (`F`) | ki por hit **+ estamina** | reduz 80% do dano | pressão contínua |
 | **Step** (`F`+direção) | grátis | i-frames curtos | reposicionar |
-| **Vanish** (`V`) | 20 ki, escalando | some, reaparece **atrás** | leitura, contra smash |
+| **Vanish** (`V`) | 20 ki, escalando, **+ multa se errar** | some, reaparece **atrás** | leitura, contra smash |
 | **Recuperação aérea** (`F` voando) | 10 ki | para o blowaway | não morrer |
 
 **A guarda é DIRECIONAL.** Só funciona de frente pro atacante (`dot < -0.15`).
 Isto não é detalhe: é o que dá sentido ao vanish reaparecer pelas costas. Guarda
 omnidirecional tornaria a mecânica assinatura inútil.
+
+#### O jogo de TURNOS (implementado depois, e o doc antigo mentia sobre ele)
+
+A versão original deste documento afirmava que "blockstun é menor que o recovery,
+então quem bloqueia ganha o turno". **Não ganhava.** `blockstun` era escrito num
+campo que só o estado de hitstun lia, e quem bloqueia vai pro estado de guarda —
+era frame data morto. Pior: bloquear contava como "encostou" e LIBERAVA a emenda
+do combo, então o atacante nunca ficava exposto contra a guarda.
+
+Agora o golpe tem **três desfechos distintos**, e é a distinção que cria turnos:
+
+```
+acertou   → emenda; o combo flui               (piso baixo, é gostoso)
+bloqueou  → NÃO emenda; come o recovery        (defensor sai +8 frames)
+errou     → NÃO emenda; come o recovery        (punição)
+```
+
+E defender tem um relógio: `guardStamina` drena por TEMPO (segurar) e por HIT
+(aguentar pressão). Existem **duas quebras de guarda, com papéis diferentes** —
+e essa separação é design que porta:
+
+| quebra | resultado | papel no jogo |
+|---|---|---|
+| por **SMASH** | blowaway, voa a 46 m/s | ferramenta de **RING-OUT** |
+| por **EXAUSTÃO** | stun em pé, punível | ferramenta de **PRESSÃO** |
+
+Medido no navegador: 7 golpes aparados esgotam a guarda; **1 smash abre na
+hora**. É isso que ensina o jogador que o smash é a resposta ao turtle.
+
+No Unreal: a emenda vira condição de transição entre `UGameplayAbility`s, com
+uma tag aplicada só no ACERTO (`Combat.Chain.Confirmed`) — e explicitamente
+**não** aplicada no bloqueio. A estamina de guarda é mais um `UAttributeSet`.
 
 ### 3.7 Vanish — a mecânica que define o jogo
 
@@ -796,6 +833,75 @@ Com os dois lutadores em tons de azul no meio de VFX ciano, era impossível dize
 num relance quem era quem. **Jogador = cor fria, oponente = cor quente.** Não é
 estética, é leitura. Com 30 jogadores isso fica ainda mais crítico.
 
+### 8.19 ⚠️ Frame data que ninguém lê é pior que frame data errado
+
+Auditando o projeto, **onze campos de `tuning.js` nunca eram lidos por ninguém**:
+`blockstun` (os 7 valores), `guardBreakStunFrames`, `guardStamina`,
+`guard.enterFrames/exitFrames`, `deflectWindowFrames`, `chaseWindowFrames`,
+`lowKiThreshold`, `airDrag`, `pushForce`, `aiScanLimit`, `hoverBobAmp/Speed`.
+
+O problema não é o desperdício — é que **o arquivo de tuning É o produto deste
+protótipo**, e ele estava descrevendo um jogo que não existia. O comentário
+sobre turnos (seção 3.6) afirmava uma regra de balanceamento que o código não
+implementava, e qualquer um que portasse a tabela pro Unreal portaria a mentira
+junto.
+
+**A regra:** todo campo de tuning precisa ter um ponto de leitura, ou sair do
+arquivo. Se a ideia ainda importa, implemente; se não, apague e diga por quê.
+Um `grep` do nome de cada campo contra o código inteiro custa dois minutos e é a
+checagem mais barata que este projeto tem.
+
+### 8.20 ⚠️ Buffer de input tem que ser gasto na EXECUÇÃO, nunca na leitura
+
+O buffer era consumido dentro do construtor de Command, e isso produzia **dois
+defeitos opostos pela mesma linha**:
+
+- **fora do ataque** o comando era engolido mesmo quando o estado o ignorava —
+  apertar smash no frame 2 de um rush (janela de cancelamento abre no 5) queimava
+  o buffer e **o golpe não saía**. O buffer de 8 frames existe justamente pra
+  sobreviver a estado ocupado, e era ali que ele morria.
+- **dentro do ataque** nunca era consumido, então um único toque emendava
+  sozinho: buffer vivo do frame 3 ao 11, janela reabrindo no 5 e no 10 → **um
+  toque virava dois elos.** O combo se jogava sozinho.
+
+Efeito colateral grave: isso **contaminou a medição de "martelar botão"** que
+está registrada na seção 11 — martelar e tocar uma vez produziam quase o mesmo
+resultado, então a comparação não mediu o que dizia medir.
+
+No Unreal o equivalente é limpar a fila do Enhanced Input no `Tick` em vez de
+no `ActivateAbility`. Gaste o buffer no frame em que a ability ATIVA.
+
+### 8.21 Hitstop que não congela a animação não é hitstop
+
+A simulação parava no impacto, mas o `render()` continuava chamando
+`mixer.update(dt)`. O soco seguia o movimento com o mundo congelado — e como a
+pose parando é a informação visual principal do impacto, um hitstop de 16 frames
+(smash) e um de 4 (rush) pareciam quase a mesma coisa. O mecanismo de PESO do
+jogo rodava pela metade.
+
+No Unreal, `CustomTimeDilation = 0.01` no ator já pega o AnimInstance junto —
+mas confira, porque Niagara e componentes com `bTickEvenWhenPaused` escapam.
+E **deixe** aura, rastro e a micro-vibração da câmera rodando: congelar 100%
+parece travamento, não impacto.
+
+### 8.22 Vetor temporário compartilhado corrompeu a direção do knockback
+
+```js
+victim.applyHit({
+  direction: this._tmp,                          // guarda a REFERÊNCIA
+  guarded:  victim.guarding && this._facing(v),  // ← _facing sobrescreve _tmp
+})
+```
+
+Propriedades de objeto literal avaliam em ordem, então `applyHit` recebia o vetor
+que `_facing` tinha acabado de escrever: "pra onde a VÍTIMA está olhando".
+Trombar alguém empurrava ele na direção em que ele estava virado — knockback
+aparentemente aleatório, num jogo cuja identidade é empurrar o outro pra fora.
+
+**A regra:** função que empresta um vetor de rascunho do objeto não pode ser
+chamada no mesmo literal onde esse vetor é passado. Rascunho de função de
+consulta tem que ser exclusivo dela.
+
 ---
 
 ## 9. Pipeline de asset
@@ -891,10 +997,31 @@ Especificamente não validado:
 - [ ] A arena encolhendo muda a luta, ou é só um relógio?
 - [ ] Carregar ki é um risco interessante ou uma pausa chata?
 - [ ] A IA é um oponente ou um saco de pancada?
-- [ ] **Martelar um botão está calibrado?** Já foi corrigido uma vez: com
-      `combo.cancelOnlyOnContact`, o saldo de martelar caiu de +109 para +10
-      contra a IA. Falta saber se o ponto está bom PRA HUMANO — se ainda ganha
-      fácil, ou se agora pune demais quem está aprendendo.
+- [ ] **Martelar um botão AINDA GANHA, e a medição antiga não valia.**
+      O número "+109 → +10" registrado aqui foi colhido com o buffer de input
+      quebrado (ver 8.20): martelar e tocar uma vez produziam quase o mesmo
+      resultado, então a comparação não mediu o que dizia medir.
+      Remedido com o buffer correto, 45 s por perfil, saldo de martelar:
+
+      | perfil | antes de `cancelOnBlock` | depois |
+      |---|---|---|
+      | EQUILIBRADO | +278 | +283 |
+      | **PRESSÃO** | +283 | **−272** |
+      | DEFESA | +253 | +232 |
+      | AGRESSIVO | +294 | +184 |
+      | EVASIVO | +282 | +255 |
+
+      A regra do bloqueio faz o que promete (defensor +8), mas é **inerte
+      porque o bot mal bloqueia**: contra quem martela, o perfil DEFESA passa
+      37% do tempo em guarda e ainda leva 88 golpes limpos contra 32 aparados.
+      O único perfil que pune martelada é o PRESSÃO — que não se defende,
+      **revida**. Isso reforça a 8.16: ferramenta defensiva só cobra preço se
+      alguém de fato a usar no tempo certo.
+      Hipótese ainda NÃO implementada (de propósito): o gargalo é
+      `ai.guardHoldFrames`. Precisa de playtest humano antes de virar mudança.
+- [ ] **Os números novos da guarda** (`staminaPerHit: 13`, `breakStunFrames: 42`,
+      `blockstun` agora vivo) — nunca jogados por humano.
+- [ ] **O custo de errar o vanish** (7 de ki + 22 frames) pune o certo?
 - [ ] O teto competitivo existe? Profundidade nasce entre dois humanos que
       punem o erro um do outro, e isso NÃO é mensurável com bot roteirizado —
       nem com os bots "casual" e "bom" usados aqui, que são laços fixos.

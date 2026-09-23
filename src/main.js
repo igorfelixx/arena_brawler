@@ -152,12 +152,48 @@ const debugPanel = new DebugPanel(app, input);
 // Lock-on. Começa ligado — é o padrão do Tenkaichi e o modo de combate.
 let lockedOn = true;
 
-/* Modo treino: 0 = normal, 1 = parado, 2 = guarda.
- * Comando fixo reaproveitado — criar um objeto por frame por boneco geraria
- * lixo à toa no loop mais quente do jogo. */
-const MODOS_TREINO = ['NORMAL', 'PARADO', 'GUARDA'];
+/* ==========================================================================
+ *  BANCADA DE TREINO
+ * ==========================================================================
+ *  Seis modos, um por pergunta que o combate precisa responder. Ver o bloco
+ *  `training` em tuning.js para o porquê de cada um.
+ *
+ *  `guard`      → o boneco segura guarda
+ *  `noReaction` → leva dano sem sair do lugar
+ *  `autoRecover`→ sempre se recupera do blowaway na primeira chance
+ *
+ *  KNOCKBACK não precisa de flag: com o comando vazio o boneco nunca aperta
+ *  guarda nem vanish, e `_sBlowaway` exige um dos dois pra recuperar. Ele voa
+ *  a trajetória inteira sozinho, que é exatamente o que se quer medir ali.
+ *
+ *  O comando é um objeto fixo reaproveitado: criar um por frame por boneco
+ *  geraria lixo à toa no laço mais quente do jogo. */
+const MODOS_TREINO = [
+  { nome: 'NORMAL',      ia: true },
+  { nome: 'PARADO',      ia: false },
+  { nome: 'GUARDA',      ia: false, guard: true },
+  { nome: 'SEM REAÇÃO',  ia: false, noReaction: true },
+  { nome: 'KNOCKBACK',   ia: false },
+  { nome: 'RECUPERAÇÃO', ia: false, autoRecover: true },
+];
 let modoTreino = 0;
 const cmdTreino = emptyCommand();
+
+const treino = () => MODOS_TREINO[modoTreino];
+const emTreino = () => modoTreino !== 0;
+
+/* Estilo de bot em uso (tecla B). TODOS os bots trocam juntos, de propósito:
+ * a bancada precisa responder "o combate funciona contra ISTO?", e misturar
+ * estilos na mesma luta impede de saber qual comportamento causou o quê. */
+const PERFIS_IA = Object.keys(TUNING.ai.profiles);
+let perfilIA = 0;
+
+function ciclarPerfilDosBots() {
+  perfilIA = (perfilIA + 1) % PERFIS_IA.length;
+  const nome = PERFIS_IA[perfilIA];
+  for (const b of bots) b.setProfile(nome);
+  return nome;
+}
 
 /* Spawns em círculo: com N lutadores, posição fixa em par vira duelo e some o
  * tumulto que o jogo propõe. O raio é fração do raio da arena pra ninguém
@@ -232,7 +268,8 @@ async function boot() {
 
     // Cada IA tem semente própria: com a mesma, todas tomariam a MESMA decisão
     // no mesmo frame e o grupo se moveria como um cardume.
-    bots = fighters.slice(1).map((f, i) => new BotController(f, 0xC0FFEE + i * 7919));
+    bots = fighters.slice(1).map((f, i) =>
+      new BotController(f, 0xC0FFEE + i * 7919, PERFIS_IA[perfilIA]));
 
     for (const f of fighters) f.target = nearestEnemy(f, fighters);
     opponent = player.target;
@@ -285,11 +322,38 @@ function buildPlayerCommand() {
   // Direção do smash: vertical manda. Espaço+K sobe, C+K crava.
   c.smashDir = c.vertical > 0.5 ? 'up' : c.vertical < -0.5 ? 'down' : 'forward';
 
-  // Gasta o buffer pra ação não repetir no frame seguinte.
-  if (c.rush && player?.state !== S.ATTACK) input.consume('rush');
-  if (c.smash) input.consume('smash');
-
   return c;
+}
+
+/* --------------------------------------------------------------------------
+ *  O buffer só é gasto quando o golpe REALMENTE SAIU.
+ *
+ *  A versão anterior gastava o buffer aqui no builder, e isso produzia dois
+ *  defeitos opostos pela mesma linha:
+ *
+ *    FORA do ataque — o comando era consumido mesmo quando o estado o ignorava.
+ *      Apertar K no frame 2 de um rush (a cancelWindow só abre no frame 5)
+ *      queimava o buffer e o SMASH SIMPLESMENTE NÃO SAÍA. Idem apertar J em
+ *      hitstun, em approach, em step. O buffer de 8 frames existe exatamente
+ *      pra sobreviver a estado ocupado, e era aí que ele morria.
+ *
+ *    DENTRO do ataque — nunca era consumido, então um único toque emendava
+ *      sozinho: buffer vivo do frame 3 ao 11, cancelWindow reabrindo no 5 e no
+ *      10 → UM TOQUE VIRAVA DOIS ELOS. O combo se jogava sozinho, e isso
+ *      contaminou a medição de "martelar botão" (martelar e tocar uma vez
+ *      davam quase o mesmo resultado).
+ *
+ *  A regra certa é a de qualquer jogo de luta: o buffer guarda a INTENÇÃO e
+ *  só é quitado no frame em que a ação acontece. O Fighter já anuncia isso nos
+ *  eventos — é só escutar.
+ * ------------------------------------------------------------------------ */
+function consumePlayerInputs() {
+  for (const e of player.events) {
+    if (e.type === 'rushApproach') input.consume('rush');
+    else if (e.type === 'attackStart') {
+      input.consume(e.key.startsWith('smash') ? 'smash' : 'rush');
+    }
+  }
 }
 
 /* ==========================================================================
@@ -297,6 +361,20 @@ function buildPlayerCommand() {
  * ========================================================================== */
 function onHit({ attacker, victim, move, result, point, projectile }) {
   const isPlayerAttacker = attacker === player;
+
+  // O relógio de cura do boneco reinicia a CADA golpe. Sem isto ele curava no
+  // meio do combo e era impossível ler quanto a sequência inteira tirou.
+  marcarDanoTreino(victim);
+
+  // O banner fica no evento `guardShattered` (drainEvents), porque a guarda
+  // também arrebenta por TEMPO — e aí não há acerto nenhum pra passar por aqui.
+  if (result === 'guardexhaust') {
+    juice.impact({ hitstop: 12, shake: 0.5, zoom: 0.6 });
+    vfx.burst(point, { count: 34, color: 0x9fd0ff, speed: 11, life: 0.45 });
+    vfx.ring(point, { billboard: true, color: 0x9fd0ff, from: 0.4, to: 7, life: 0.4 });
+    if (isPlayerAttacker) hud.addCombo(); else hud.resetCombo();
+    return;
+  }
 
   if (result === 'guard') {
     juice.impact({ hitstop: Math.round(move.hitstop * 0.5), shake: move.shake * 0.4 });
@@ -406,6 +484,31 @@ function drainEvents(f) {
         break;
       }
 
+      /* A guarda arrebentou — por esgotamento, seja de aguentar pressão ou de
+       * ficar segurando. Precisa de leitura forte: é o momento em que o
+       * defensor deixa de estar defendendo e vira alvo aberto, e quem está
+       * atacando tem uma janela curta pra aproveitar. */
+      case 'guardShattered': {
+        const p = f.position.clone();
+        p.y += 1.0;
+        vfx.burst(p, { count: 40, color: 0xbfe4ff, speed: 13, life: 0.5 });
+        vfx.ring(p, { billboard: true, color: 0x9fd0ff, from: 0.5, to: 9, life: 0.45 });
+        juice.impact({ shake: 0.45, zoom: 0.5 });
+        if (f === player) hud.showBanner('SUA GUARDA QUEBROU', 1200, 'warn');
+        else if (f === opponent) hud.showBanner('GUARDA QUEBRADA', 1100);
+        break;
+      }
+
+      /* Apertou vanish e não vinha golpe nenhum. Some ki e trava por um
+       * instante — o feedback é discreto de propósito: quem leu certo não
+       * precisa ver nada, e quem está martelando V precisa perceber a conta
+       * chegando. A barra de ki caindo já é o recado. */
+      case 'vanishWhiff':
+        if (f === player) {
+          vfx.burst(f.position, { count: 6, color: 0x88a0b8, speed: 3.5, life: 0.25 });
+        }
+        break;
+
       case 'airRecover':
         vfx.burst(f.position, { count: 14, color: f.auraColor, speed: 7, life: 0.3 });
         vfx.ring(f.position, { billboard: true, color: f.auraColor, from: 0.4, to: 4, life: 0.35 });
@@ -423,38 +526,125 @@ function drainEvents(f) {
  *  Sem isto o treino dura dez segundos: você mata o boneco, ou manda ele pra
  *  fora com um smash, e acabou. Ele precisa se recompor sozinho.
  * ========================================================================== */
+/** Onde o boneco deve ficar pra próxima repetição: logo à frente do jogador. */
+function postoDeTreino(out = new THREE.Vector3()) {
+  const T = TUNING.training;
+  combatCam.getMoveBasis(moveBasis);
+  out.copy(player.position).addScaledVector(moveBasis.forward, T.practiceDistance);
+  out.y = Math.max(TUNING.flight.minY + 0.4, T.practiceHeight);
+  return out;
+}
+
+const _posto = new THREE.Vector3();
+
+/** Recoloca todos os bonecos na distância de treino (tecla G). */
+function recolocarBonecos(anunciar = true) {
+  /* O JOGADOR também volta inteiro. Descobri isto olhando a tela: entrei no
+   * treino com a vida que sobrou da luta anterior e fiquei praticando smash com
+   * 40% de HP. Bancada serve pra repetir uma situação — se o seu estado varia a
+   * cada tentativa, não dá pra comparar duas tentativas. Posição não é
+   * restaurada de propósito: onde você está é parte do exercício. */
+  if (player && player.alive) {
+    player.health = TUNING.fighter.maxHealth;
+    player.ki = TUNING.ki.max;
+    player.poise = TUNING.fighter.maxPoise;
+    player.guardStamina = TUNING.defense.guard.maxStamina;
+  }
+
+  for (let i = 1; i < fighters.length; i++) {
+    const f = fighters[i];
+    f.reset(postoDeTreino(_posto));
+    f.char.root.visible = true;
+    f.target = player;
+    f._healTimer = 0;
+    f._respawn = 0;
+    f._longe = 0;
+    aplicarModoTreino(f);
+  }
+  if (anunciar) hud.showBanner('BONECOS RECOLOCADOS', 700);
+}
+
+/** Espelha o modo atual nos flags do lutador. */
+function aplicarModoTreino(f) {
+  const m = treino();
+  f.immortal = emTreino();
+  f.noReaction = !!m.noReaction;
+  f.autoRecover = !!m.autoRecover;
+}
+
 function manterBonecos() {
   const T = TUNING.training;
 
   for (let i = 1; i < fighters.length; i++) {
     const f = fighters[i];
+    aplicarModoTreino(f);
 
-    // Saiu da arena (ou morreu): volta ao lugar depois de um instante.
+    // Saiu da arena: volta ao posto de treino depois de um instante.
     if (!f.alive) {
       f._respawn = (f._respawn || 0) + 1;
       if (f._respawn >= T.respawnDelayFrames) {
         f._respawn = 0;
-        f.reset(SPAWNS[i]);
+        f.reset(postoDeTreino(_posto));
         f.char.root.visible = true;
         f.target = player;
+        aplicarModoTreino(f);
       }
       continue;
     }
     f._respawn = 0;
 
-    // Vida volta ao cheio depois de um tempo sem apanhar — assim dá pra ler
-    // quanto um combo inteiro tirou antes de recomeçar.
+    /* Vida volta ao cheio depois de um tempo SEM LEVAR DANO.
+     *
+     * O timer não era resetado ao tomar dano — só ao encher. Na prática ele
+     * curava a cada 75 frames (1,25 s) no MEIO do combo, e era impossível ler
+     * quanto uma sequência inteira tirou. Que é o propósito do modo. */
     if (f.health < TUNING.fighter.maxHealth) {
       f._healTimer = (f._healTimer || 0) + 1;
       if (f._healTimer >= T.healDelayFrames) {
         f.health = TUNING.fighter.maxHealth;
         f.poise = TUNING.fighter.maxPoise;
+        f.guardStamina = TUNING.defense.guard.maxStamina;
+        f.ki = TUNING.ki.max * TUNING.ki.startPercent;
         f._healTimer = 0;
       }
     } else {
       f._healTimer = 0;
     }
+
+    /* A guarda do boneco NÃO é falsificada.
+     *
+     * A primeira versão disto recarregava a estamina todo frame pra deixar o
+     * boneco um paredão eterno. Medindo no navegador: 8 rushes na guarda e o
+     * número não se movia — a bancada mentia sobre a mecânica, que é o mesmo
+     * pecado do timer de cura que esta etapa veio consertar.
+     *
+     * Um boneco que aguenta ~8 golpes e ENTÃO tem a guarda arrebentada ensina
+     * as duas coisas de uma vez: que pressão tem recompensa, e que o smash é o
+     * atalho. A recomposição vem do próprio ciclo de cura logo acima — pare de
+     * bater por um instante e ele volta inteiro.
+     */
+    /* Mandou longe com um smash? Depois de você ver a trajetória inteira, ele
+     * volta sozinho. Sem isso, cada smash bem-sucedido cobra uma viagem de
+     * 34 m de volta — e você para de treinar justamente o smash. */
+    const longe = player.position.distanceTo(f.position) > T.autoReturnDistance;
+    if (longe && f.state !== S.BLOWAWAY) {
+      f._longe = (f._longe || 0) + 1;
+      if (f._longe >= T.autoReturnDelayFrames) {
+        f._longe = 0;
+        f.position.copy(postoDeTreino(_posto));
+        f.velocity.set(0, 0, 0);
+        f.outOfBoundsFrames = 0;
+      }
+    } else if (!longe) {
+      f._longe = 0;
+    }
   }
+}
+
+/** Marca o dano tomado pra o timer de cura não zerar no meio de um combo. */
+function marcarDanoTreino(victim) {
+  if (!emTreino()) return;
+  victim._healTimer = 0;
 }
 
 /* ==========================================================================
@@ -488,6 +678,28 @@ function checkRingOut(f) {
 
   const out = arena.isOutOfBounds(f.position);
 
+  /* NO TREINO, O JOGADOR NÃO MORRE.
+   *
+   * Antes ele morria: `checkRingOut` rodava pra todos, mas `manterBonecos()`
+   * só respawna de i=1 pra frente e o bloco de fim de partida é guardado por
+   * `modoTreino === 0`. Resultado — caiu da arena treinando, ficou eliminado
+   * pra sempre, sem banner, sem respawn, e a única saída era Backspace. A
+   * bancada não pode ter um estado terminal. */
+  if (emTreino() && f === player) {
+    if (arena.isRingOut(f.position) || f.outOfBoundsFrames > TUNING.arena.outOfBoundsFrames) {
+      f.position.set(0, TUNING.training.practiceHeight, 0);
+      f.velocity.set(0, 0, 0);
+      f.outOfBoundsFrames = 0;
+      f.health = TUNING.fighter.maxHealth;
+      hud.showBanner('TREINO · você voltou pra arena', 900, 'warn');
+      recolocarBonecos(false);
+      return;
+    }
+    f.outOfBoundsFrames = out ? f.outOfBoundsFrames + 1 : 0;
+    if (f.outOfBoundsFrames === 1) hud.showBanner('VOLTE PRA ARENA!', 1200, 'warn');
+    return;
+  }
+
   if (arena.isRingOut(f.position)) {
     f.eliminate('queda');
     announceKO(f, 'CAIU DA ARENA');
@@ -505,6 +717,7 @@ function checkRingOut(f) {
     f.outOfBoundsFrames = 0;
   }
 
+  // `immortal` já segura a vida em 1, então o boneco de treino nunca cai aqui.
   if (f.health <= 0 && f.state !== S.BLOWAWAY && f.velocity.lengthSq() < 4) {
     f.eliminate('nocaute');
     announceKO(f, 'K.O.');
@@ -565,15 +778,38 @@ function step(dt) {
 
   if (input.pressed('debugPanel')) debugPanel.toggle();
 
-  if (input.pressed('training')) {
+  if (input.pressed('training') && fighters.length) {
     modoTreino = (modoTreino + 1) % MODOS_TREINO.length;
-    cmdTreino.guard = modoTreino === 2;
-    hud.showBanner(`TREINO: ${MODOS_TREINO[modoTreino]}`, 1100);
-    // Ao voltar pro normal, devolve todo mundo inteiro pra luta valer.
-    if (modoTreino === 0) {
-      for (const f of fighters) { if (f.alive) { f.health = TUNING.fighter.maxHealth; f.ki = TUNING.ki.max * TUNING.ki.startPercent; } }
+    cmdTreino.guard = !!treino().guard;
+    hud.showBanner(`TREINO: ${treino().nome}`, 1100);
+
+    /* Os flags têm que ser reaplicados SEMPRE, inclusive ao voltar pro NORMAL
+     * — senão `immortal` e `noReaction` ficam grudados no boneco e a luta de
+     * verdade passa a acontecer contra um alvo que não morre. */
+    for (let i = 1; i < fighters.length; i++) aplicarModoTreino(fighters[i]);
+
+    if (!emTreino()) {
+      // Ao voltar pro normal, devolve todo mundo inteiro pra luta valer.
+      for (const f of fighters) {
+        if (!f.alive) continue;
+        f.health = TUNING.fighter.maxHealth;
+        f.ki = TUNING.ki.max * TUNING.ki.startPercent;
+        f.guardStamina = TUNING.defense.guard.maxStamina;
+      }
+    } else {
+      recolocarBonecos(false);
     }
   }
+
+  if (input.pressed('trainReset') && emTreino()) recolocarBonecos();
+
+  if (input.pressed('debugHud')) hud.toggleDebug();
+
+  if (input.pressed('botProfile') && bots.length) {
+    const nome = ciclarPerfilDosBots();
+    hud.showBanner(`IA: ${nome}`, 900);
+  }
+
   if (input.pressed('reset')) { resetRound(); return; }
 
   if (player) {
@@ -603,8 +839,17 @@ function step(dt) {
   juice.update(dt);
   loop.timeScale = juice.timeScale;
 
-  if (!player || !opponent) return;
-
+  /* O FIM DE PARTIDA VEM ANTES DA CHECAGEM DE ALVO — e a ordem é o bug.
+   *
+   * Quando o ÚLTIMO adversário morre, o reengate no fim do step não acha
+   * ninguém e `opponent` vira null. Com `if (!opponent) return` antes daqui, o
+   * step abortava no frame seguinte e o cronômetro de reinício NUNCA andava:
+   * você vencia, lia "VOCÊ VENCEU", e o jogo ficava parado até apertar
+   * Backspace. Perder não travava (o vencedor continua vivo e vira alvo), então
+   * o defeito só aparecia na vitória — o caminho que a gente menos testa.
+   *
+   * Ficou visível agora porque o MVP passou a ser 1×1: com um oponente só,
+   * todo fim de luta passa por aqui. */
   if (roundOver) {
     roundOverTimer += dt;
     // Reinício automático depois de um tempo, além do Backspace.
@@ -612,17 +857,20 @@ function step(dt) {
     return;
   }
 
+  if (!player || !opponent) return;
+
   // Congelado no impacto: nada de gameplay anda.
   if (juice.frozen) return;
 
   combatCam.getMoveBasis(moveBasis);
 
   player.update(dt, buildPlayerCommand(), ctx);
+  consumePlayerInputs();
 
   for (const b of bots) {
     if (!b.f.alive) continue;
 
-    if (modoTreino !== 0) {
+    if (emTreino()) {
       /* Boneco de treino: não AGE, mas continua REAGINDO. Passamos um comando
        * vazio em vez de pular o update — pular congelaria hitstun, knockback e
        * blowaway, e aí o alvo não ensinaria nada sobre o combo. */
@@ -637,7 +885,7 @@ function step(dt) {
     b.f.update(dt, b.update(dt, ctx), ctx);
   }
 
-  if (modoTreino !== 0) manterBonecos();
+  if (emTreino()) manterBonecos();
 
   resolveMelee(fighters, ctx);
   // Dash-contra-dash (clash) tem regra própria e é testado depois do impacto
@@ -648,7 +896,7 @@ function step(dt) {
   beam.update(dt, fighters, ctx);
   resolveOverlap(fighters);
 
-  if (modoTreino === 0) arena.update(dt);
+  if (!emTreino()) arena.update(dt);
 
   for (const f of fighters) {
     drainEvents(f);
@@ -666,7 +914,7 @@ function step(dt) {
 
   // Fim de partida: sobrou um.
   const vivos = fighters.filter((f) => f.alive);
-  if (!roundOver && modoTreino === 0 && vivos.length <= 1) {
+  if (!roundOver && !emTreino() && vivos.length <= 1) {
     roundOver = true;
     roundOverTimer = 0;
     const venceu = vivos[0] === player;
@@ -680,10 +928,22 @@ function render(alpha, dtReal) {
   const dt = Math.min(dtReal, 0.1);
 
   if (player) {
-    // Aura e rastro seguem o render, não a simulação: durante o hitstop eles
-    // continuam vivos, e é isso que impede o congelamento de parecer bug.
+    /* HITSTOP congela a POSE, não só a física.
+     *
+     * Antes, `step()` parava durante o hitstop mas o `render()` continuava
+     * chamando `char.update(dt)` — que é `mixer.update(dt)`. O resultado é que
+     * o soco seguia o movimento enquanto o mundo estava "congelado": a física
+     * parava e a animação não. Como a pose parando é a informação visual
+     * principal do impacto, o hitstop de 16 frames de um smash e o de 4 de um
+     * rush pareciam quase a mesma coisa — o mecanismo de PESO do jogo estava
+     * rodando pela metade.
+     *
+     * Aura, rastro, partículas e a micro-vibração da câmera continuam vivos de
+     * propósito: congelar 100% parece travamento, não impacto. */
+    const animScale = juice.frozen ? 0 : 1;
+
     for (const f of fighters) {
-      f.char.update(dt * (f.state === S.KNOCKDOWN ? 0.6 : 1));
+      f.char.update(dt * animScale * (f.state === S.KNOCKDOWN ? 0.6 : 1));
       f.aura?.update(dt, vfx.elapsed);
 
       if (f.aura && f.aura.intensity > 0.3) {
@@ -707,7 +967,17 @@ function render(alpha, dtReal) {
 
     vfx.update(dt, player.velocity.length());
     arena.render(dt, vfx.elapsed);
-    hud.update(dt, { player, opponent, arena, loop, fighters, treino: MODOS_TREINO[modoTreino] });
+    hud.update(dt, {
+      player, opponent, arena, loop, fighters,
+      treino: treino().nome,
+      debug: {
+        maxChain: TUNING.combo.maxChain,
+        vanishMaxChain: TUNING.defense.vanish.maxChain,
+        hitstop: juice.hitstopFrames,
+        slowMo: juice.slowMoFrames,
+        perfil: PERFIS_IA[perfilIA],
+      },
+    });
 
     hud.setLock(
       lockedOn,
@@ -748,7 +1018,7 @@ window.PROTO = {
   get fighters() { return fighters; },
   get bots() { return bots; },
   get lockedOn() { return lockedOn; },
-  get modoTreino() { return MODOS_TREINO[modoTreino]; },
+  get modoTreino() { return treino().nome; },
   arena, vfx, juice, loop, camera, combatCam,
   projectiles, beam,
   resetRound,

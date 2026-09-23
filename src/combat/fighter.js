@@ -57,6 +57,12 @@ export function emptyCommand() {
 
 const UP = new THREE.Vector3(0, 1, 0);
 
+/* Vetores de rascunho EXCLUSIVOS de _facing(). Ver o comentário lá: enquanto
+ * ele emprestava os `_tmp` do lutador, sobrescrevia a direção do knockback que
+ * já tinha sido passada por referência pro applyHit. */
+const _faceA = new THREE.Vector3();
+const _faceB = new THREE.Vector3();
+
 export class Fighter {
   /**
    * @param {object} opts
@@ -85,8 +91,24 @@ export class Fighter {
     this.moveKey = null;
     this.comboKey = null;        // próximo elo possível
     this.hitThisMove = new Set();
+    /* Separados porque BLOQUEAR e ACERTAR liberam coisas diferentes agora.
+     * `hitThisMove` só diz "encostou em alguém"; quem decide se o combo pode
+     * emendar é o tipo de contato. Ver `contactAllowsChain`. */
+    this.hitConfirmThisMove = false;    // acerto limpo (ou guarda quebrada)
+    this.blockConfirmThisMove = false;  // o adversário aparou
 
-    this.guardStamina = 100;
+    this.guardStamina = TUNING.defense.guard.maxStamina;
+    this._guardRegenDelay = 0;
+    /* Frames travado depois de aparar um golpe. Existia como `blockstun` no
+     * tuning desde o primeiro dia, era escrito em `_stunFrames` e NUNCA era
+     * lido — porque `_stunFrames` só é consultado em `_sHitstun`, e quem
+     * bloqueia vai pro estado GUARD. Blockstun simplesmente não existia. */
+    this.blockstunFrames = 0;
+    this.vanishCooldown = 0;
+    /* Quantos frames desde que a guarda foi apertada. Só o TIMING rebate um
+     * ki blast; segurar guarda absorve. Ver defense.guard.deflectWindowFrames. */
+    this.guardPressFrame = 999;
+    this._guardWasHeld = false;
     this.vanishChain = 0;
     this.vanishChainTimer = 0;
     this.stepCooldown = 0;
@@ -121,12 +143,21 @@ export class Fighter {
      * deixa de ser conforto e vira necessidade. */
     this.lockOn = true;
 
+    /* Modificadores de BONECO DE TREINO. Vivem no Fighter (e não numa
+     * subclasse) porque o boneco tem que ser o mesmo lutador, com a mesma
+     * máquina de estados — a reação dele É a informação que o jogador lê.
+     * Ver TUNING.training e o ciclo da tecla T. */
+    this.noReaction = false;   // toma dano sem sair do lugar (ler hitbox/timing)
+    this.autoRecover = false;  // recupera do blowaway assim que puder (ler perseguição)
+    this.immortal = false;     // vida nunca chega a zero
+
     // preenchidos pelo jogo
     this.target = null;
     this.aura = null;
     this.trail = null;
 
     this._afterimageTick = 0;
+    this._bobT = 0;
     this._tmp = new THREE.Vector3();
     this._tmp2 = new THREE.Vector3();
     this._desired = new THREE.Vector3();
@@ -156,6 +187,20 @@ export class Fighter {
 
   get guarding() { return this.state === S.GUARD; }
 
+  /**
+   * Este golpe já encostou de um jeito que LIBERA a emenda?
+   *
+   * Acerto sempre libera. Bloqueio só libera se `combo.cancelOnBlock` estiver
+   * ligado — e está desligado, porque é isso que devolve o turno a quem
+   * defende. A IA usa a MESMA consulta pra medir a brecha do adversário: ela
+   * precisa saber se ele pode cancelar, senão pune na hora errada.
+   */
+  get contactAllowsChain() {
+    if (!TUNING.combo.cancelOnlyOnContact) return true;
+    if (this.hitConfirmThisMove) return true;
+    return TUNING.combo.cancelOnBlock && this.blockConfirmThisMove;
+  }
+
   /** Frames desde o início do golpe atual, e em que fase ele está. */
   get attackPhase() {
     if (this.state !== S.ATTACK || !this.move) return null;
@@ -176,11 +221,35 @@ export class Fighter {
     this.events.length = 0;
     this.stateFrame++;
 
-    // Janela de vanish: guardamos há quantos frames o botão foi apertado.
-    if (cmd.vanish) this.vanishPressFrame = 0;
-    else if (this.vanishPressFrame < 999) this.vanishPressFrame++;
+    /* Janela de vanish: guardamos há quantos frames o botão foi apertado.
+     *
+     * E quando o toque EXPIRA sem que nenhum golpe tenha chegado, cobra-se o
+     * preço do chute. Sem isso, apertar V no vazio é grátis e martelar V bate
+     * qualquer leitura — a mecânica assinatura vira botão de pânico. */
+    if (cmd.vanish && this.vanishCooldown === 0) {
+      this.vanishPressFrame = 0;
+    } else if (this.vanishPressFrame < 999) {
+      this.vanishPressFrame++;
+      const V = TUNING.defense.vanish;
+      // Nenhum golpe tem janela maior que a do smash: passou disso, foi chute.
+      if (this.vanishPressFrame === V.maxUsefulWindow) {
+        this.vanishPressFrame = 999;
+        this.ki = Math.max(0, this.ki - V.whiffKiCost);
+        this.vanishCooldown = V.whiffCooldownFrames;
+        this.events.push({ type: 'vanishWhiff' });
+      }
+    }
 
     // --- timers ---
+    if (this.vanishCooldown > 0) this.vanishCooldown--;
+    if (this.blockstunFrames > 0) this.blockstunFrames--;
+    if (this._guardRegenDelay > 0) this._guardRegenDelay--;
+
+    // Timing da guarda — só o TOQUE recente rebate projétil (segurar absorve).
+    if (cmd.guard && !this._guardWasHeld) this.guardPressFrame = 0;
+    else if (this.guardPressFrame < 999) this.guardPressFrame++;
+    this._guardWasHeld = !!cmd.guard;
+
     if (this.stepCooldown > 0) this.stepCooldown--;
     if (this.blastCooldown > 0) this.blastCooldown--;
     if (this.dashCooldown > 0) this.dashCooldown--;
@@ -201,8 +270,14 @@ export class Fighter {
       this.ki = Math.min(TUNING.ki.max, this.ki + TUNING.ki.passiveRegenPerSec * dt);
     }
 
-    this.guardStamina = Math.min(TUNING.defense.guard.maxStamina ?? 100,
-      this.guardStamina + 22 * dt);
+    /* Estamina de guarda: só volta a encher quando você NÃO está defendendo e
+     * depois de um respiro. Regenerar durante a guarda anularia o relógio
+     * inteiro — daria pra segurar F pra sempre, que é exatamente o que o
+     * `cancelOnBlock: false` precisa evitar do outro lado. */
+    const G = TUNING.defense.guard;
+    if (this.state !== S.GUARD && this._guardRegenDelay === 0) {
+      this.guardStamina = Math.min(G.maxStamina, this.guardStamina + G.staminaRegenPerSec * dt);
+    }
 
     // --- estado ---
     this._runState(dt, cmd, ctx);
@@ -212,6 +287,19 @@ export class Fighter {
 
     // --- transform visual ---
     this.char.root.position.copy(this.position);
+
+    /* Flutuação parado. `flight.hoverBobAmp/Speed` existiam no tuning e nunca
+     * eram lidos — parado, o lutador ficava absolutamente imóvel e parecia um
+     * boneco congelado. É SÓ visual: mexe na malha, nunca em `this.position`,
+     * senão a hitbox e o ring-out passariam a oscilar junto. */
+    if (this.state === S.IDLE) {
+      this._bobT += dt;
+      this.char.root.position.y +=
+        Math.sin(this._bobT * TUNING.flight.hoverBobSpeed) * TUNING.flight.hoverBobAmp;
+    } else {
+      this._bobT = 0;
+    }
+
     this.char.root.rotation.y = this.yaw;
 
     // --- aura e afterimages ---
@@ -497,11 +585,30 @@ export class Fighter {
     return out.normalize();
   }
 
-  /** A vítima está de frente pra mim? (usado pra decidir se a guarda vale) */
+  /**
+   * A vítima está de frente pra mim? (usado pra decidir se a guarda vale)
+   *
+   * ATENÇÃO — usa vetores PRÓPRIOS, não `_tmp`/`_tmp2`.
+   *
+   * A versão anterior usava os temporários compartilhados, e isso produzia um
+   * bug silencioso em `dashImpact()`:
+   *
+   *     victim.applyHit({
+   *       direction: this._tmp,                          // guarda a REFERÊNCIA
+   *       guarded:  victim.guarding && this._facing(v),  // ← sobrescreve _tmp
+   *     })
+   *
+   * Propriedades de objeto literal avaliam em ordem, então quando `applyHit`
+   * lia `direction` ele recebia o vetor que `_facing` tinha acabado de escrever:
+   * "pra onde a VÍTIMA está olhando". Trombar alguém empurrava ele na direção
+   * em que ele estava virado, não na direção do impacto — knockback aleatório
+   * do ponto de vista de quem joga. */
   _facing(victim) {
-    this._tmp2.subVectors(victim.position, this.position).setY(0).normalize();
-    const fwd = this._tmp.set(Math.sin(victim.yaw), 0, Math.cos(victim.yaw));
-    return fwd.dot(this._tmp2) < -0.15;
+    _faceA.subVectors(victim.position, this.position).setY(0);
+    if (_faceA.lengthSq() < 1e-6) return false;
+    _faceA.normalize();
+    _faceB.set(Math.sin(victim.yaw), 0, Math.cos(victim.yaw));
+    return _faceB.dot(_faceA) < -0.15;
   }
 
   /* --- ataque ------------------------------------------------------- */
@@ -521,8 +628,16 @@ export class Fighter {
      * `60 * dt` vale 1, somava a velocidade inteira a cada frame da janela —
      * um avanço de 7 m/s virava 42 m/s em seis frames. */
     if (m.advanceFrames && f >= m.advanceFrames[0] && f <= m.advanceFrames[1]) {
-      const fwd = this._tmp.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
-      this._desired.copy(fwd).multiplyScalar(m.advanceSpeed);
+      /* A direção do avanço é 3D quando há alvo.
+       *
+       * Antes era `(sin(yaw), 0, cos(yaw))` — a armadilha 8.9 do documento de
+       * passagem ("yaw NÃO descreve direção num jogo aéreo"), repetida aqui.
+       * Como `_desired.y` ficava em zero, TODO ataque zerava a velocidade
+       * vertical: socar alguém acima de você te empurrava na horizontal
+       * enquanto o homing te puxava na diagonal — dois sistemas brigando, e o
+       * corpo dando um solavanco no meio do golpe. */
+      this._attackForward(this._tmp);
+      this._desired.copy(this._tmp).multiplyScalar(m.advanceSpeed);
       this.velocity.lerp(this._desired, 1 - Math.exp(-20 * dt));
     } else if (f > (m.advanceFrames ? m.advanceFrames[1] : 0)) {
       // Depois da janela, freia — senão o lutador desliza pelo recovery inteiro.
@@ -531,12 +646,17 @@ export class Fighter {
 
     /* Cancelar pro próximo elo do combo.
      *
-     * `cancelOnlyOnContact` exige que este golpe tenha ENCOSTADO em alguém
-     * (acerto ou defesa) para liberar a emenda. É o que separa combo de
-     * martelada: acertou, flui; errou, come o recovery e fica exposto. */
-    const encostou = !TUNING.combo.cancelOnlyOnContact || this.hitThisMove.size > 0;
-
-    if (encostou && m.cancelWindow && f >= m.cancelWindow[0] && f <= m.cancelWindow[1]) {
+     * Três resultados distintos, e é a distinção que faz o jogo ter turnos:
+     *
+     *   acertou   → emenda; o combo flui e qualquer um consegue
+     *   bloqueou  → NÃO emenda; come o recovery e o turno vira pro defensor
+     *   errou     → NÃO emenda; come o recovery e leva punição
+     *
+     * A linha do meio é nova. Antes, bloqueio contava como contato e liberava
+     * a emenda igual a um acerto — o atacante nunca ficava exposto contra a
+     * guarda, e defender não cobrava preço nenhum. Ver `combo.cancelOnBlock`. */
+    if (this.contactAllowsChain && m.cancelWindow
+        && f >= m.cancelWindow[0] && f <= m.cancelWindow[1]) {
       if (cmd.smash) {
         const key = this._smashKey(cmd.smashDir);
         if (m.cancelInto.includes(key) && this._tryAttack(key, ctx, cmd)) return;
@@ -558,7 +678,32 @@ export class Fighter {
 
   /* --- guarda ------------------------------------------------------- */
   _sGuard(dt, cmd, ctx) {
-    if (!cmd.guard) { this._enter(S.IDLE); this.char.play('idle', { fade: 0.1 }); return; }
+    const G = TUNING.defense.guard;
+
+    /* BLOCKSTUN — travado no impacto que você aparou.
+     *
+     * É o que faz a defesa participar do jogo de turnos. Durante estes frames
+     * não dá pra soltar a guarda, nem stepar, nem se mover: você comeu o golpe
+     * na guarda e está pagando o tempo dele. Quando acaba, quem tem o turno é
+     * decidido pela conta de frame data — e como o atacante NÃO pode emendar
+     * no bloqueio (combo.cancelOnBlock), quem sai na frente é você. */
+    if (this.blockstunFrames > 0) {
+      this.velocity.multiplyScalar(Math.exp(-9 * dt));
+      this._faceTarget(dt, 1.6);
+      this.char.play('block', { fade: 0.08 });
+      return;
+    }
+
+    if (!cmd.guard) {
+      this._guardRegenDelay = G.staminaRegenDelayFrames;
+      this._enter(S.IDLE);
+      this.char.play('idle', { fade: 0.1 });
+      return;
+    }
+
+    // Segurar guarda custa — barato, mas custa. É o teto do turtle.
+    this.guardStamina -= G.staminaDrainPerSec * dt;
+    if (this.guardStamina <= 0) { this._breakGuard(); return; }
 
     const moving = Math.abs(cmd.moveX) > 0.3 || Math.abs(cmd.moveY) > 0.3;
     if (moving && this.stepCooldown === 0) { this._enterStep(cmd, ctx); return; }
@@ -567,6 +712,27 @@ export class Fighter {
     this._applyFlightInput(dt, cmd, ctx, 0.35);
     this._faceTarget(dt, 1.6);
     this.char.play('block', { fade: 0.08 });
+  }
+
+  /**
+   * A guarda arrebentou por EXAUSTÃO (estamina no zero).
+   *
+   * Diferente de propósito da quebra por SMASH: aqui você fica exposto EM PÉ,
+   * perto do adversário, por `breakStunFrames`. É punível, mas não te manda
+   * pra fora da arena. As duas quebras têm papéis distintos:
+   *
+   *   por smash    → blowaway → ferramenta de RING-OUT
+   *   por exaustão → stun     → ferramenta de PRESSÃO
+   */
+  _breakGuard() {
+    const G = TUNING.defense.guard;
+    this.guardStamina = 0;
+    this._guardRegenDelay = G.staminaRegenDelayFrames;
+    this._stunFrames = G.breakStunFrames;
+    this.velocity.multiplyScalar(0.3);
+    this._enter(S.HITSTUN);
+    this.char.play('hit_react', { fade: 0.05, restart: true });
+    this.events.push({ type: 'guardShattered' });
   }
 
   /* --- step (esquiva curta) ----------------------------------------- */
@@ -640,6 +806,11 @@ export class Fighter {
     this.ki -= cost;
     this.vanishChain++;
     this.vanishChainTimer = 120;
+
+    /* Um toque salva UM golpe. Sem zerar isto, o contador continuava correndo
+     * de onde parou e um único V cobria dois acertos seguidos que caíssem na
+     * mesma janela — vanish de graça no segundo. */
+    this.vanishPressFrame = 999;
 
     // Reaparece ATRÁS do atacante — a recompensa posicional que faz a
     // mecânica valer o ki gasto.
@@ -745,6 +916,18 @@ export class Fighter {
 
     // Recuperação aérea: aperta guarda/vanish e estabiliza. Sem isso, levar um
     // smash seria sentença — com isso, vira leitura.
+    // `autoRecover` é o boneco de treino no modo RECUPERAÇÃO: ele sempre se
+    // recupera na primeira oportunidade, pra você praticar LER a recuperação e
+    // chegar em cima dela. Ki não entra na conta nesse modo, senão o boneco
+    // pararia de recuperar depois de três smashes.
+    if (this.autoRecover && f > TUNING.defense.recover.windowAfterFrames) {
+      this._enter(S.RECOVER);
+      this.invulnFrames = TUNING.defense.recover.iframes[1];
+      this.char.play('dodge', { fade: 0.06, restart: true });
+      this.events.push({ type: 'airRecover' });
+      return;
+    }
+
     if (f > TUNING.defense.recover.windowAfterFrames
         && (cmd.guard || cmd.vanish)
         && this.ki >= TUNING.defense.recover.kiCost) {
@@ -878,6 +1061,8 @@ export class Fighter {
     this.move = m;
     this.moveKey = key;
     this.hitThisMove.clear();
+    this.hitConfirmThisMove = false;
+    this.blockConfirmThisMove = false;
     this._enter(S.ATTACK);
     this.char.play(m.clip, { fade: 0.05, restart: true });
 
@@ -925,6 +1110,30 @@ export class Fighter {
     }
 
     this._faceTarget(dt, 4.0);
+  }
+
+  /**
+   * Pra onde o golpe atual EMPURRA o corpo.
+   *
+   * Com alvo travado, é o vetor 3D até ele — é o que permite socar alguém
+   * acima ou abaixo sem o corpo escorregar pela horizontal. Sem alvo, cai no
+   * yaw (que é a única informação disponível), mas preserva a altura em vez de
+   * cravar `y = 0`, senão atacar no vazio interrompe a subida/descida.
+   */
+  _attackForward(out) {
+    // Horizontal continua vindo do YAW — é o que o corpo está mostrando, e
+    // mudar isso faria o avanço divergir da animação.
+    out.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+
+    // A componente VERTICAL é a correção: vem do alvo, não de zero.
+    if (this.lockOn && this.target && this.target.alive) {
+      const dist = this.position.distanceTo(this.target.position);
+      if (dist > 1e-4) {
+        out.y = (this.target.position.y - this.position.y) / dist;
+        out.normalize();
+      }
+    }
+    return out;
   }
 
   _faceTarget(dt, mul = 1) {
@@ -983,26 +1192,54 @@ export class Fighter {
     let knockup = move.knockup || 0;
     let result = 'hit';
 
+    let exhausted = false;
+
     if (guarded) {
       const G = TUNING.defense.guard;
       if (move.guardBreak) {
+        // Quebra por SMASH: dano cheio e voa longe. É a ferramenta de ring-out.
         result = 'guardbreak';
-        this._stunFrames = G.guardBreakStunFrames;
         this.guardStamina = 0;
+        this._guardRegenDelay = G.staminaRegenDelayFrames;
       } else {
         result = 'guard';
         damage = move.chipDamage ?? damage * (1 - G.damageReduction);
         knockback *= (1 - G.knockbackReduction);
         knockup *= (1 - G.knockbackReduction);
         this.ki = Math.max(0, this.ki - G.kiPerHit);
-        this._stunFrames = move.blockstun;
+
+        /* Blockstun de verdade. Antes ia pra `_stunFrames`, que só é lido em
+         * `_sHitstun` — e quem bloqueia vai pro estado GUARD. Era frame data
+         * morto: o defensor saía do bloqueio no mesmo frame. */
+        this.blockstunFrames = move.blockstun;
+
+        // Aguentar pressão gasta o relógio da guarda.
+        this.guardStamina -= G.staminaPerHit;
+        if (this.guardStamina <= 0) { exhausted = true; result = 'guardexhaust'; }
+
         this.char.play('block_impact', { fade: 0.04, restart: true });
       }
     }
 
     this.health = Math.max(0, this.health - damage);
+    // Boneco de treino não morre: a sessão precisa durar mais que dez segundos.
+    if (this.immortal && this.health <= 0) this.health = 1;
     this.poise -= move.poiseDamage || 0;
     this.flashFrames = TUNING.juice.impactFlashFrames;
+
+    /* BONECO "SEM REAÇÃO": leva o dano e o clarão, mas não sai do lugar nem
+     * entra em hitstun. É o estado pra estudar hitbox, alcance e o ritmo do
+     * combo sem ter que perseguir o alvo pela arena a cada acerto.
+     *
+     * Sai ANTES do knockback de propósito — mexer na velocidade e depois
+     * "desfazer" deixaria resíduo de inércia. */
+    if (this.noReaction) {
+      if (this.poise <= 0) this.poise = TUNING.fighter.maxPoise;
+      this.velocity.set(0, 0, 0);
+      this.vanishChain = 0;
+      this.events.push({ type: 'damaged', result, damage, attacker });
+      return result;
+    }
 
     // --- knockback ---
     this._tmp.copy(direction).setY(0);
@@ -1015,6 +1252,9 @@ export class Fighter {
     // --- estado resultante ---
     if (this.health <= 0) {
       this._enterBlowaway(move);
+    } else if (exhausted) {
+      // A guarda arrebentou no impacto: fica exposto em pé, punível.
+      this._breakGuard();
     } else if (result === 'guard') {
       this._enter(S.GUARD, false);
       this.stateFrame = 0;
@@ -1158,6 +1398,17 @@ export class Fighter {
     this.moveKey = null;
     this.comboCount = 0;
     this.hitThisMove.clear();
+    this.hitConfirmThisMove = false;
+    this.blockConfirmThisMove = false;
+    this.guardStamina = TUNING.defense.guard.maxStamina;
+    this._guardRegenDelay = 0;
+    this.blockstunFrames = 0;
+    this.vanishCooldown = 0;
+    this.guardPressFrame = 999;
+    this._guardWasHeld = false;
+    this.noReaction = false;
+    this.autoRecover = false;
+    this.immortal = false;
     this.vanishChain = 0;
     this.stepCooldown = 0;
     this.blastCooldown = 0;
