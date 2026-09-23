@@ -35,7 +35,8 @@ const BINDINGS = {
   ultimate:   { keys: ['KeyX'], pad: [9] },
 
   // meta
-  lockTarget: { keys: ['KeyQ', 'Tab'], pad: [8] },   // liga/desliga o lock-on
+  lockCycle:  { keys: ['KeyQ'], pad: [8] },          // troca de alvo
+  lockToggle: { keys: ['KeyE', 'Tab'], pad: [11] },  // solta/retoma o lock-on
   debugPanel: { keys: ['KeyP'] },
   reset:      { keys: ['Backspace'] },
 };
@@ -230,7 +231,8 @@ export const KEYMAP_HELP = [
   ['V',               'Vanish — some atrás de quem te bate'],
   ['R',               'Carregar ki (segure)'],
   ['X',               'Ultimate'],
-  ['Q',               'Soltar / retomar o lock-on'],
+  ['Q',               'Trocar de alvo'],
+  ['E',               'Soltar / retomar o lock-on'],
   ['P',               'Painel de tuning'],
   ['Backspace',       'Reiniciar a luta'],
 ];

@@ -39,6 +39,7 @@ import { CombatCamera } from './world/camera.js';
 import { VFX } from './world/vfx.js';
 import { Fighter, emptyCommand, S } from './combat/fighter.js';
 import { resolveMelee, resolveDashImpact, resolveDashClash, resolveOverlap } from './combat/resolve.js';
+import { pickAttackTarget, cycleTarget, nearestEnemy } from './combat/targeting.js';
 import { ProjectileSystem, BeamSystem } from './combat/projectiles.js';
 import { BotController } from './ai/bot.js';
 import { HUD } from './ui/hud.js';
@@ -151,15 +152,26 @@ const debugPanel = new DebugPanel(app, input);
 // Lock-on. Começa ligado — é o padrão do Tenkaichi e o modo de combate.
 let lockedOn = true;
 
-const SPAWNS = [
-  new THREE.Vector3(0, 12, -9),
-  new THREE.Vector3(0, 12, 9),
-];
+/* Spawns em círculo: com N lutadores, posição fixa em par vira duelo e some o
+ * tumulto que o jogo propõe. O raio é fração do raio da arena pra ninguém
+ * nascer na borda. */
+function makeSpawns(n) {
+  const out = [];
+  const r = TUNING.arena.startRadius * 0.34;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    out.push(new THREE.Vector3(Math.cos(a) * r, 12 + (i % 3) * 3, Math.sin(a) * r));
+  }
+  return out;
+}
+
+const CORES = [0x6fd6ff, 0xff8a5c, 0x9dff6f, 0xffd75c, 0xd98aff, 0x5cffd7, 0xff5c9d];
 
 let player = null;
-let opponent = null;
-let bot = null;
+let opponent = null;          // alvo ATUAL do jogador (não "o oponente")
+let bots = [];
 let fighters = [];
+let SPAWNS = [];
 let roundOver = false;
 let roundOverTimer = 0;
 
@@ -169,6 +181,9 @@ const moveBasis = { forward: new THREE.Vector3(), right: new THREE.Vector3() };
 const ctx = {
   arena, vfx, juice, projectiles, beam, moveBasis,
   onHit, onVanish, onClash, onDashImpact,
+  /* Chamado pelo Fighter no início de CADA golpe. É o que permite trocar de
+   * alvo no meio do combo: a direção que você segura escolhe em quem bate. */
+  pickTarget: (f, cmd) => pickAttackTarget(f, fighters, cmd, moveBasis, f.target),
 };
 
 /* ==========================================================================
@@ -176,11 +191,13 @@ const ctx = {
  * ========================================================================== */
 async function boot() {
   try {
-    loadingMsg.textContent = 'carregando personagens…';
-    const [c1, c2] = await Promise.all([
+    const nInimigos = Math.max(1, TUNING.match.opponents);
+    loadingMsg.textContent = `carregando ${nInimigos + 1} lutadores…`;
+    const chars = await Promise.all([
       loadCharacter('fighter_default'),
-      loadCharacter('fighter_opponent'),
+      ...Array.from({ length: nInimigos }, () => loadCharacter('fighter_opponent')),
     ]);
+    SPAWNS = makeSpawns(chars.length);
 
     loadingMsg.textContent = 'montando a arena…';
     const arenaModel = await loadArenaModel(TUNING.arena.startRadius);
@@ -190,20 +207,28 @@ async function boot() {
       arena.group.add(arenaModel);
     }
 
-    player = new Fighter({ character: c1, spawn: SPAWNS[0], name: 'VOCÊ', auraColor: 0x6fd6ff });
-    opponent = new Fighter({ character: c2, spawn: SPAWNS[1], name: 'OPONENTE', auraColor: 0xff8a5c });
+    fighters = chars.map((c, i) => new Fighter({
+      character: c,
+      spawn: SPAWNS[i],
+      name: i === 0 ? 'VOCÊ' : `RIVAL ${i}`,
+      auraColor: CORES[i % CORES.length],
+    }));
+    player = fighters[0];
 
-    for (const f of [player, opponent]) {
+    for (const f of fighters) {
       scene.add(f.char.root);
       f.aura = vfx.createAura(f.char.root, f.auraColor);
       f.trail = vfx.createTrail(f.auraColor);
+      // Cada rival ganha um tom próprio, senão viram um borrão só.
+      if (f !== player) f.char.setTint?.(f.auraColor);
     }
 
-    player.target = opponent;
-    opponent.target = player;
-    fighters = [player, opponent];
+    // Cada IA tem semente própria: com a mesma, todas tomariam a MESMA decisão
+    // no mesmo frame e o grupo se moveria como um cardume.
+    bots = fighters.slice(1).map((f, i) => new BotController(f, 0xC0FFEE + i * 7919));
 
-    bot = new BotController(opponent, 0xC0FFEE);
+    for (const f of fighters) f.target = nearestEnemy(f, fighters);
+    opponent = player.target;
 
     combatCam.snapTo(player, opponent);
 
@@ -211,7 +236,7 @@ async function boot() {
     hud.showBanner('LUTE!', 1600, 'big');
     loop.start();
 
-    if (c1.isPlaceholder) {
+    if (chars[0].isPlaceholder) {
       console.info(
         '%c[arena-proto] Rodando com o mannequin procedural.',
         'color:#7fd8ff;font-weight:bold',
@@ -440,14 +465,10 @@ function checkRingOut(f) {
 }
 
 function announceKO(loser, reason) {
-  if (roundOver) return;
-  roundOver = true;
-  roundOverTimer = 0;
-
-  const won = loser !== player;
-  hud.showBanner(`${reason} — ${won ? 'VOCÊ VENCEU' : 'VOCÊ PERDEU'}`, 60000, won ? 'big' : 'warn');
-  juice.impact({ hitstop: 20, shake: 1.0, zoom: 1.2 });
-  juice.slowMo(90, 0.3);
+  // Com vários lutadores, uma eliminação NÃO acaba a partida — só tira um.
+  // O fim é decidido no fim do step, quando sobra um vivo.
+  hud.showBanner(`${reason}: ${loser.name}`, 1200, loser === player ? 'warn' : '');
+  juice.impact({ hitstop: 12, shake: 0.7, zoom: 0.8 });
 
   loser.char.root.visible = false;
   vfx.burst(loser.position, { count: 70, color: 0xffffff, speed: 18, life: 0.9 });
@@ -458,16 +479,18 @@ function resetRound() {
   roundOver = false;
   roundOverTimer = 0;
 
-  player.reset(SPAWNS[0]);
-  opponent.reset(SPAWNS[1]);
-  player.char.root.visible = true;
-  opponent.char.root.visible = true;
+  fighters.forEach((f, i) => {
+    f.reset(SPAWNS[i]);
+    f.char.root.visible = true;
+  });
+  for (const f of fighters) f.target = nearestEnemy(f, fighters);
+  opponent = player.target;
 
   lockedOn = true;
   player.lockOn = true;
   combatCam.locked = true;
 
-  bot.reset();
+  for (const b of bots) b.reset();
   arena.reset();
   vfx.reset();
   projectiles.reset();
@@ -496,11 +519,27 @@ function step(dt) {
   if (input.pressed('debugPanel')) debugPanel.toggle();
   if (input.pressed('reset')) { resetRound(); return; }
 
-  if (input.pressed('lockTarget') && player && opponent) {
-    lockedOn = !lockedOn;
-    player.lockOn = lockedOn;
-    combatCam.setLocked(lockedOn, player, opponent);
-    hud.showBanner(lockedOn ? 'LOCK-ON' : 'LOCK SOLTO', 700);
+  if (player) {
+    // Q — troca de alvo. Se o lock estava solto, Q também retoma: é o gesto
+    // natural de "quero focar NAQUELE ali".
+    if (input.pressed('lockCycle')) {
+      combatCam.getMoveBasis(moveBasis);
+      const novo = cycleTarget(player, fighters, player.target, moveBasis);
+      if (novo) {
+        player.target = novo;
+        opponent = novo;
+        if (!lockedOn) { lockedOn = true; player.lockOn = true; combatCam.setLocked(true, player, novo); }
+        hud.showBanner(`ALVO: ${novo.name}`, 600);
+      }
+    }
+
+    // E — solta/retoma o lock sem mudar de alvo.
+    if (input.pressed('lockToggle')) {
+      lockedOn = !lockedOn;
+      player.lockOn = lockedOn;
+      combatCam.setLocked(lockedOn, player, player.target);
+      hud.showBanner(lockedOn ? 'LOCK-ON' : 'LOCK SOLTO', 700);
+    }
   }
 
   // Juice roda SEMPRE — é ele que mantém a vibração viva durante o hitstop.
@@ -521,11 +560,14 @@ function step(dt) {
 
   combatCam.getMoveBasis(moveBasis);
 
-  const pCmd = buildPlayerCommand();
-  const oCmd = bot.update(dt, ctx);
-
-  player.update(dt, pCmd, ctx);
-  opponent.update(dt, oCmd, ctx);
+  player.update(dt, buildPlayerCommand(), ctx);
+  for (const b of bots) {
+    if (!b.f.alive) continue;
+    // Cada IA persegue o inimigo vivo mais próximo — inclusive outras IAs.
+    // É isso que faz a arena parecer uma batalha campal e não N duelos.
+    if (!b.f.target || !b.f.target.alive) b.f.target = nearestEnemy(b.f, fighters);
+    b.f.update(dt, b.update(dt, ctx), ctx);
+  }
 
   resolveMelee(fighters, ctx);
   // Dash-contra-dash (clash) tem regra própria e é testado depois do impacto
@@ -541,6 +583,26 @@ function step(dt) {
   for (const f of fighters) {
     drainEvents(f);
     checkRingOut(f);
+  }
+
+  // O alvo do jogador morreu ou saiu: reengata no mais próximo sem pedir nada.
+  if (player.alive && (!player.target || !player.target.alive)) {
+    const novo = nearestEnemy(player, fighters);
+    player.target = novo;
+    opponent = novo;
+    if (novo) hud.showBanner(`ALVO: ${novo.name}`, 600);
+  }
+  opponent = player.target;
+
+  // Fim de partida: sobrou um.
+  const vivos = fighters.filter((f) => f.alive);
+  if (!roundOver && vivos.length <= 1) {
+    roundOver = true;
+    roundOverTimer = 0;
+    const venceu = vivos[0] === player;
+    hud.showBanner(venceu ? 'VOCÊ VENCEU' : 'VOCÊ PERDEU', 60000, venceu ? 'big' : 'warn');
+    juice.impact({ hitstop: 20, shake: 1.0, zoom: 1.2 });
+    juice.slowMo(90, 0.3);
   }
 }
 
@@ -575,11 +637,11 @@ function render(alpha, dtReal) {
 
     vfx.update(dt, player.velocity.length());
     arena.render(dt, vfx.elapsed);
-    hud.update(dt, { player, opponent, arena, loop });
+    hud.update(dt, { player, opponent, arena, loop, fighters });
 
     hud.setLock(
       lockedOn,
-      opponent.alive ? projectToScreen(opponent.center(_toTarget.clone())) : null,
+      opponent && opponent.alive ? projectToScreen(opponent.center(_toTarget.clone())) : null,
     );
   }
 
@@ -613,8 +675,10 @@ window.PROTO = {
   TUNING,
   get player() { return player; },
   get opponent() { return opponent; },
+  get fighters() { return fighters; },
+  get bots() { return bots; },
   get lockedOn() { return lockedOn; },
   arena, vfx, juice, loop, camera, combatCam,
-  projectiles, beam, bot: () => bot,
+  projectiles, beam,
   resetRound,
 };

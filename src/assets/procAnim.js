@@ -187,6 +187,59 @@ const P_PUNCH_L_HIT = mix(P_GUARD_READY, {
   'mixamorig:RightForeArm': [  0, 104,  0],
 });
 
+/* --- gancho (J + cima): sobe o punho, levanta o alvo --------------------- */
+const P_UPPER_WIND = mix(P_GUARD_READY, {
+  'mixamorig:Spine':        [ 10,   0,  0],
+  'mixamorig:Spine1':       [  8,  26,  0],
+  'mixamorig:Head':         [  6, -12,  0],
+  'mixamorig:RightArm':     [  0,  22, 82],
+  'mixamorig:RightForeArm': [  0,  86,  0],
+  'mixamorig:RightUpLeg':   [-14,   0,  8],
+  'mixamorig:RightLeg':     [ 32,   0,  0],
+});
+
+const P_UPPER_HIT = mix(P_GUARD_READY, {
+  'mixamorig:Spine':        [-16,   0,  0],
+  'mixamorig:Spine1':       [-12, -22,  0],
+  'mixamorig:Spine2':       [ -6, -12,  0],
+  'mixamorig:Neck':         [-10,   0,  0],
+  'mixamorig:Head':         [-16,  10,  0],
+  'mixamorig:RightShoulder':[  0,  10,-14],
+  'mixamorig:RightArm':     [ 34,  46,-52],
+  'mixamorig:RightForeArm': [  0,  14,  0],
+  'mixamorig:LeftArm':      [  0, -36,-52],
+  'mixamorig:LeftForeArm':  [  0, -90,  0],
+  'mixamorig:RightUpLeg':   [  4,   0,  6],
+  'mixamorig:RightLeg':     [ 10,   0,  0],
+});
+
+/* --- chute descendente (J + baixo): crava o alvo pra baixo ---------------- */
+const P_AXE_WIND = mix(P_GUARD_READY, {
+  'mixamorig:Spine':        [  6,   0,  0],
+  'mixamorig:Spine1':       [  4, -14,  0],
+  'mixamorig:RightUpLeg':   [-112,  6, 14],
+  'mixamorig:RightLeg':     [ 46,   0,  0],
+  'mixamorig:RightFoot':    [ 12,   0,  0],
+  'mixamorig:LeftUpLeg':    [ -2,   0, -4],
+  'mixamorig:LeftLeg':      [ 18,   0,  0],
+  'mixamorig:LeftArm':      [  0, -40,-58],
+  'mixamorig:RightArm':     [  0,  40, 58],
+});
+
+const P_AXE_HIT = mix(P_GUARD_READY, {
+  'mixamorig:Spine':        [ 30,   0,  0],
+  'mixamorig:Spine1':       [ 16,  -8,  0],
+  'mixamorig:Neck':         [-18,   0,  0],
+  'mixamorig:Head':         [-22,   0,  0],
+  'mixamorig:RightUpLeg':   [-18,   4, 10],
+  'mixamorig:RightLeg':     [  6,   0,  0],
+  'mixamorig:RightFoot':    [ 34,   0,  0],
+  'mixamorig:LeftUpLeg':    [ 14,   0, -6],
+  'mixamorig:LeftLeg':      [ 26,   0,  0],
+  'mixamorig:LeftArm':      [  0,  30,-74],
+  'mixamorig:RightArm':     [  0, -24, 70],
+});
+
 /* --- chute circular de direita ------------------------------------------- */
 const P_KICK_R_WIND = mix(P_GUARD_READY, {
   'mixamorig:Spine1':       [  6,  18,  0],
@@ -449,6 +502,15 @@ const CLIPS = {
     base: P_GUARD_READY, loop: false,
     keys: [[0, P_GUARD_READY], [0.05, P_KICK_R_WIND], [0.115, P_KICK_R_HIT], [0.28, P_GUARD_READY]],
   },
+  attack_up: {
+    base: P_GUARD_READY, loop: false,
+    keys: [[0, P_GUARD_READY], [0.06, P_UPPER_WIND], [0.13, P_UPPER_HIT], [0.34, P_GUARD_READY]],
+  },
+  attack_down: {
+    base: P_GUARD_READY, loop: false,
+    keys: [[0, P_GUARD_READY], [0.065, P_AXE_WIND], [0.135, P_AXE_HIT], [0.36, P_GUARD_READY]],
+  },
+
   attack_heavy: {
     base: P_GUARD_READY, loop: false,
     keys: [[0, P_GUARD_READY], [0.14, P_SMASH_WIND], [0.235, P_SMASH_HIT], [0.30, P_SMASH_HIT], [0.62, P_GUARD_READY]],

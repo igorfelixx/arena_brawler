@@ -98,6 +98,7 @@ export class Fighter {
     this.chargeFrames = 0;       // acumulador do blast carregado
     this.dashFrames = 0;
     this.dashHits = new Set();   // quem já foi trombado neste dash (1 toque cada)
+    this.comboCount = 0;         // elos encadeados (teto em combo.maxChain)
     this.dashCooldown = 0;
     /* Exige SOLTAR o botão antes de um novo dash. Sem isso, segurar Shift
      * encadeia tromba atrás de tromba: no teste, 28 de dano em meio segundo,
@@ -247,9 +248,9 @@ export class Fighter {
     if (cmd.ultimate && this._tryUltimate(ctx)) return;
     if (cmd.charge) { this._enter(S.CHARGE); this.char.play('charge', { fade: 0.1 }); return; }
     if (cmd.smash && this._tryAttack(this._smashKey(cmd.smashDir), ctx)) return;
-    // Rush longe = INVESTIDA (voa até o alvo). Rush perto = soco.
+    // Rush longe = INVESTIDA (voa até o alvo). Rush perto = soco direcional.
     if (cmd.rush && this._tryRushApproach(ctx)) return;
-    if (cmd.rush && this._tryAttack('rush_1', ctx)) return;
+    if (cmd.rush && this._tryAttack(this._rushKey(cmd), ctx, cmd)) return;
     if (cmd.blast && this._tryBlast(ctx)) return;
 
     if (cmd.guard) {
@@ -329,8 +330,8 @@ export class Fighter {
     }
 
     // Ataque durante o dash: cancela em rush (a abertura clássica do Tenkaichi).
-    if (cmd.rush && this._tryAttack('rush_1', ctx)) return;
-    if (cmd.smash && this._tryAttack(this._smashKey(cmd.smashDir), ctx)) return;
+    if (cmd.rush && this._tryAttack(this._rushKey(cmd), ctx, cmd)) return;
+    if (cmd.smash && this._tryAttack(this._smashKey(cmd.smashDir), ctx, cmd)) return;
 
     const chasing = this._isChasing(cmd);
     this._dashDirection(cmd, ctx, this._tmp);
@@ -394,7 +395,7 @@ export class Fighter {
     const d = this.position.distanceTo(this.target.position);
 
     // Chegou: emenda no primeiro elo do combo.
-    if (d <= A.attackAt) { this._tryAttack('rush_1', ctx); return; }
+    if (d <= A.attackAt) { this._tryAttack(this._rushKey(cmd), ctx, cmd); return; }
 
     // Desistiu (alvo fugiu, ou tempo esgotado).
     if (f > A.maxFrames || d > A.range * 1.4) {
@@ -538,15 +539,18 @@ export class Fighter {
     if (encostou && m.cancelWindow && f >= m.cancelWindow[0] && f <= m.cancelWindow[1]) {
       if (cmd.smash) {
         const key = this._smashKey(cmd.smashDir);
-        if (m.cancelInto.includes(key) && this._tryAttack(key, ctx)) return;
+        if (m.cancelInto.includes(key) && this._tryAttack(key, ctx, cmd)) return;
       }
       if (cmd.rush) {
-        const next = m.cancelInto.find((k) => k.startsWith('rush'));
-        if (next && this._tryAttack(next, ctx)) return;
+        // A direção segurada AGORA escolhe o próximo elo — é assim que o
+        // jogador compõe o combo em vez de seguir uma ordem fixa.
+        const next = this._rushKey(cmd);
+        if (m.cancelInto.includes(next) && this._tryAttack(next, ctx, cmd)) return;
       }
     }
 
     if (f >= total) {
+      this.comboCount = 0;
       this._enter(S.IDLE);
       this.char.play('idle', { fade: 0.14 });
     }
@@ -818,10 +822,59 @@ export class Fighter {
     return 'smash_forward';
   }
 
-  _tryAttack(key, ctx) {
+  /**
+   * A direção segurada escolhe o golpe.
+   *
+   *   nada / direita → soco de direita
+   *   esquerda       → soco de esquerda
+   *   frente/cima    → gancho (levanta)
+   *   trás/baixo     → chute descendente (crava)
+   *
+   * Vertical (Espaço/C) tem prioridade sobre o horizontal: quem aperta
+   * Espaço+J está claramente pedindo o gancho, não um soco lateral.
+   */
+  _rushKey(cmd) {
+    if (cmd.vertical > 0.4) return 'rush_u';
+    if (cmd.vertical < -0.4) return 'rush_d';
+    if (cmd.moveY > 0.4) return 'rush_u';
+    if (cmd.moveY < -0.4) return 'rush_d';
+    if (cmd.moveX < -0.4) return 'rush_l';
+    return 'rush_r';
+  }
+
+  /**
+   * @param {object} [cmd]  se vier, o alvo é reavaliado para ESTE golpe —
+   *                        é o que permite trocar de alvo no meio do combo.
+   */
+  _tryAttack(key, ctx, cmd = null) {
     const m = TUNING.moves[key];
     if (!m) return false;
 
+    // Teto de elos: sem ele, golpes direcionais emendando uns nos outros
+    // viram laço infinito e a vítima nunca volta a jogar.
+    const emendando = this.state === S.ATTACK;
+    if (emendando && !key.startsWith('smash') && this.comboCount >= TUNING.combo.maxChain) {
+      return false;
+    }
+
+    // Reavalia a mira. Com lock-on solto, cada golpe procura o melhor alvo na
+    // direção apontada — é assim que se troca de vítima no meio da sequência.
+    if (cmd && ctx.pickTarget) {
+      const novo = ctx.pickTarget(this, cmd);
+      if (novo && novo !== this.target) {
+        this.target = novo;
+        /* Vira NA HORA pro novo alvo. O giro normal leva alguns frames, e
+         * medindo ficou claro que o golpe da troca errava por isso: você
+         * aponta pro outro cara, o comando troca certo, e o soco sai no vazio
+         * porque o corpo ainda estava girando. A troca precisa ser instantânea
+         * pra que apontar e bater sejam a mesma ação. */
+        this._tmp.subVectors(novo.position, this.position);
+        if (this._tmp.lengthSq() > 1e-6) this.yaw = Math.atan2(this._tmp.x, this._tmp.z);
+        this.events.push({ type: 'targetSwitch', target: novo });
+      }
+    }
+
+    this.comboCount = emendando ? this.comboCount + 1 : 1;
     this.move = m;
     this.moveKey = key;
     this.hitThisMove.clear();
@@ -1103,6 +1156,7 @@ export class Fighter {
     this.stateFrame = 0;
     this.move = null;
     this.moveKey = null;
+    this.comboCount = 0;
     this.hitThisMove.clear();
     this.vanishChain = 0;
     this.stepCooldown = 0;

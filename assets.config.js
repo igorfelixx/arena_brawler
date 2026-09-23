@@ -81,6 +81,8 @@ export const ASSETS = {
         attack_light_1: { file: null, clip: null, loop: false, speed: 1.0 },
         attack_light_2: { file: null, clip: null, loop: false, speed: 1.0 },
         attack_light_3: { file: null, clip: null, loop: false, speed: 1.0 },
+        attack_up:      { file: null, clip: null, loop: false, speed: 1.0 },
+        attack_down:    { file: null, clip: null, loop: false, speed: 1.0 },
         attack_heavy:   { file: null, clip: null, loop: false, speed: 1.0 },
 
         block:          { file: null, clip: null, loop: true,  speed: 1.0 },

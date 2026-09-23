@@ -166,6 +166,37 @@ export const TUNING = {
   },
 
   /* ================================================================== */
+  /*  MIRA  —  com 20–30 jogadores, "em quem eu bato?" é O jogo           */
+  /* ================================================================== */
+  targeting: {
+    acquireRange: 14.0,         // até onde um golpe procura alvo (lock solto)
+    lockKeepRange: 60.0,        // acima disto o lock-on se rompe sozinho
+
+    /* Pesos da pontuação de escolha. O de ALINHAMENTO é o que dá controle ao
+     * jogador: só distância faz o alvo pular sozinho entre inimigos sempre que
+     * um chega meio metro mais perto, e você perde a noção de quem está batendo. */
+    distanceWeight: 1.0,
+    aimWeight: 1.6,
+    minAlignment: -0.25,        // ignora quem está às costas, se você apontou
+
+    stickyBonus: 0.35,          // histerese: evita troca nervosa entre dois alvos
+    helplessBonus: 0.5,         // combar quem está indefeso é a jogada certa
+
+    // Quantos inimigos a IA considera. Mantém o custo previsível com 30 na arena.
+    aiScanLimit: 6,
+  },
+
+  /* ================================================================== */
+  /*  PARTIDA                                                            */
+  /* ================================================================== */
+  match: {
+    /* Nº de oponentes controlados por IA. Suba pra sentir o tumulto que o
+     * jogo final propõe (o alvo é 20–30 no total). Custa CPU: cada um roda
+     * uma máquina de estados e uma árvore de decisão por frame. */
+    opponents: 2,
+  },
+
+  /* ================================================================== */
   /*  REGRAS DE COMBO                                                    */
   /* ================================================================== */
   combo: {
@@ -184,6 +215,12 @@ export const TUNING = {
      * Ou seja: o piso continua baixo (encostar é fácil) e o teto sobe
      * (atacar no vazio passa a custar caro). */
     cancelOnlyOnContact: true,
+
+    /* Teto de elos antes de ser obrigado a finalizar (ou soltar).
+     * Com golpes direcionais emendando uns nos outros livremente, sem teto o
+     * combo vira laço infinito e a vítima nunca joga. Ao estourar, só resta
+     * smash — que é lento e vanishável, devolvendo a chance de escapar. */
+    maxChain: 6,
   },
 
   /* ================================================================== */
@@ -209,7 +246,7 @@ export const TUNING = {
     speed: 40.0,                // m/s
     turnSpeed: 13.0,            // rad/s — persegue bem, o alvo se move
     maxFrames: 50,              // desiste depois disso
-    attackAt: 2.3,              // ao chegar aqui, emenda no rush_1
+    attackAt: 2.3,              // ao chegar aqui, emenda no rush direcional
     kiCost: 0,                  // de graça: é a ferramenta básica de engajar
   },
 
@@ -224,108 +261,114 @@ export const TUNING = {
    *  ganha o turno. É o que pune martelar botão na guarda alheia — sem isso,
    *  o atacante mantém a vez pra sempre e apertar rush vira a jogada ótima.  */
   moves: {
-    rush_1: {
+    /* ---- RUSH DIRECIONAL ----
+     *
+     * A direção que você segura escolhe o golpe. Não há ordem fixa: você
+     * COMPÕE o combo. Qualquer elo emenda em qualquer outro (se encostar),
+     * até `combo.maxChain`.
+     *
+     *   J          soco de direita
+     *   J + A      soco de esquerda
+     *   J + W      gancho — levanta o alvo, abre perseguição aérea
+     *   J + S      chute de cima pra baixo — crava o alvo
+     *
+     * Direita e esquerda quase não deslocam o alvo (servem pra prender no
+     * combo). Cima e baixo deslocam de verdade — são as ferramentas de
+     * posicionamento, e é com elas que se prepara o ring-out ou o slam.
+     * O finalizador pesado continua sendo o smash (K). */
+
+    rush_r: {
       clip: 'attack_light_1',
-      startup: 4, active: 3, recovery: 8,
-      damage: 4,
+      startup: 4, active: 3, recovery: 9,
+      damage: 5,
       poiseDamage: 6,
       socket: 'hand_r',
-      // 0.65 e não 0.55: com 0.55 o PRIMEIRO soco do combo errava quando a luta
-      // começava no limite do alcance de homing. Errar o primeiro golpe é o
-      // erro mais caro que um jogo de luta pode cometer — o jogador conclui que
-      // o controle não responde.
-      hitboxRadius: 0.65,
-      knockback: 1.6,
+      hitboxRadius: 0.68,
+      knockback: 1.8,
       knockup: 0.0,
       hitstop: 4,
       shake: 0.09,
-      hitstun: 13,
+      hitstun: 14,
       blockstun: 4,
       chipDamage: 0.3,
-      cancelInto: ['rush_2'],
-      cancelWindow: [5, 15],
-      // Homing: o golpe puxa você até o alvo. ESSENCIAL no Tenkaichi —
-      // sem isso o combo erra o tempo todo e o jogo vira frustração.
-      homingRange: 4.5,
+      cancelInto: ['rush_r', 'rush_l', 'rush_u', 'rush_d',
+                   'smash_forward', 'smash_up', 'smash_down'],
+      cancelWindow: [5, 16],
+      homingRange: 5.0,
       homingStrength: 0.85,
-      // Impulso pra frente durante o golpe. Sem isto, atacar congela
-      // o movimento e o adversário simplesmente anda pra trás.
       advanceSpeed: 7.0,
       advanceFrames: [1, 6],
-      vanishWindow: 9,          // frames em que a vítima pode dar vanish
+      vanishWindow: 9,
     },
 
-    rush_2: {
+    rush_l: {
       clip: 'attack_light_2',
-      startup: 4, active: 3, recovery: 8,
-      damage: 4,
+      startup: 4, active: 3, recovery: 9,
+      damage: 5,
       poiseDamage: 6,
       socket: 'hand_l',
-      hitboxRadius: 0.65,
+      hitboxRadius: 0.68,
       knockback: 1.8,
-      knockup: 0.3,
+      knockup: 0.0,
       hitstop: 4,
-      shake: 0.10,
-      hitstun: 13,
+      shake: 0.09,
+      hitstun: 14,
       blockstun: 4,
       chipDamage: 0.3,
-      cancelInto: ['rush_3'],
-      cancelWindow: [5, 15],
-      homingRange: 4.5,
+      cancelInto: ['rush_r', 'rush_l', 'rush_u', 'rush_d',
+                   'smash_forward', 'smash_up', 'smash_down'],
+      cancelWindow: [5, 16],
+      homingRange: 5.0,
       homingStrength: 0.85,
-      // Impulso pra frente durante o golpe. Sem isto, atacar congela
-      // o movimento e o adversário simplesmente anda pra trás.
       advanceSpeed: 7.0,
       advanceFrames: [1, 6],
       vanishWindow: 9,
     },
 
-    rush_3: {
-      clip: 'attack_light_3',
-      startup: 5, active: 3, recovery: 9,
-      damage: 5,
-      poiseDamage: 7,
-      socket: 'foot_r',
-      hitboxRadius: 0.60,
-      knockback: 2.2,
-      knockup: 0.6,
-      hitstop: 5,
-      shake: 0.12,
-      hitstun: 14,
-      blockstun: 5,
+    rush_u: {                     // gancho: manda pra cima
+      clip: 'attack_up',
+      startup: 6, active: 3, recovery: 12,
+      damage: 6,
+      poiseDamage: 9,
+      socket: 'hand_r',
+      hitboxRadius: 0.70,
+      knockback: 1.2,
+      knockup: 9.0,               // levanta o alvo — abre perseguição aérea
+      hitstop: 6,
+      shake: 0.16,
+      hitstun: 20,
+      blockstun: 6,
       chipDamage: 0.4,
-      cancelInto: ['rush_4', 'smash_forward', 'smash_up', 'smash_down'],
-      cancelWindow: [6, 17],
-      homingRange: 4.5,
+      cancelInto: ['rush_r', 'rush_l', 'rush_u', 'rush_d',
+                   'smash_forward', 'smash_up', 'smash_down'],
+      cancelWindow: [7, 20],
+      homingRange: 5.0,
       homingStrength: 0.85,
-      // Impulso pra frente durante o golpe. Sem isto, atacar congela
-      // o movimento e o adversário simplesmente anda pra trás.
-      advanceSpeed: 8.0,
+      advanceSpeed: 6.0,
       advanceFrames: [1, 7],
-      vanishWindow: 9,
+      vanishWindow: 10,
     },
 
-    rush_4: {
-      clip: 'attack_light_1',
-      startup: 5, active: 3, recovery: 10,
-      damage: 6,
-      poiseDamage: 8,
-      socket: 'hand_l',
-      hitboxRadius: 0.60,
-      knockback: 2.6,
-      knockup: 0.8,
-      hitstop: 6,
-      shake: 0.15,
-      hitstun: 16,
-      blockstun: 6,
+    rush_d: {                     // chute descendente: crava
+      clip: 'attack_down',
+      startup: 6, active: 3, recovery: 13,
+      damage: 7,
+      poiseDamage: 10,
+      socket: 'foot_r',
+      hitboxRadius: 0.72,
+      knockback: 1.2,
+      knockup: -11.0,             // crava pra baixo — prepara o slam no chão
+      hitstop: 7,
+      shake: 0.18,
+      hitstun: 22,
+      blockstun: 7,
       chipDamage: 0.5,
-      cancelInto: ['smash_forward', 'smash_up', 'smash_down'],
-      cancelWindow: [6, 20],
-      homingRange: 4.0,
-      homingStrength: 0.8,
-      // Impulso pra frente durante o golpe. Sem isto, atacar congela
-      // o movimento e o adversário simplesmente anda pra trás.
-      advanceSpeed: 8.0,
+      cancelInto: ['rush_r', 'rush_l', 'rush_u', 'rush_d',
+                   'smash_forward', 'smash_up', 'smash_down'],
+      cancelWindow: [7, 21],
+      homingRange: 5.0,
+      homingStrength: 0.85,
+      advanceSpeed: 6.0,
       advanceFrames: [1, 7],
       vanishWindow: 10,
     },
@@ -770,7 +813,10 @@ export const DEBUG_SLIDERS = [
 
   ['__group', 'Vanish / Defesa'],
   ['moves.smash_forward.vanishWindow', 0, 30, 1, 'Janela de vanish (smash)'],
-  ['moves.rush_1.vanishWindow',     0, 30,  1,   'Janela de vanish (rush)'],
+  ['moves.rush_r.vanishWindow',     0, 30,  1,   'Janela de vanish (rush)'],
+  ['combo.maxChain',                1, 12,  1,   'Máx. de elos no combo'],
+  ['ai.punishChance',               0, 1,   0.02,'IA: chance de punir recovery'],
+  ['ai.anticipateGuardChance',      0, 1,   0.02,'IA: guarda por antecipação'],
   ['defense.vanish.maxChain',       1, 10,  1,   'Máx. vanishes seguidos'],
   ['defense.vanish.slowMoScale',  0.05, 1,  0.05,'Câmera lenta no vanish'],
   ['defense.step.distance',       0.5, 10,  0.2, 'Distância do step'],

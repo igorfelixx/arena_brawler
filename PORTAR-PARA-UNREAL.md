@@ -83,6 +83,9 @@ netcode. **Naraka: Bladepoint** é a outra referência (60 jogadores, melee).
 
 | Sistema | Verificação |
 |---|---|
+| Rush direcional (J+dir) | 4/4 golpes corretos; gancho +6,7 m/s, chute −8,8 m/s |
+| Troca de alvo por direção | alterna entre rivais conforme a direção apontada |
+| Vários lutadores | 3 na arena, 60 fps, IAs brigando entre si |
 | Investida de rush (engajar) | dano em 25 s: 0 → 100; distância mediana 14,7 m → 1,3 m |
 | Combo só emenda ao encostar | encostando: 4 elos; no vazio: 1 elo e recovery exposto |
 | Martelar botão não domina | saldo de martelar: +109 → +10 |
@@ -104,9 +107,11 @@ afterimages, speed lines, HUD, painel de tuning ao vivo.
 
 - **Áudio.** Os slots existem em `assets.config.js` mas não há arquivo. Decisão
   consciente: beep sintético soa pior que silêncio.
-- **Mais de 2 lutadores.** A arquitetura já é uma lista de `fighters` e a
-  resolução de acerto é N-para-N, mas **câmera, HUD e seleção de alvo assumem
-  1v1**. É a maior lacuna entre o protótipo e o jogo.
+- **Escala de 20–30 jogadores.** A arquitetura agora é multi-lutador de fato
+  (alvo por pontuação, HUD do alvo atual, IAs que brigam entre si), e `match.opponents`
+  controla quantos. Verificado com 3 a 60 fps; contagens altas NÃO foram testadas
+  em hardware real — o navegador headless usado nos testes renderiza por software
+  e trava bem antes do que uma GPU de verdade.
 - **Rede.** Nada. Ver seção 10 para o que foi preparado.
 
 ---
@@ -155,9 +160,20 @@ jogo de luta usa, e converte pra Unreal sem reinterpretação.
 
 ### 3.3 Os golpes
 
-**Rush combo** (4 elos, `J` repetido) — rápido, dano baixo, encurrala.
-Cada elo cancela no seguinte dentro da `cancelWindow`. O elo 3 e o 4 também
-cancelam em **smash**.
+**Rush direcional** (`J` + direção) — a direção ESCOLHE o golpe. Não há ordem
+fixa: o jogador compõe o combo.
+
+| Entrada | Golpe | Efeito |
+|---|---|---|
+| `J` | soco de direita | prende no combo |
+| `J` + esquerda | soco de esquerda | prende no combo |
+| `J` + cima | gancho | levanta o alvo, abre perseguição aérea |
+| `J` + baixo | chute descendente | crava o alvo, prepara o slam |
+
+Direita/esquerda quase não deslocam (servem pra manter preso); cima/baixo são
+as ferramentas de POSICIONAMENTO, e é com elas que se prepara ring-out ou slam.
+Qualquer elo emenda em qualquer outro, até `combo.maxChain` (6) — aí só resta
+smash, que é lento e vanishável, devolvendo a chance de escapar.
 
 **Smash** (`K`, com direção) — o finalizador. Lento, telegrafado, quebra guarda,
 e manda o adversário voando. **Três direções:**
@@ -185,7 +201,36 @@ ferramenta de POSIÇÃO; se machucasse, spammar seria melhor que combar.
 
 Dash contra dash = **clash** (os dois ricocheteiam).
 
-### 3.4 Lock-on — travado e solto
+### 3.4 Mira com N jogadores — "em quem eu bato?"
+
+Com dois lutadores a pergunta é trivial. Com 20–30 ela é **o jogo**, e é o que
+`src/combat/targeting.js` resolve.
+
+**Lock travado:** o alvo é seu até você trocar (`Q` cicla). Previsível de
+propósito — é o modo de duelar.
+
+**Lock solto:** cada golpe escolhe alvo NAQUELE instante, por uma PONTUAÇÃO que
+combina distância com **alinhamento à direção apontada**. A consequência é o que
+se pede num brawler de arena: **trocar de vítima no meio do combo** — você comba
+o A, vira o direcional pro B que passou perto, e o próximo golpe já sai no B.
+
+Detalhes que não são opcionais:
+
+- **peso do alinhamento > peso da distância.** Só distância faz o alvo pular
+  sozinho entre inimigos sempre que um chega meio metro mais perto, e o jogador
+  perde a noção de quem está batendo.
+- **histerese** (`stickyBonus`): sem ela o alvo oscila a cada frame entre dois
+  inimigos equidistantes.
+- **virar é instantâneo na troca.** Medindo, o golpe da troca errava porque o
+  corpo ainda estava girando: você aponta pro outro cara, o alvo troca certo, e
+  o soco sai no vazio. Apontar e bater têm que ser a mesma ação.
+
+No Unreal: uma função de scoring equivalente alimentando o alvo do Motion
+Warping, mais `UGameplayTargetingSystem` (plugin Targeting) se quiser algo
+pronto. O ciclo por `Q` deve ordenar por ÂNGULO na tela, não por índice de
+array, senão a troca parece aleatória.
+
+### 3.5 Lock-on — travado e solto
 
 O Tenkaichi original tem **lock permanente**. Este projeto se afasta disso de
 propósito, e a razão importa para o porte.
@@ -214,7 +259,7 @@ os dois modos de `USpringArmComponent` por interpolação, não por troca seca.
 **Ainda não resolvido:** com mais de um adversário, falta a troca de alvo
 (ciclar entre inimigos). O protótipo é 1v1, então `Q` só liga/desliga.
 
-### 3.5 As defesas — e por que são três
+### 3.6 As defesas — e por que são três
 
 Três ferramentas com custos diferentes, de propósito:
 
@@ -229,7 +274,7 @@ Três ferramentas com custos diferentes, de propósito:
 Isto não é detalhe: é o que dá sentido ao vanish reaparecer pelas costas. Guarda
 omnidirecional tornaria a mecânica assinatura inútil.
 
-### 3.6 Vanish — a mecânica que define o jogo
+### 3.7 Vanish — a mecânica que define o jogo
 
 É o coração do Tenkaichi e a coisa mais importante de acertar.
 
@@ -244,7 +289,7 @@ chegando, ela some e reaparece **atrás do atacante**, sem tomar dano.
 A recompensa é **posicional**, não de dano: você sai atrás do adversário, que
 ainda está em recovery. É isso que faz valer o ki.
 
-### 3.7 Blowaway — o estado pós-smash
+### 3.8 Blowaway — o estado pós-smash
 
 Corpo voando sem controle. Arrasto `1.35`, gravidade parcial (45% — corpo voa
 quase reto e vai cedendo; gravidade cheia faria um arco curto e sem graça, zero
@@ -253,7 +298,7 @@ faria sair pelo horizonte).
 Sai do estado ao desacelerar abaixo de `minSpeedToExit`, ou por **recuperação
 aérea**. Bate no chão → quica, causa dano, abre cratera, pode virar knockdown.
 
-### 3.8 A arena
+### 3.9 A arena
 
 Cúpula que encolhe em **raio E teto**. Encolher só o raio não aperta nada num
 jogo aéreo — o jogador sobe.
@@ -356,7 +401,7 @@ protótipo existe pra testar.
 | **Frame data completo** | `src/tuning.js` | `UDataTable` com struct própria |
 | **Modelo de combate** | seção 3 deste doc | design, GAS abilities |
 | **Formato `Command`** | `src/combat/fighter.js` | struct replicada de input |
-| **Dimensionamento da arena** | seção 3.8 | fórmula, não número mágico |
+| **Dimensionamento da arena** | seção 3.9 | fórmula, não número mágico |
 | **Comportamento da IA em camadas** | `src/ai/bot.js` | Behavior Tree |
 | **Armadilhas da seção 8** | este doc | tempo economizado |
 
@@ -458,7 +503,7 @@ muito mais fácil do que montar GAS do zero.
 ### Fase 4 — o que faz ser Tenkaichi
 
 13. Smash com as três direções + blowaway
-14. **Vanish** (a mais importante — seção 3.6)
+14. **Vanish** (a mais importante — seção 3.7)
 15. Recuperação aérea, guarda direcional, step
 16. Ki como `UAttributeSet`
 17. **Validação:** a troca vanish/smash gera leitura, ou vira spam?
@@ -467,7 +512,7 @@ muito mais fácil do que montar GAS do zero.
 
 18. Arena com cúpula encolhendo
 19. Ring-out
-20. **Recalcular o raio** pela fórmula da seção 3.8 com os valores finais
+20. **Recalcular o raio** pela fórmula da seção 3.9 com os valores finais
 
 ### Fase 6 — escala (é aqui que fica difícil)
 
@@ -545,7 +590,7 @@ No Unreal: **Motion Warping**. É exatamente pra isso.
 Primeira versão: raio 40 m, smash percorrendo 42 m. Um único smash matava de
 qualquer posição da arena. Virou roleta, não duelo.
 
-Corrigido com a fórmula da seção 3.8. **Refaça essa conta sempre que mexer em
+Corrigido com a fórmula da seção 3.9. **Refaça essa conta sempre que mexer em
 `knockback` ou `drag`.**
 
 ### 8.6 Num céu vazio, velocidade é invisível
