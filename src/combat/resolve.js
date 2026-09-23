@@ -47,10 +47,35 @@ export function resolveMelee(fighters, ctx) {
 
       attacker.hitThisMove.add(victim);
 
-      /* --- 4. invencível --- */
+      /* --- 4. invencível (e o SONIC SWAY mora aqui) ---
+       *
+       * Esquivar por i-frames já era possível; o que faltava era RECONHECER a
+       * esquiva bem cronometrada. Se a invulnerabilidade veio de um step
+       * recém-iniciado, foi leitura — e leitura tem que pagar. */
       if (victim.invulnerable) {
-        ctx.vfx?.burst(_hitPos, { count: 6, color: 0xffffff, speed: 3, life: 0.2 });
+        if (victim.trySonicSway(attacker, ctx)) {
+          const SW = TUNING.defense.sonicSway;
+          ctx.juice?.impact({ hitstop: SW.hitstop, shake: SW.shake });
+          ctx.juice?.slowMo(SW.slowMoFrames, SW.slowMoScale);
+          ctx.onSway?.(victim, attacker, _hitPos.clone());
+        } else {
+          ctx.vfx?.burst(_hitPos, { count: 6, color: 0xffffff, speed: 3, life: 0.2 });
+        }
         continue;
+      }
+
+      /* --- 4.5 Z-COUNTER ---
+       *
+       * Vem ANTES do vanish e da guarda de propósito. Quem tocou a guarda no
+       * frame do impacto fez a leitura mais difícil do kit defensivo; se a
+       * guarda comum resolvesse primeiro, esse acerto seria tratado como um
+       * bloqueio qualquer e a perícia não valeria nada. */
+      if (victim.tryZCounter(attacker, ctx)) {
+        const Z = TUNING.defense.zCounter;
+        ctx.juice?.impact({ hitstop: Z.hitstop, shake: Z.shake, zoom: 1 });
+        ctx.juice?.slowMo(Z.slowMoFrames, Z.slowMoScale);
+        ctx.onZCounter?.(victim, attacker, _hitPos.clone());
+        break;                 // o golpe do atacante acabou aqui
       }
 
       /* --- 5. vanish --- */
@@ -75,6 +100,23 @@ export function resolveMelee(fighters, ctx) {
 
       /* --- 7. aplica --- */
       const result = victim.applyHit({ move, attacker, direction: _dir, guarded, ctx });
+
+      /* O atacante precisa saber QUE TIPO de contato foi, não só que houve um.
+       * É isso que decide se o combo pode emendar: acerto libera, bloqueio não
+       * (ver combo.cancelOnBlock). Sem esta distinção, martelar contra a guarda
+       * mantinha o turno pra sempre. */
+      if (result === 'guard') attacker.blockConfirmThisMove = true;
+      else attacker.hitConfirmThisMove = true;
+
+      /* MANDOU PRA LONGE → abre a JANELA DE PERSEGUIÇÃO.
+       *
+       * Vale pra qualquer coisa que produza blowaway: smash, guard break e
+       * também a quebra de poise (a vítima se soltando da pressão). Até aqui,
+       * lançar alguém era um beco sem saída — o corpo voava e você
+       * re-aproximava com um J. Agora é o começo da SEGUNDA disputa: o
+       * atacante escolhe perseguir e o defensor escolhe como voltar. */
+      if (victim.state === 'blowaway') attacker.openPursuit(victim);
+
       ctx.onHit?.({ attacker, victim, move, result, point: _hitPos.clone() });
     }
   }

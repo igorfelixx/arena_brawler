@@ -138,7 +138,9 @@ export const TUNING = {
     gravity: 26,                // m/s² — só em blowaway/knockdown
     knockbackDecay: 4.5,        // quão rápido o empurrão do hitstun morre
     maxFlightSpeed: 90,         // teto duro de velocidade (anti-explosão numérica)
-    airDrag: 0.3,
+    // (`airDrag` foi removido: nunca foi lido. O arrasto do voo normal já sai
+    //  de `flight.decel`, e o do blowaway de `blowaway.drag`. Número que não é
+    //  lido mente sobre o que o jogo faz — e este arquivo é o produto.)
   },
 
   /* ================================================================== */
@@ -157,12 +159,34 @@ export const TUNING = {
     maxHealth: 100,
     radius: 0.55,               // raio de colisão
     height: 1.8,
-    pushForce: 7,
+    // (`pushForce` removido: nunca foi lido. A separação de corpos em
+    //  `resolveOverlap` é POSICIONAL de propósito — um empurrão por velocidade
+    //  brigaria com o homing e com o avanço do golpe, e o combate ficaria
+    //  escorregadio justamente na distância em que ele acontece.)
 
-    // Poise: quantos golpes aguenta sem cambalear. Impede stunlock eterno.
+    /* POISE — o disjuntor anti-stunlock.
+     *
+     * Ele existia, armava e disparava. E não desarmava nada.
+     *
+     * Ao quebrar, a vítima ia pra BLOWAWAY carregando a velocidade DO GOLPE
+     * que quebrou — um rush, 1.8 m/s. Só que o blowaway só se sustenta acima
+     * de `blowaway.minSpeedToExit` (4.0), então o estado terminava no frame
+     * seguinte. Medido: o poise quebrou 16 vezes em 30 s de martelada e o
+     * blowaway durou 4 FRAMES em média. A vítima voltava exatamente pro lugar
+     * onde estava apanhando.
+     *
+     * Agora a quebra tem impulso PRÓPRIO, independente do golpe. Ele existe
+     * pra fazer uma coisa só: SEPARAR OS CORPOS e devolver o neutro. E, de
+     * quebra, abre a janela de perseguição — o disjuntor vira oportunidade em
+     * vez de anticlímax.
+     *
+     * 18 m/s com arrasto 1.35 ≈ 13 m de separação: longe o bastante pra sair
+     * do alcance do rush (2.6 m) e perto o bastante pra valer perseguir. */
     maxPoise: 34,
     poiseRegenPerSec: 14,
     poiseBreakStunFrames: 30,
+    poiseBreakKnockback: 18.0,
+    poiseBreakKnockup: 4.0,
   },
 
   /* ================================================================== */
@@ -182,8 +206,8 @@ export const TUNING = {
     stickyBonus: 0.35,          // histerese: evita troca nervosa entre dois alvos
     helplessBonus: 0.5,         // combar quem está indefeso é a jogada certa
 
-    // Quantos inimigos a IA considera. Mantém o custo previsível com 30 na arena.
-    aiScanLimit: 6,
+    // (`aiScanLimit` removido: nunca foi lido. Era otimização para 20–30
+    //  lutadores, e a escala é outro problema — volta quando for encarado.)
   },
 
   /* ================================================================== */
@@ -197,21 +221,56 @@ export const TUNING = {
    *    2. não morrer no meio do treino
    *    3. voltar sozinho quando você mandar ele pra fora com um smash
    *
-   *  Os modos são NORMAL → PARADO → GUARDA. O de guarda existe porque treinar
-   *  contra guarda é outro exercício: é onde se aprende que só o smash abre. */
+   *  A bancada tem SEIS modos, um por pergunta que o combate precisa responder:
+   *
+   *    NORMAL       IA ligada — o jogo de verdade
+   *    PARADO       não age, mas reage       → ritmo do combo, cancels
+   *    GUARDA       segura guarda            → é aqui que se aprende que só o
+   *                                            smash abre, e onde se sente o
+   *                                            relógio da estamina de guarda
+   *    SEM REAÇÃO   toma dano e não sai do lugar → hitbox, alcance, frame data
+   *                                            sem perseguir o alvo pela arena
+   *    KNOCKBACK    não se recupera nunca    → ler a TRAJETÓRIA do smash e
+   *                                            medir quanto falta pro ring-out
+   *    RECUPERAÇÃO  sempre recupera na 1ª chance → treinar a leitura da
+   *                                            recuperação, que é a segunda
+   *                                            disputa depois do smash
+   *
+   *  T cicla, G recoloca os bonecos na distância de treino. */
   training: {
     healDelayFrames: 75,        // sem levar dano por isto, a vida volta ao cheio
     respawnDelayFrames: 45,     // mandou pra fora? volta sozinho
+
+    /* Onde o boneco reaparece. A distância importa: 3 m é logo depois do
+     * `rushApproach.attackAt` (2.3), então cada repetição começa com uma
+     * investida curta — que é exatamente o começo do loop real de combate.
+     * Se ele voltasse colado, você treinaria um jogo que não existe. */
+    practiceDistance: 3.0,
+    practiceHeight: 14.0,
+
+    /* Recolocar o boneco sozinho depois de mandá-lo longe. Sem isto, cada
+     * smash bem-sucedido cobra uma viagem de 34 m de volta, e você para de
+     * testar smash — que é justamente a mecânica mais importante do MVP. */
+    autoReturnDistance: 22.0,   // passou disto, volta sozinho
+    autoReturnDelayFrames: 70,  // mas só depois de você ver a trajetória inteira
   },
 
   /* ================================================================== */
   /*  PARTIDA                                                            */
   /* ================================================================== */
   match: {
-    /* Nº de oponentes controlados por IA. Suba pra sentir o tumulto que o
-     * jogo final propõe (o alvo é 20–30 no total). Custa CPU: cada um roda
-     * uma máquina de estados e uma árvore de decisão por frame. */
-    opponents: 2,
+    /* Nº de oponentes controlados por IA.
+     *
+     * Está em 1 porque o MVP a validar é 1 jogador × 1 oponente: com um
+     * terceiro na arena é impossível julgar uma troca — você nunca sabe se
+     * apanhou porque leu errado ou porque alguém chegou por trás. Primeiro o
+     * duelo fica bom; só depois a escala vira pergunta.
+     *
+     * Subir este número continua funcionando (IAs brigam entre si, mira por
+     * direção, HUD do alvo atual). Custa CPU: cada um roda uma máquina de
+     * estados e uma árvore de decisão por frame, e o teto real na sua máquina
+     * ainda é desconhecido. */
+    opponents: 1,
   },
 
   /* ================================================================== */
@@ -234,11 +293,68 @@ export const TUNING = {
      * (atacar no vazio passa a custar caro). */
     cancelOnlyOnContact: true,
 
-    /* Teto de elos antes de ser obrigado a finalizar (ou soltar).
-     * Com golpes direcionais emendando uns nos outros livremente, sem teto o
-     * combo vira laço infinito e a vítima nunca joga. Ao estourar, só resta
-     * smash — que é lento e vanishável, devolvendo a chance de escapar. */
-    maxChain: 6,
+    /* E BLOQUEAR conta como "encostou"?  NÃO.
+     *
+     * Esta é a regra que o comentário do bloco `moves` sempre afirmou e que o
+     * código nunca implementou: "quem BLOQUEIA sai do stun antes de quem
+     * atacou, e ganha o turno". Não ganhava, porque a emenda era liberada por
+     * QUALQUER contato — inclusive bloqueio. Na prática:
+     *
+     *   bloqueei o golpe 1 → ele emenda no 2 → emenda no 3 → …
+     *
+     * O atacante nunca ficava exposto contra a guarda, então defender não
+     * cobrava preço nenhum e a única saída era gastar ki no vanish. Com
+     * `cancelOnBlock: false` as três situações passam a ser distintas:
+     *
+     *   acertou   → emenda, o combo flui           (piso baixo, é gostoso)
+     *   bloqueou  → NÃO emenda, come o recovery    (o turno vira)
+     *   errou     → NÃO emenda, come o recovery    (punição)
+     *
+     * Com o rush_r (recovery 9, blockstun 4) isso dá ~+9 de vantagem pro
+     * defensor: tempo de sobra pra revidar com um rush de 4 de startup. É o
+     * que obriga o atacante a misturar SMASH (que quebra guarda) em vez de
+     * martelar — e é o eixo ATAQUE ↔ BLOCK ↔ COUNTER que faltava.
+     *
+     * Está no painel (P) porque é a alavanca mais forte do arquivo: ligar isto
+     * devolve o comportamento antigo na hora, pra comparar lado a lado. */
+    cancelOnBlock: false,
+
+    /* ================================================================
+     *  A ROTA — e por que o teto antigo não segurava nada
+     * ================================================================
+     *  `maxChain` existia e era verificado assim:
+     *
+     *      const emendando = this.state === S.ATTACK;
+     *      if (emendando && comboCount >= maxChain) return false;
+     *
+     *  Ou seja: só valia DENTRO do estado de ataque. Quando o último elo
+     *  terminava sozinho, `_sAttack` zerava `comboCount` e voltava pra IDLE —
+     *  e o próximo J começava uma cadeia nova do zero.
+     *
+     *  Medido, martelando J por 30 s contra boneco parado:
+     *      elo máximo atingido     6     (o teto "funcionava")
+     *      acertos                126    (21 cadeias de 6, emendadas)
+     *      vítima presa           77% do tempo
+     *      janelas livres >=12f     5    em 30 segundos
+     *
+     *  A correção é que a ROTA tem dono e tem fim. Ao esgotar, rush deixa de
+     *  sair — de verdade, inclusive vindo da IDLE — até a interação resetar.
+     *  Sobram os ENDERS (smash) e o reposicionamento. É a diferença entre
+     *  "quem segura o combo?" e "quem ganha a próxima troca?".
+     */
+    maxChain: 4,
+
+    /* Quantos frames sem atacar para a rota zerar e o neutro voltar.
+     *
+     * É o beat de respiro que o combate não tinha. Baixo demais e martelar
+     * volta a funcionar; alto demais e o jogo fica lento e punitivo com quem
+     * está aprendendo. 36f = 0,6 s — tempo de o defensor decidir alguma coisa,
+     * não só de segurar guarda. */
+    chainResetFrames: 36,
+
+    /* Acertar o ENDER (smash) libera a rota na hora. Finalizar direito é
+     * recompensado: você fica livre pra reengajar ou perseguir sem esperar. */
+    enderClearsChain: true,
   },
 
   /* ================================================================== */
@@ -260,12 +376,112 @@ export const TUNING = {
    *  a investida é comprometida e em linha reta, então dá pra ser bloqueada,
    *  punida com smash, ou passada com vanish. Quem lê ganha. */
   rushApproach: {
-    range: 17.0,                // até esta distância, J vira investida
+    /* 17 m era uma COLEIRA, não uma ferramenta de engajar: qualquer distância
+     * criada abaixo disso era anulada por um único J, inclusive logo depois de
+     * um lançamento. 9 m ainda resolve o problema que a investida veio
+     * resolver (armadilha 8.14 — sem ela, 0 de dano em 25 s de luta), mas
+     * deixa de cobrir meia arena. Acima disso, aproximar é trabalho do Dragon
+     * Dash — que custa ki e é uma decisão. */
+    range: 9.0,                 // até esta distância, J vira investida
     speed: 40.0,                // m/s
     turnSpeed: 13.0,            // rad/s — persegue bem, o alvo se move
     maxFrames: 50,              // desiste depois disso
     attackAt: 2.3,              // ao chegar aqui, emenda no rush direcional
     kiCost: 0,                  // de graça: é a ferramenta básica de engajar
+  },
+
+  /* ================================================================== */
+  /*  HOMING  —  assistência de mira, NÃO ímã                            */
+  /* ================================================================== */
+  /*  O homing era a maior causa isolada do "boneco gruda no adversário".
+   *
+   *  Ele escreve em POSITION direto, não em velocidade — o corpo atravessa o
+   *  espaço sem física. Com `homingRange: 5.0` e nenhum teto, medido durante
+   *  os 4 frames de startup de um rush:
+   *
+   *      de 2 m → 1.34 m   (puxou 0.66 m)
+   *      de 3 m → 1.52 m   (puxou 1.48 m)
+   *      de 4 m → 1.71 m   (puxou 2.29 m)
+   *      de 5 m → 1.89 m   (puxou 3.11 m)   ← três metros em 4 frames
+   *
+   *  Apertar J resolvia distância, ângulo e trajetória sozinho. O jogador não
+   *  contribuía com posicionamento nenhum, e é por isso que o combate parecia
+   *  uma macro de teclado em vez de uma disputa.
+   *
+   *  A correção NÃO é remover (ver armadilha 8.4 do doc de passagem: sem
+   *  homing os dois primeiros socos erram e o jogador culpa o controle). É
+   *  limitar o que ele resolve:
+   *
+   *    1. alcance curto  — ele fecha o ÚLTIMO pedaço, não a distância toda
+   *    2. teto por golpe — nunca puxa mais que `maxPull` metros
+   *
+   *  Resultado pretendido: dentro de ~2,8 m o soco perdoa a mira; fora disso
+   *  você precisa ter chegado com movimento. Posição volta a ser do jogador. */
+  homing: {
+    // Teto absoluto de quanto um único golpe pode te puxar. É este número que
+    // separa "assistência" de "teleporte".
+    maxPull: 1.1,
+    // Distância que o homing tenta manter (centro a centro). Encostado, mas
+    // não dentro do outro.
+    idealGap: 1.4,
+  },
+
+  /* ================================================================== */
+  /*  PURSUIT  —  a segunda disputa, depois do lançamento                */
+  /* ================================================================== */
+  /*  A peça que faltava pro combate ter IDA E VOLTA.
+   *
+   *  Antes, lançar alguém era um beco sem saída: o corpo voava, você
+   *  re-aproximava com um J (a investida cobria 17 m) e recomeçava a mesma
+   *  cadeia. O lançamento não era um evento — era uma pausa.
+   *
+   *  No Tenkaichi, o lançamento ABRE uma janela em que o atacante precisa
+   *  ESCOLHER, e o defensor precisa responder:
+   *
+   *      LANÇOU ──→ ╔══════ JANELA DE PERSEGUIÇÃO ══════╗
+   *                 ║  Shift  perseguir (custa ki)      ║
+   *                 ║  K      spike / re-lançar         ║
+   *                 ║  L      blast à distância         ║
+   *                 ║  nada   deixar voltar, reposicionar║
+   *                 ╚═══════════════════╤═══════════════╝
+   *      defensor:  recuperar / vanish / cair e levantar
+   *
+   *  REGRA QUE NÃO PODE SER QUEBRADA: perseguir NÃO é combo infinito.
+   *  A perseguição custa ki, é comprometida em linha reta, e o defensor tem
+   *  recuperação aérea pra puni-la. Ela é uma LEITURA, não uma continuação.
+   *
+   *  O prêmio de acertar a leitura é uma ROTA NOVA (`clearsChainOnArrive`):
+   *  é assim que a pressão se estende por mérito, e não por martelar.        */
+  pursuit: {
+    // Quanto tempo a janela fica aberta depois de você lançar alguém.
+    windowFrames: 75,
+    speed: 52.0,                // m/s — mais rápido que voar, menos que dash
+    turnSpeed: 12.0,
+    maxFrames: 60,
+    attackAt: 2.4,              // chegou: devolve o controle EM ALCANCE
+    /* Quanto da velocidade do alvo você HERDA ao alcançá-lo.
+     *
+     * Medido no navegador: sem isto, a perseguição terminava com você parado
+     * e a vítima ainda voando a 12 m/s — você encostava e ela ia embora no
+     * mesmo instante. "Alcancei" virava "toquei". Herdando a velocidade, os
+     * dois viajam juntos por um momento, que é o tempo de você emendar o
+     * golpe e é a imagem que esses jogos vendem: dois corpos cruzando o céu
+     * na mesma trajetória. */
+    carryVelocity: 0.88,
+    /* Por quantos frames você VOA JUNTO com ele depois de alcançar.
+     *
+     * Só herdar a velocidade não bastou: medido no navegador, o controle de
+     * voo normal desacelera pra zero no frame seguinte (não há direcional
+     * apertado) e a vítima ia embora do mesmo jeito — o banner dizia
+     * "ALCANÇOU!" e a distância virava 13 m. Estes frames são a janela em que
+     * os dois corpos cruzam o céu na mesma trajetória e você decide o
+     * follow-up. É a imagem que esses jogos vendem. */
+    carryFrames: 18,
+    kiCost: 12,                 // perseguir é decisão, não reflexo
+    /* Chegar perseguindo abre uma rota nova. É a recompensa por ler o
+     * lançamento — e é o que separa "estender a pressão por perícia" de
+     * "estender a pressão por martelar". */
+    clearsChainOnArrive: true,
   },
 
   /* ================================================================== */
@@ -312,7 +528,7 @@ export const TUNING = {
       cancelInto: ['rush_r', 'rush_l', 'rush_u', 'rush_d',
                    'smash_forward', 'smash_up', 'smash_down'],
       cancelWindow: [5, 16],
-      homingRange: 5.0,
+      homingRange: 2.8,
       homingStrength: 0.85,
       advanceSpeed: 7.0,
       advanceFrames: [1, 6],
@@ -336,7 +552,7 @@ export const TUNING = {
       cancelInto: ['rush_r', 'rush_l', 'rush_u', 'rush_d',
                    'smash_forward', 'smash_up', 'smash_down'],
       cancelWindow: [5, 16],
-      homingRange: 5.0,
+      homingRange: 2.8,
       homingStrength: 0.85,
       advanceSpeed: 7.0,
       advanceFrames: [1, 6],
@@ -360,7 +576,7 @@ export const TUNING = {
       cancelInto: ['rush_r', 'rush_l', 'rush_u', 'rush_d',
                    'smash_forward', 'smash_up', 'smash_down'],
       cancelWindow: [7, 20],
-      homingRange: 5.0,
+      homingRange: 2.8,
       homingStrength: 0.85,
       advanceSpeed: 6.0,
       advanceFrames: [1, 7],
@@ -384,7 +600,7 @@ export const TUNING = {
       cancelInto: ['rush_r', 'rush_l', 'rush_u', 'rush_d',
                    'smash_forward', 'smash_up', 'smash_down'],
       cancelWindow: [7, 21],
-      homingRange: 5.0,
+      homingRange: 2.8,
       homingStrength: 0.85,
       advanceSpeed: 6.0,
       advanceFrames: [1, 7],
@@ -410,7 +626,7 @@ export const TUNING = {
       guardBreak: true,
       cancelInto: [],
       cancelWindow: null,
-      homingRange: 5.5,
+      homingRange: 3.2,
       homingStrength: 0.9,
       // Impulso pra frente durante o golpe. Sem isto, atacar congela
       // o movimento e o adversário simplesmente anda pra trás.
@@ -439,7 +655,7 @@ export const TUNING = {
       guardBreak: true,
       cancelInto: [],
       cancelWindow: null,
-      homingRange: 5.5,
+      homingRange: 3.2,
       homingStrength: 0.9,
       // Impulso pra frente durante o golpe. Sem isto, atacar congela
       // o movimento e o adversário simplesmente anda pra trás.
@@ -467,7 +683,7 @@ export const TUNING = {
       guardBreak: true,
       cancelInto: [],
       cancelWindow: null,
-      homingRange: 5.5,
+      homingRange: 3.2,
       homingStrength: 0.9,
       // Impulso pra frente durante o golpe. Sem isto, atacar congela
       // o movimento e o adversário simplesmente anda pra trás.
@@ -553,11 +769,42 @@ export const TUNING = {
     guard: {
       damageReduction: 0.80,
       knockbackReduction: 0.60,
-      enterFrames: 2,
-      exitFrames: 4,
+      // (`enterFrames`/`exitFrames` removidos: nunca foram lidos — a guarda
+      //  sempre foi instantânea. E deve continuar: responder na hora é o §7.1,
+      //  e o preço de defender agora é a ESTAMINA abaixo, que é um custo de
+      //  decisão, não de latência.)
       kiPerHit: 3,              // guarda gasta ki no Tenkaichi
-      guardBreakStunFrames: 42,
-      // Rebater ki blast: apertar guarda no timing devolve o projétil.
+
+      /* ESTAMINA DE GUARDA — o relógio que impede turtle.
+       *
+       * O campo `guardStamina` existia no Fighter desde o começo: era
+       * inicializado, regenerado e zerado no guard break. E NUNCA era lido por
+       * ninguém. Mecânica fantasma — segurar F era essencialmente grátis.
+       *
+       * Agora ela é o contrapeso de `combo.cancelOnBlock: false`. Se bloquear
+       * devolve o turno, defender precisa custar ALGUMA coisa, senão a resposta
+       * ótima vira "segure F pra sempre" e o jogo trava no outro extremo.
+       *
+       * O drena por TEMPO (segurar) e por HIT (aguentar pressão) são separados
+       * de propósito: segurar guarda no vazio é barato, aguentar um combo é
+       * caro. Ao zerar, a guarda arrebenta sozinha — e aí você fica exposto em
+       * pé por `breakStunFrames`, que é punível mas não é morte.
+       *
+       * Note a diferença deliberada entre as DUAS quebras de guarda:
+       *   por SMASH     → blowaway, voa longe  → é a ferramenta de RING-OUT
+       *   por EXAUSTÃO  → stun em pé, punível  → é a ferramenta de PRESSÃO
+       */
+      maxStamina: 100,
+      staminaPerHit: 13,          // cada golpe aparado
+      staminaDrainPerSec: 8,      // custo de só ficar segurando
+      staminaRegenPerSec: 26,
+      staminaRegenDelayFrames: 34, // só volta a encher N frames depois de soltar
+      breakStunFrames: 42,        // exposto em pé após a guarda arrebentar
+
+      /* Rebater ki blast. `deflectWindowFrames` existia e não era usado: o
+       * projétil voltava por SÓ ESTAR de guarda, sem timing nenhum — perícia
+       * zero. Agora exige apertar a guarda perto do impacto; segurar guarda
+       * continua ABSORVENDO (o normal), mas só o timing rebate. */
       deflectWindowFrames: 8,
       deflectSpeedMul: 1.25,
     },
@@ -581,6 +828,108 @@ export const TUNING = {
       // Chain limit: impede vanish-war infinito entre dois jogadores cheios.
       maxChain: 4,
       chainKiMultiplier: 1.4,   // cada vanish seguido custa 40% a mais
+
+      /* ERRAR O VANISH PRECISA CUSTAR.
+       *
+       * Antes você só pagava ki quando o vanish FUNCIONAVA. Apertar V no vazio
+       * era de graça, então martelar V era estritamente melhor que ler o
+       * adversário — e a mecânica assinatura do jogo virava botão de pânico
+       * sem multa. Não existe leitura onde chutar não custa.
+       *
+       * Agora, se o toque expira sem nenhum golpe ter chegado, cobra-se uma
+       * fração do ki e um cooldown curto. Pequeno de propósito: é pra punir
+       * quem MARTELA, não quem tenta e erra o timing por pouco. */
+      whiffKiCost: 7,
+      whiffCooldownFrames: 22,
+      /* A partir de quantos frames um toque de vanish é considerado chute.
+       * Tem que ser >= a maior `vanishWindow` de qualquer golpe (hoje 14, do
+       * smash), senão você seria cobrado por um vanish que ainda ia funcionar. */
+      maxUsefulWindow: 16,
+    },
+
+    /* ================================================================
+     *  Z-COUNTER  —  a guarda que REVERTE em vez de aguentar
+     * ================================================================
+     *  O buraco que ele preenche: a defesa era toda passiva. Guardar dava
+     *  +8 frames, o step tirava você da frente e o vanish te punha atrás —
+     *  nenhuma delas TOMAVA o turno de volta na hora. Faltava a opção de alto
+     *  risco e alta recompensa, que é o que dá teto competitivo.
+     *
+     *  Regra: TOCAR a guarda (não segurar) dentro de `window` frames do golpe
+     *  que está chegando. Acertou — você não toma dano, o atacante trava em
+     *  `attackerStunFrames`, e a rota dele zera. Você fica com a vez.
+     *
+     *  Por que TOCAR e não segurar: é a mesma gramática do rebate de ki blast
+     *  (`deflectWindowFrames`). O botão de guarda passa a ter profundidade —
+     *  segurar absorve e gasta estamina, tocar no tempo certo vira a mesa.
+     *
+     *  ANTI-MARTELADA: cada TOQUE de guarda arma o contador UMA vez e trava
+     *  por `attemptCooldownFrames`. Sem isso, martelar F daria uma janela
+     *  quase permanente — que é exatamente o defeito que passamos esta
+     *  sessão inteira tirando do jogo do outro lado.
+     *
+     *  Ninguém reage a 4 frames de startup (ver 8.15). Isto é ANTECIPAÇÃO:
+     *  você conta com o golpe vindo. Errar custa a guarda que você não segurou.
+     */
+    zCounter: {
+      window: 5,                  // frames desde o toque
+      kiCost: 12,
+      attemptCooldownFrames: 24,  // um contador armado a cada 0,4 s
+
+      /* TENTADO E REVERTIDO — multa por tentativa desperdiçada.
+       *
+       * Martelar F a cada 6 frames dava 8 contras em 30 golpes contra 10 de
+       * quem lê — perto demais. A correção óbvia era cobrar ki da tentativa
+       * que expira sem contra-atacar. Medindo depois: quem LÊ caiu de 10 para
+       * 4 contras e quem martela não se moveu.
+       *
+       * A causa é que a multa cobrava da pessoa errada. Se o ATACANTE erra o
+       * golpe, a tentativa do defensor expira sem que houvesse o que
+       * contra-atacar — e ele pagava por um erro que não foi dele, com um
+       * cooldown de 40 frames que engolia o golpe seguinte. Em cascata.
+       *
+       * Fica registrado porque a ideia vai reaparecer: martelar F JÁ é pior
+       * que ler (8 contras contra 10) e JÁ custa mais dano (90 contra 80),
+       * porque quem martela não está segurando guarda. O desequilíbrio que
+       * parecia existir é menor do que o número solto sugere. Se um dia
+       * precisar mesmo apertar, estreite a JANELA — não invente multa.        */
+      attackerStunFrames: 34,     // o atacante fica exposto — é aqui que se pune
+      iframes: 10,                // o contra-atacante não come o golpe seguinte
+      hitstop: 16,
+      slowMoFrames: 20,
+      slowMoScale: 0.28,
+      shake: 0.5,
+      /* Reverter a situação devolve a rota: quem leu o golpe ganha o direito
+       * de atacar, e não só de não apanhar. */
+      clearsChain: true,
+    },
+
+    /* ================================================================
+     *  SONIC SWAY  —  o step que sai no tempo certo
+     * ================================================================
+     *  NÃO é um botão novo. É o `step` que já existe, reconhecido quando foi
+     *  bem cronometrado — a mesma tecla, resultado diferente conforme o
+     *  timing. Preferi isto a inventar mais uma entrada: o pedido era melhor
+     *  INTERAÇÃO entre as mecânicas existentes, não mais mecânicas.
+     *
+     *  Step normal    esquiva e recua       → você sai da frente
+     *  Sonic Sway     esquiva NO impacto    → sai da frente E ganha a vez
+     *
+     *  O que o separa do vanish: o sway é GRÁTIS mas exige ANTECIPAR e
+     *  comprometer uma direção; o vanish é caro mas responde depois. Um é
+     *  leitura barata e arriscada, o outro é recurso. */
+    sonicSway: {
+      /* Quão cedo nos i-frames o golpe precisa cair pra contar como perfeito.
+       * Os i-frames do step vão de 2 a 11: parado aqui em 2..6, de modo que
+       * stepar muito antes ainda te salva, mas não premia. */
+      window: 4,
+      kiRefund: 6,                // devolve um pouco: esquivar bem é sustentável
+      clearsStepCooldown: true,   // encadeia leitura: pode stepar de novo já
+      clearsChain: true,
+      slowMoFrames: 14,
+      slowMoScale: 0.35,
+      hitstop: 8,
+      shake: 0.22,
     },
 
     /* Step dodge — esquiva curta, barata, sem custo de ki. */
@@ -622,8 +971,8 @@ export const TUNING = {
     groundBounceDamage: 4,
     groundBounceShake: 0.35,
     craterOnImpact: true,
-    // Perseguir quem está voando (dash + soco) = a jogada mais satisfatória.
-    chaseWindowFrames: 60,
+    // (`chaseWindowFrames` removido: nunca foi lido. A janela de perseguir quem
+    //  está voando já é o próprio tempo de blowaway — não havia segundo relógio.)
   },
 
   /* ================================================================== */
@@ -793,6 +1142,87 @@ export const TUNING = {
     edgeAwareness: 0.7,
     // Quanto a IA tenta posicionar o JOGADOR de costas pra borda.
     ringOutIntent: 0.55,
+
+    /* ================================================================
+     *  PERFIS — estilos de bot para TESTAR o sistema (tecla B)
+     * ================================================================
+     *  Não é "IA melhor". É instrumento de medição.
+     *
+     *  Um bot só responde uma pergunta: "o combate funciona contra ISTO?".
+     *  Com um estilo só, você afina o jogo contra um comportamento e descobre
+     *  tarde que ele quebra contra outro. Cada perfil abaixo existe pra
+     *  estressar um eixo diferente do design:
+     *
+     *    PRESSÃO    não larga de você        → a DEFESA tem resposta?
+     *    DEFESA     bloqueia e pune          → o ATAQUE tem como abrir?
+     *    BORDA      luta perto da borda      → o RING-OUT é justo ou roleta?
+     *    AGRESSIVO  quer te jogar pra fora   → dá pra ler e virar o jogo?
+     *    EVASIVO    foge, esquiva, recupera  → dá pra ALCANÇAR quem não quer
+     *                                          lutar? (o pior cenário do voo
+     *                                          livre, e o mais revelador)
+     *
+     *  São só sobreposições dos campos acima — o que não estiver listado
+     *  continua vindo de `ai`, inclusive ajustado ao vivo pelo painel (P). */
+    profiles: {
+      EQUILIBRADO: {},
+
+      'PRESSÃO': {
+        aggression: 0.92,
+        preferredRange: 2.6,
+        guardChance: 0.12,
+        anticipateGuardChance: 0.15,
+        punishChance: 0.45,
+        smashChance: 0.42,
+        blastChance: 0.06,
+        vanishChance: 0.25,
+        decisionIntervalFrames: 8,
+      },
+
+      DEFESA: {
+        aggression: 0.22,
+        preferredRange: 5.5,
+        guardChance: 0.85,
+        anticipateGuardChance: 0.90,
+        guardHoldFrames: 40,
+        // Bloquear só neutraliza; o que torna a defesa uma AMEAÇA é punir.
+        punishChance: 0.95,
+        punishCooldownFrames: 14,
+        smashChance: 0.50,
+        blastChance: 0.15,
+      },
+
+      BORDA: {
+        // Sobreviver encostado no limite: é o teste do §17.
+        edgeAwareness: 1.0,
+        ringOutIntent: 0.10,
+        aggression: 0.30,
+        preferredRange: 7.0,
+        vanishChance: 0.70,
+        recoverChance: 0.95,
+        blastChance: 0.50,
+      },
+
+      AGRESSIVO: {
+        // Só quer te empurrar pra fora, e aceita o risco de se expor por isso.
+        aggression: 0.80,
+        ringOutIntent: 1.0,
+        smashChance: 0.70,
+        edgeAwareness: 0.25,
+        punishChance: 0.60,
+        preferredRange: 3.0,
+      },
+
+      EVASIVO: {
+        aggression: 0.25,
+        preferredRange: 9.0,
+        stepChance: 0.80,
+        vanishChance: 0.85,
+        recoverChance: 1.0,
+        guardChance: 0.50,
+        blastChance: 0.60,
+        dashRange: 14.0,
+      },
+    },
   },
 };
 
@@ -829,9 +1259,36 @@ export const DEBUG_SLIDERS = [
   ['ki.passiveRegenPerSec',         0, 20,  0.2, 'Regen passivo'],
   ['defense.vanish.kiCost',         0, 60,  1,   'Vanish: custo de ki'],
 
+  /* ---- O eixo ataque ↔ defesa. É aqui que mora a maior diferença desta
+   * passada: bloquear passou a devolver o turno, e defender passou a ter um
+   * relógio. Os dois são ajustáveis ao vivo porque o ponto certo entre
+   * "turtle domina" e "pressão domina" só sai de playtest. ---- */
+  ['__group', 'Guarda / Turnos'],
+  ['combo.cancelOnBlock',           0, 1,   1,   'Bloqueio deixa emendar? (liga = antigo)'],
+  ['moves.rush_r.blockstun',        0, 30,  1,   'Blockstun do rush'],
+  ['moves.smash_forward.blockstun', 0, 60,  1,   'Blockstun do smash'],
+  ['defense.guard.staminaPerHit',   0, 50,  1,   'Guarda: desgaste por golpe'],
+  ['defense.guard.staminaDrainPerSec', 0, 40, 1, 'Guarda: desgaste por segundo'],
+  ['defense.guard.staminaRegenPerSec', 0, 80, 1, 'Guarda: recuperação'],
+  ['defense.guard.breakStunFrames', 0, 90,  1,   'Exposto após guarda esgotar'],
+  ['defense.guard.deflectWindowFrames', 0, 20, 1,'Janela de rebater blast'],
+
+  /* Z-Counter e Sonic Sway são as duas opções de ALTO RISCO do kit. O ponto
+   * entre "impossível" e "dominante" é estreito e só sai de playtest — por
+   * isso as janelas estão aqui, e não só no arquivo. */
+  ['__group', 'Z-Counter / Sonic Sway'],
+  ['defense.zCounter.window',       1, 20,  1,   'Z-Counter: janela (frames)'],
+  ['defense.zCounter.kiCost',       0, 40,  1,   'Z-Counter: custo de ki'],
+  ['defense.zCounter.attackerStunFrames', 5, 90, 1, 'Z-Counter: stun no atacante'],
+  ['defense.zCounter.attemptCooldownFrames', 0, 90, 1, 'Z-Counter: recarga da tentativa'],
+  ['defense.sonicSway.window',      0, 12,  1,   'Sonic Sway: janela (frames)'],
+  ['defense.sonicSway.kiRefund',    0, 30,  1,   'Sonic Sway: ki devolvido'],
+
   ['__group', 'Vanish / Defesa'],
   ['moves.smash_forward.vanishWindow', 0, 30, 1, 'Janela de vanish (smash)'],
   ['moves.rush_r.vanishWindow',     0, 30,  1,   'Janela de vanish (rush)'],
+  ['defense.vanish.whiffKiCost',    0, 40,  1,   'Custo de ERRAR o vanish'],
+  ['defense.vanish.whiffCooldownFrames', 0, 60, 1, 'Cooldown após errar vanish'],
   ['combo.maxChain',                1, 12,  1,   'Máx. de elos no combo'],
   ['ai.punishChance',               0, 1,   0.02,'IA: chance de punir recovery'],
   ['ai.anticipateGuardChance',      0, 1,   0.02,'IA: guarda por antecipação'],
@@ -855,6 +1312,19 @@ export const DEBUG_SLIDERS = [
   ['ai.aggression',                 0, 1,   0.02,'Agressividade'],
   ['ai.vanishChance',               0, 1,   0.02,'Chance de vanish'],
   ['ai.smashChance',                0, 1,   0.02,'Chance de smash'],
+  /* Medido: contra quem martela, o bot DEFESA passa 37% do tempo em guarda e
+   * ainda assim leva 88 golpes limpos contra 32 aparados. O gargalo não é a
+   * chance de decidir bloquear — é por quanto tempo ele SUSTENTA a decisão.
+   * Esta é a alavanca pra isso. */
+  ['ai.guardHoldFrames',            4, 90,  1,   'IA: frames segurando a guarda'],
+  // Lembrete: o perfil (tecla B) SOBRESCREVE estes campos. Se arrastar um
+  // slider aqui e a IA ignorar, é porque o perfil ativo define aquele valor.
+  ['match.opponents',               1, 12,  1,   'Oponentes (recarregue p/ valer)'],
+
+  ['__group', 'Treino'],
+  ['training.practiceDistance',     1, 20,  0.5, 'Distância do boneco'],
+  ['training.autoReturnDistance',   5, 60,  1,   'Boneco volta se passar de'],
+  ['training.healDelayFrames',     15, 300, 5,   'Boneco se cura após (frames)'],
 ];
 
 /* Lê/escreve TUNING por caminho ('moves.smash_forward.knockback'). */

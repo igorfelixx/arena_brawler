@@ -168,7 +168,16 @@ export class ProjectileSystem {
         const fwd = _v.set(Math.sin(f.yaw), 0, Math.cos(f.yaw));
         const facing = fwd.dot(_v2) < -0.15;
 
-        if (p.spec.deflectable && f.guarding && facing) {
+        /* REBATER exige TIMING, não só estar de guarda.
+         *
+         * `deflectWindowFrames` existia no tuning e não era consultado: o
+         * projétil voltava por SÓ estar bloqueando. Como a guarda já absorve
+         * 80% do dano, rebater era um bônus grátis e a perícia era zero.
+         * Agora: segurar guarda ABSORVE (o comportamento normal, logo abaixo);
+         * apertar guarda perto do impacto REBATE. */
+        const noTiming = f.guardPressFrame <= TUNING.defense.guard.deflectWindowFrames;
+
+        if (p.spec.deflectable && f.guarding && facing && noTiming) {
           p.vel.negate().multiplyScalar(TUNING.defense.guard.deflectSpeedMul);
           p.owner = f;
           p.target = f.target;

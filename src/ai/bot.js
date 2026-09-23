@@ -29,9 +29,19 @@ const _v = new THREE.Vector3();
 const _toFoe = new THREE.Vector3();
 
 export class BotController {
-  constructor(fighter, seed = 1337) {
+  constructor(fighter, seed = 1337, profile = 'EQUILIBRADO') {
     this.f = fighter;
     this.cmd = emptyCommand();
+
+    /* Config efetiva = TUNING.ai + sobreposições do perfil.
+     *
+     * A mesclagem é feita TODO FRAME dentro de um objeto reaproveitado, e isso
+     * é deliberado por dois motivos: congelar uma cópia mataria o painel de
+     * tuning ao vivo (você arrastaria o slider e a IA ignoraria), e alocar um
+     * objeto novo por bot por frame geraria lixo no laço mais quente com 30
+     * lutadores na arena. */
+    this._merged = {};
+    this.setProfile(profile);
 
     this._rand = mulberry32(seed);
     this._decisionTimer = 0;
@@ -59,6 +69,19 @@ export class BotController {
     this._punishCooldown = 0;
   }
 
+  /** Troca o estilo deste bot. Ver TUNING.ai.profiles. */
+  setProfile(name) {
+    this.profile = TUNING.ai.profiles[name] ? name : 'EQUILIBRADO';
+    this._over = TUNING.ai.profiles[this.profile] || {};
+    this._cfg();
+  }
+
+  /** Recalcula a config efetiva no objeto reaproveitado. */
+  _cfg() {
+    Object.assign(this._merged, TUNING.ai, this._over);
+    return this._merged;
+  }
+
   /** @returns {object} command */
   update(dt, ctx) {
     const c = this.cmd;
@@ -68,7 +91,7 @@ export class BotController {
     const foe = f.target;
     if (!f.alive || !foe || !foe.alive) return c;
 
-    const A = TUNING.ai;
+    const A = this._cfg();
     if (!A.enabled) return c;
 
     const diff = A.difficulty;
@@ -142,12 +165,13 @@ export class BotController {
 
       /* Ainda pode cancelar no próximo elo → a brecha é ilusória.
        *
-       * Mas ele só pode emendar se o golpe ENCOSTOU (ver combo.cancelOnlyOnContact).
-       * Golpe no vazio não cancela, e aí a brecha é real. Isto não é a IA
-       * trapaceando lendo estado interno: ver o adversário errar um soco é
-       * exatamente a informação que um jogador humano usa pra punir. */
-      const encostou = !TUNING.combo.cancelOnlyOnContact || foe.hitThisMove.size > 0;
-      const podeCancelar = encostou && m.cancelWindow && foe.stateFrame <= m.cancelWindow[1];
+       * `contactAllowsChain` é a MESMA consulta que o Fighter usa pra decidir a
+       * emenda — de propósito. Se a IA usasse uma conta paralela, as duas
+       * divergiriam no primeiro ajuste de tuning e ela puniria na hora errada.
+       * E isto não é trapaça: ver o adversário errar um soco (ou vê-lo bater na
+       * sua guarda) é exatamente a informação que um humano usa pra punir. */
+      const podeCancelar = foe.contactAllowsChain
+        && m.cancelWindow && foe.stateFrame <= m.cancelWindow[1];
       if (podeCancelar) brechaFrames = 0;
     } else if (ocupado) {
       brechaFrames = 40;                       // carregar ki / ultimate: brecha enorme
@@ -204,6 +228,19 @@ export class BotController {
       return c;
     }
 
+    /* ---------- 1.5 PERSEGUIR ----------
+     *
+     * A IA precisa participar da segunda disputa, senão ela só existe pro
+     * jogador e o lançamento volta a ser um beco sem saída do outro lado.
+     * Vem cedo na ordem de propósito: a janela é curta e perder ela é perder
+     * a leitura inteira. */
+    if (f.pursuitFrames > 0 && f.ki >= TUNING.pursuit.kiCost
+        && this._roll(A.aggression * 0.8 + diff * 0.2)) {
+      c.dash = true;
+      this._setMoveToward(c, _toFoe, ctx);
+      return c;
+    }
+
     /* ---------- 2. sem ki ---------- */
     if (f.ki < A.chargeKiBelow && dist > 8) {
       c.charge = true;
@@ -247,9 +284,23 @@ export class BotController {
         this._intent = 'approach';
         break;
 
-      case 'attack':
+      case 'attack': {
         this._setMoveToward(c, _toFoe, ctx, dist > A.attackRange ? 1 : 0.2);
         c.vertical = clampSign(vertical, 0.8);
+
+        /* ROTA ESGOTADA: martelar rush não sai mais (nem a investida). Se a IA
+         * insistisse, ela ficaria apertando um botão morto — que é exatamente
+         * a experiência que estamos tirando do jogador. Ela tem que tomar a
+         * MESMA decisão que o humano: finalizar ou sair. */
+        if (f.comboCount >= TUNING.combo.maxChain) {
+          if (dist <= A.attackRange * 1.3) {
+            c.smash = true;
+            c.smashDir = this._pickSmashDir(foe, ctx);
+          } else {
+            this._intent = 'reposition';
+          }
+          break;
+        }
 
         // A IA usa a MESMA investida que o jogador: apertar rush a média
         // distância a leva até o alvo. Sem isto ela ficaria parada a 15 m
@@ -277,6 +328,7 @@ export class BotController {
           }
         }
         break;
+      }
 
       case 'reposition':
       default: {
@@ -303,7 +355,7 @@ export class BotController {
 
   /* ---------------------------------------------------------------- */
   _chooseIntent(dist, diff, ctx) {
-    const A = TUNING.ai;
+    const A = this._merged;
     const r = this._rand();
 
     if (dist > A.dashRange) {
@@ -321,7 +373,7 @@ export class BotController {
 
   /** Escolhe a direção do smash. Perto da borda: manda PRA FORA. */
   _pickSmashDir(foe, ctx) {
-    const A = TUNING.ai;
+    const A = this._merged;
     const foeEdge = ctx.arena.edgeProximity(foe.position);
 
     // Se o adversário já está na borda, o smash horizontal é ring-out.
@@ -341,7 +393,7 @@ export class BotController {
   }
 
   _reactionFrames() {
-    const A = TUNING.ai;
+    const A = this._merged;
     const t = 1 - A.difficulty;
     return Math.round(A.reactionFramesMin + (A.reactionFramesMax - A.reactionFramesMin) * t);
   }

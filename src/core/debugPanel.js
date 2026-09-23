@@ -71,7 +71,17 @@ export class DebugPanel {
         console.warn(`[debugPanel] caminho inexistente em TUNING: "${path}"`);
         continue;
       }
-      this._initial.set(path, value);
+
+      /* Chaves LIGA/DESLIGA também precisam estar aqui.
+       *
+       * Algumas das alavancas mais fortes do jogo não são números — são regras
+       * (`combo.cancelOnBlock`, por exemplo, decide se bloquear devolve o
+       * turno). Se elas só existissem no arquivo, comparar as duas versões
+       * exigiria recarregar, e o ciclo de ajuste que este painel existe pra
+       * encurtar voltaria a levar minutos. Um range 0–1 com passo 1 resolve. */
+      const isBool = typeof value === 'boolean';
+      const num = isBool ? (value ? 1 : 0) : value;
+      this._initial.set(path, num);
 
       const row = document.createElement('div');
       row.className = 'dbg-row';
@@ -85,19 +95,21 @@ export class DebugPanel {
 
       const input = document.createElement('input');
       input.type = 'range';
-      input.min = min; input.max = max; input.step = step;
-      input.value = value;
+      input.min = isBool ? 0 : min;
+      input.max = isBool ? 1 : max;
+      input.step = isBool ? 1 : step;
+      input.value = num;
 
       input.addEventListener('input', () => {
         const v = parseFloat(input.value);
-        setTuning(path, v);
-        val.textContent = fmt(v);
+        setTuning(path, isBool ? v >= 0.5 : v);
+        val.textContent = fmt(isBool ? v >= 0.5 : v);
         row.classList.toggle('changed', v !== this._initial.get(path));
       });
 
       row.append(lab, val, input);
       body.appendChild(row);
-      this.rows.push({ path, input, val, row });
+      this.rows.push({ path, input, val, row, isBool });
     }
 
     const foot = document.createElement('div');
@@ -143,9 +155,11 @@ export class DebugPanel {
 
   copyChanged(btn) {
     const lines = [];
-    for (const { path, input } of this.rows) {
+    for (const { path, input, isBool } of this.rows) {
       const v = parseFloat(input.value);
-      if (v !== this._initial.get(path)) lines.push(`${path}: ${v}`);
+      if (v === this._initial.get(path)) continue;
+      // Sai já no formato que dá pra colar em tuning.js.
+      lines.push(`${path}: ${isBool ? (v >= 0.5) : v}`);
     }
 
     const text = lines.length
@@ -159,17 +173,19 @@ export class DebugPanel {
   }
 
   resetAll() {
-    for (const { path, input, val, row } of this.rows) {
+    for (const { path, input, val, row, isBool } of this.rows) {
       const v = this._initial.get(path);
-      setTuning(path, v);
+      const real = isBool ? v >= 0.5 : v;
+      setTuning(path, real);
       input.value = v;
-      val.textContent = fmt(v);
+      val.textContent = fmt(real);
       row.classList.remove('changed');
     }
   }
 }
 
 function fmt(v) {
+  if (typeof v === 'boolean') return v ? 'SIM' : 'NÃO';
   if (Number.isInteger(v)) return String(v);
   return v.toFixed(Math.abs(v) < 1 ? 2 : 1);
 }
