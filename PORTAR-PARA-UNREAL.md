@@ -84,6 +84,8 @@ netcode. **Naraka: Bladepoint** é a outra referência (60 jogadores, melee).
 | Sistema | Verificação |
 |---|---|
 | Investida de rush (engajar) | dano em 25 s: 0 → 100; distância mediana 14,7 m → 1,3 m |
+| Combo só emenda ao encostar | encostando: 4 elos; no vazio: 1 elo e recovery exposto |
+| Martelar botão não domina | saldo de martelar: +109 → +10 |
 | Combo de 4 elos com cancel | `rush_1→2→3→4→smash`, HP 100→96→91→85→69 |
 | Homing no startup | fecha 2.32 m → 1.45 m durante o startup |
 | Smash / blowaway | lança a 46.1 m/s, arrasto leva a 24 → 22 |
@@ -697,7 +699,41 @@ rápido: você segura guarda por leitura) de *reagir* (golpe lento: dá tempo de
 ver). No Unreal, mesma coisa: Behavior Tree com nó de decisão + duração, nunca
 um `Random` avaliado a cada tick.
 
-### 8.16 Cache de módulo ES engana durante o ajuste
+### 8.16 "Martelar botão ganha" quase nunca se resolve na IA
+
+Playtest: martelar um botão ganhava de qualquer outra coisa. A reação natural é
+mexer na IA — fazer ela bloquear mais, reagir mais rápido, punir. Foram duas
+tentativas nessa direção e **as duas pioraram**:
+
+1. dar à IA uma punição por frame fez ela LARGAR a guarda no meio do combo pra
+   revidar, e perder a troca (o elo seguinte tem 4 frames de startup)
+2. ensinar a IA a medir a brecha com frame data foi correto, mas revelou o
+   problema real: **contra quem martela não HAVIA brecha**. A IA estava certa
+   em não tentar punir.
+
+A causa estava no frame data, não na IA: o combo emendava **mesmo errando**.
+Quem martelava nunca ficava exposto, então nenhum comportamento defensivo
+poderia cobrar um preço.
+
+A correção é uma regra clássica de jogo de luta — *chain on hit/block*:
+
+> só dá pra emendar no próximo elo se o golpe ENCOSTOU (acerto ou defesa)
+
+Acertou → o combo flui, é gostoso, qualquer um consegue. Errou → come o
+recovery inteiro e leva punição. Piso baixo e teto alto ao mesmo tempo.
+
+Medido: martelar saiu de +109 de saldo para +10 — continua funcionando, parou
+de ganhar sozinho.
+
+**A lição pro porte:** quando uma estratégia burra domina, procure a permissão
+no frame data antes de culpar a IA. Ferramenta defensiva só cobra preço se o
+atacante puder ficar exposto.
+
+No Unreal: a regra vira uma condição de transição entre `UGameplayAbility`s —
+a ability do elo seguinte só ativa se a anterior registrou um overlap. Uma
+GameplayTag do tipo `Combat.Chain.Confirmed` aplicada no acerto resolve.
+
+### 8.17 Cache de módulo ES engana durante o ajuste
 
 Editar `src/tuning.js`, recarregar, e o jogo continuar com os números antigos —
 porque o navegador reaproveita o módulo já compilado. O sintoma imita um bug de
@@ -708,7 +744,7 @@ Equivalente no Unreal: lembrar que DataTable editada **em PIE** não persiste, e
 que alterar a asset com o jogo rodando pode não recarregar. Salve e reinicie o
 PIE antes de concluir que o número não fez efeito.
 
-### 8.17 Leitura de time: frio vs. quente
+### 8.18 Leitura de time: frio vs. quente
 
 Com os dois lutadores em tons de azul no meio de VFX ciano, era impossível dizer
 num relance quem era quem. **Jogador = cor fria, oponente = cor quente.** Não é
@@ -809,11 +845,13 @@ Especificamente não validado:
 - [ ] A arena encolhendo muda a luta, ou é só um relógio?
 - [ ] Carregar ki é um risco interessante ou uma pausa chata?
 - [ ] A IA é um oponente ou um saco de pancada?
-- [ ] **Martelar um botão é forte demais?** Contra a IA atual, sim — mas isso
-      diz pouco. A IA não *pune*: ela não espera o recovery do adversário pra
-      contra-atacar. Profundidade em jogo de luta nasce entre dois humanos que
-      punem o erro um do outro, e isso NÃO é mensurável com bot roteirizado.
-      Só playtest humano responde.
+- [ ] **Martelar um botão está calibrado?** Já foi corrigido uma vez: com
+      `combo.cancelOnlyOnContact`, o saldo de martelar caiu de +109 para +10
+      contra a IA. Falta saber se o ponto está bom PRA HUMANO — se ainda ganha
+      fácil, ou se agora pune demais quem está aprendendo.
+- [ ] O teto competitivo existe? Profundidade nasce entre dois humanos que
+      punem o erro um do outro, e isso NÃO é mensurável com bot roteirizado —
+      nem com os bots "casual" e "bom" usados aqui, que são laços fixos.
 
 **Antes do porte:** jogar, ajustar no painel (`P`), gravar os valores em
 `src/tuning.js`, e atualizar esta seção marcando o que foi validado.

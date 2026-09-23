@@ -528,8 +528,14 @@ export class Fighter {
       this.velocity.multiplyScalar(Math.exp(-5 * dt));
     }
 
-    // Cancelar pro próximo elo do combo.
-    if (m.cancelWindow && f >= m.cancelWindow[0] && f <= m.cancelWindow[1]) {
+    /* Cancelar pro próximo elo do combo.
+     *
+     * `cancelOnlyOnContact` exige que este golpe tenha ENCOSTADO em alguém
+     * (acerto ou defesa) para liberar a emenda. É o que separa combo de
+     * martelada: acertou, flui; errou, come o recovery e fica exposto. */
+    const encostou = !TUNING.combo.cancelOnlyOnContact || this.hitThisMove.size > 0;
+
+    if (encostou && m.cancelWindow && f >= m.cancelWindow[0] && f <= m.cancelWindow[1]) {
       if (cmd.smash) {
         const key = this._smashKey(cmd.smashDir);
         if (m.cancelInto.includes(key) && this._tryAttack(key, ctx)) return;

@@ -52,6 +52,11 @@ export class BotController {
      * bloqueava de fato — medido: 1% de tempo em guarda, enquanto apanhava.
      * Decisão por frame não produz input segurado: é preciso COMPROMISSO. */
     this._holdGuard = 0;
+
+    /* Impede a IA de punir TODA brecha. Sem um respiro ela vira uma parede
+     * perfeita e o jogo fica injusto do outro lado — punir precisa parecer
+     * leitura, não onisciência. */
+    this._punishCooldown = 0;
   }
 
   /** @returns {object} command */
@@ -68,6 +73,8 @@ export class BotController {
 
     const diff = A.difficulty;
     const dist = f.position.distanceTo(foe.position);
+
+    if (this._punishCooldown > 0) this._punishCooldown--;
 
     _toFoe.subVectors(foe.position, f.position);
     const vertical = _toFoe.y;
@@ -97,6 +104,74 @@ export class BotController {
     const investindo = foe.state === S.APPROACH && dist < TUNING.rushApproach.range;
     const atacandoPerto = foe.state === S.ATTACK && dist < 4.5;
     const golpeLento = foe.moveKey?.startsWith('smash') || investindo;
+
+    /* ---------- PUNIR ----------
+     *
+     * A peça que faltava pro jogo ter teto competitivo.
+     *
+     * Bloquear e esquivar só neutralizam; não CUSTAM nada a quem martela o
+     * botão. Enquanto a IA apenas se defendia, apertar rush sem pensar era a
+     * jogada ótima — medido: martelar ganhava de jogar bem.
+     *
+     * Num jogo de luta o que desencoraja martelar é o CONTRA-ATAQUE na janela
+     * de recovery. Todo golpe tem uma brecha depois dos frames ativos; quem
+     * percebe, revida. É isso que separa quem aperta botão de quem joga.
+     *
+     * Vem ANTES do bloco de guarda de propósito: se viesse depois, a IA
+     * continuaria bloqueando durante a brecha em vez de aproveitá-la.
+     */
+    /* A IA precisa MEDIR a brecha antes de revidar.
+     *
+     * Primeira tentativa: punir sempre que o adversário estivesse em recovery.
+     * Ficou pior — contra quem martela, o adversário está em recovery quase
+     * sempre, mas CANCELA no elo seguinte antes que o contra-ataque saia. A IA
+     * largava a guarda, começava um golpe de 4 frames de startup e levava o
+     * próximo soco no meio. Punir na hora errada é pior que não punir.
+     *
+     * A conta certa é frame data, e é a mesma que um jogador bom faz de
+     * cabeça: "sobra recovery suficiente pro meu golpe sair antes do próximo
+     * dele?" Se o golpe ainda estiver dentro da janela de cancelamento, a
+     * brecha não existe — ele pode emendar. */
+    const ocupado = foe.state === S.CHARGE || foe.state === S.BLAST || foe.state === S.ULTIMATE;
+    let brechaFrames = 0;
+
+    if (foe.state === S.ATTACK && foe.attackPhase === 'recovery' && foe.move) {
+      const m = foe.move;
+      const total = m.startup + m.active + m.recovery;
+      brechaFrames = total - foe.stateFrame;
+
+      /* Ainda pode cancelar no próximo elo → a brecha é ilusória.
+       *
+       * Mas ele só pode emendar se o golpe ENCOSTOU (ver combo.cancelOnlyOnContact).
+       * Golpe no vazio não cancela, e aí a brecha é real. Isto não é a IA
+       * trapaceando lendo estado interno: ver o adversário errar um soco é
+       * exatamente a informação que um jogador humano usa pra punir. */
+      const encostou = !TUNING.combo.cancelOnlyOnContact || foe.hitThisMove.size > 0;
+      const podeCancelar = encostou && m.cancelWindow && foe.stateFrame <= m.cancelWindow[1];
+      if (podeCancelar) brechaFrames = 0;
+    } else if (ocupado) {
+      brechaFrames = 40;                       // carregar ki / ultimate: brecha enorme
+    }
+
+    const meuStartup = TUNING.moves.rush_1.startup;
+    const brechaVale = brechaFrames > meuStartup + A.punishMarginFrames;
+    const janelaDePunicao = brechaVale && dist < A.punishRange;
+
+    if (janelaDePunicao && this._punishCooldown === 0 && this._roll(A.punishChance * diff)) {
+      this._holdGuard = 0;               // larga a guarda: agora é a minha vez
+      this._punishCooldown = A.punishCooldownFrames;
+      this._setMoveToward(c, _toFoe, ctx, dist > A.attackRange ? 1 : 0.3);
+
+      // Brecha grande o bastante pro smash sair? Aí vale o golpe que dói.
+      const brechaLonga = brechaFrames > TUNING.moves.smash_forward.startup + A.punishMarginFrames;
+      if (brechaLonga && this._roll(0.55 + diff * 0.3)) {
+        c.smash = true;
+        c.smashDir = this._pickSmashDir(foe, ctx);
+      } else {
+        c.rush = true;
+      }
+      return c;
+    }
 
     // Já se comprometeu a bloquear: segura até o fim.
     if (this._holdGuard > 0) {
@@ -278,6 +353,7 @@ export class BotController {
     this._comboCount = 0;
     this._blastHold = 0;
     this._holdGuard = 0;
+    this._punishCooldown = 0;
     resetCommand(this.cmd);
   }
 }

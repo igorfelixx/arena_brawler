@@ -166,6 +166,27 @@ export const TUNING = {
   },
 
   /* ================================================================== */
+  /*  REGRAS DE COMBO                                                    */
+  /* ================================================================== */
+  combo: {
+    /* Só dá pra emendar no próximo elo se o golpe ENCOSTOU (acerto ou defesa).
+     *
+     * É a regra que impede martelar botão de ser a jogada ótima, e é padrão
+     * em jogo de luta ("chain on hit/block"). Sem ela o combo emenda no vazio,
+     * o atacante nunca fica exposto, e não existe brecha pra punir — medido:
+     * martelar J ganhava de todo o resto, e a IA estava CERTA em não tentar
+     * revidar, porque janela segura de fato não havia.
+     *
+     * Com ela, as duas coisas que o jogo precisa acontecem ao mesmo tempo:
+     *   acertou  → o combo flui, é gostoso, qualquer um consegue
+     *   errou    → come o recovery inteiro e leva punição
+     *
+     * Ou seja: o piso continua baixo (encostar é fácil) e o teto sobe
+     * (atacar no vazio passa a custar caro). */
+    cancelOnlyOnContact: true,
+  },
+
+  /* ================================================================== */
   /*  INVESTIDA DE RUSH  —  apertar ataque de longe te LEVA até o inimigo */
   /* ================================================================== */
   /*  A mecânica que faltava, e a mais importante deste arquivo pro jogo
@@ -677,6 +698,24 @@ export const TUNING = {
      * estratégia vencedora, sem exigir da IA reflexos impossíveis.
      * Suba pra deixar a IA mais paredão; baixe pra deixar a luta mais solta. */
     anticipateGuardChance: 0.55,
+
+    /* PUNIR — contra-atacar na janela de recovery do adversário.
+     *
+     * É o parâmetro que decide se martelar botão funciona. Bloquear só
+     * neutraliza; punir COBRA um preço. Enquanto a IA só se defendia, apertar
+     * rush sem pensar era a jogada ótima.
+     *
+     * punishChance é a mais importante do arquivo pro equilíbrio casual vs
+     * competitivo: alto demais e o jogo pune iniciante sem dó; baixo demais e
+     * martelar volta a ganhar. Mexa aqui primeiro. */
+    punishChance: 0.7,
+    punishRange: 5.0,
+    punishCooldownFrames: 24,   // respiro: punir tem que parecer leitura, não onisciência
+    /* Margem de segurança da conta de frame data. A IA só revida se a brecha
+     * do adversário for maior que o startup do próprio golpe MAIS isto.
+     * Zero faria ela punir brechas apertadíssimas e perder a troca; alto
+     * demais faz ela deixar passar punição legítima. */
+    punishMarginFrames: 4,
     /* Por quantos frames a IA SEGURA a guarda depois de decidir bloquear.
      * Decisão por frame não produz input segurado — sem este compromisso a
      * guarda pisca e não bloqueia nada. Alto demais vira paredão passivo. */
