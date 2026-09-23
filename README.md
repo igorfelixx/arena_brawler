@@ -199,6 +199,14 @@ com aura, não.
 
 ---
 
+## Main Character
+Kael Vorn: The Conductor Concept Sheet
+
+
+<img width="1024" height="1536" alt="ChatGPT Image Sep 23, 2026, 04_35_17 PM" src="https://github.com/user-attachments/assets/34bc5204-73c0-4cc6-9c78-3f11572e0c74" />
+
+---
+
 ## Estrutura
 
 ```
