@@ -37,16 +37,55 @@ explique o *porquê* das recomendações, não só o *o quê*.
 Ele não tinha Unreal instalado quando o protótipo foi feito — confirme antes de
 assumir que tem.
 
-## Estado
+## Estado atual
 
-Funcionando e verificado rodando: combo com cancels, smash/blowaway, vanish,
-ring-out, arena encolhendo, IA, 60fps. Ver seção 2 do documento de passagem.
+Tudo abaixo foi verificado rodando no navegador (ver seção 2 do doc de passagem
+para os números):
 
-Não implementado: áudio, mais de 2 lutadores, rede.
+- voo 360°, Dragon Dash (perseguir / fugir / contornar, com tromba que para)
+- **rush direcional**: `J`+direção escolhe o golpe (direita / esquerda / gancho
+  pra cima / chute pra baixo). Qualquer elo emenda em qualquer outro, teto de 6
+- smash nas 3 direções, blowaway, ring-out
+- vanish, guarda direcional, guard break, step, recuperação aérea
+- ki blasts, feixe de ultimate
+- **mira por direção** (`src/combat/targeting.js`): com lock solto, cada golpe
+  escolhe alvo pela direção apontada — dá pra trocar de vítima no meio do combo.
+  `Q` cicla alvo, `E` solta/retoma o lock
+- **vários lutadores** (`match.opponents`): IAs brigam entre si, não só com você
+- **modo treino** (`T`): NORMAL / PARADO / GUARDA, boneco que reage e não morre
+- IA com punição de recovery baseada em frame data real
 
-**Não validado por playtest:** os números de `src/tuning.js` são palpites
-coerentes, não valores testados. Ver seção 11 do documento de passagem antes de
-tratá-los como verdade.
+Não implementado: **áudio**, **rede**, troca de alvo por gamepad no ciclo.
+
+### Pendências conhecidas — pergunte ao dono antes de assumir
+
+1. **Escala.** `match.opponents` está em 2 (3 lutadores) porque foi o que deu pra
+   verificar: o navegador headless usado nos testes renderiza por software e
+   travou com 5. O teto real na máquina dele é **desconhecido** — é informação
+   valiosa, porque a escala de 20–30 é o maior risco do projeto.
+2. **Balanceamento casual vs competitivo.** Martelar um botão já foi corrigido
+   uma vez (`combo.cancelOnlyOnContact` derrubou o saldo de +109 para +10), mas
+   se o ponto está bom PARA HUMANO segue sem resposta. Bot roteirizado não mede
+   profundidade — só playtest.
+3. **As rotas direcionais** (gancho/chute) nunca foram julgadas por humano: não
+   se sabe se levantam/cravam o tanto certo.
+
+**Não validado por playtest:** a maior parte dos números de `src/tuning.js`.
+Ver seção 11 do documento de passagem antes de tratá-los como verdade.
+
+## Como trabalhar aqui
+
+- **Meça antes de opinar.** Este projeto tem um histórico de diagnósticos
+  errados feitos por leitura de código. Vários bugs só apareceram rodando o jogo
+  e instrumentando (`window.PROTO` expõe player, fighters, bots, arena, loop,
+  câmera, tuning). Duas vezes uma "correção" piorou a situação e só o número
+  mostrou.
+- **Desconfie do próprio teste.** Bots roteirizados não modelam jogador
+  habilidoso, e mais de uma conclusão aqui veio de harness mal montado
+  (ex.: "a troca de alvo não funciona" era o `forward` da câmera apontando pro
+  outro lado). Instrumente o estado real antes de concluir.
+- **O git log é documentação.** Cada commit explica o *porquê*, o que foi medido
+  antes/depois, e o que ficou sem validar. `git log` é um bom ponto de partida.
 
 ## Convenções
 
