@@ -187,6 +187,24 @@ export const TUNING = {
   },
 
   /* ================================================================== */
+  /*  MODO TREINO  (tecla T cicla)                                       */
+  /* ================================================================== */
+  /*  Boneco de treino não é só "IA desligada". Pra treinar combo de verdade
+   *  ele precisa de três coisas que a IA normal atrapalha:
+   *
+   *    1. não AGIR — mas continuar REAGINDO (hitstun, knockback, voar longe).
+   *       Alvo que não reage não ensina nada sobre o combo.
+   *    2. não morrer no meio do treino
+   *    3. voltar sozinho quando você mandar ele pra fora com um smash
+   *
+   *  Os modos são NORMAL → PARADO → GUARDA. O de guarda existe porque treinar
+   *  contra guarda é outro exercício: é onde se aprende que só o smash abre. */
+  training: {
+    healDelayFrames: 75,        // sem levar dano por isto, a vida volta ao cheio
+    respawnDelayFrames: 45,     // mandou pra fora? volta sozinho
+  },
+
+  /* ================================================================== */
   /*  PARTIDA                                                            */
   /* ================================================================== */
   match: {

@@ -152,6 +152,13 @@ const debugPanel = new DebugPanel(app, input);
 // Lock-on. Começa ligado — é o padrão do Tenkaichi e o modo de combate.
 let lockedOn = true;
 
+/* Modo treino: 0 = normal, 1 = parado, 2 = guarda.
+ * Comando fixo reaproveitado — criar um objeto por frame por boneco geraria
+ * lixo à toa no loop mais quente do jogo. */
+const MODOS_TREINO = ['NORMAL', 'PARADO', 'GUARDA'];
+let modoTreino = 0;
+const cmdTreino = emptyCommand();
+
 /* Spawns em círculo: com N lutadores, posição fixa em par vira duelo e some o
  * tumulto que o jogo propõe. O raio é fração do raio da arena pra ninguém
  * nascer na borda. */
@@ -411,6 +418,46 @@ function drainEvents(f) {
 }
 
 /* ==========================================================================
+ *  Manutenção dos bonecos de treino
+ * ==========================================================================
+ *  Sem isto o treino dura dez segundos: você mata o boneco, ou manda ele pra
+ *  fora com um smash, e acabou. Ele precisa se recompor sozinho.
+ * ========================================================================== */
+function manterBonecos() {
+  const T = TUNING.training;
+
+  for (let i = 1; i < fighters.length; i++) {
+    const f = fighters[i];
+
+    // Saiu da arena (ou morreu): volta ao lugar depois de um instante.
+    if (!f.alive) {
+      f._respawn = (f._respawn || 0) + 1;
+      if (f._respawn >= T.respawnDelayFrames) {
+        f._respawn = 0;
+        f.reset(SPAWNS[i]);
+        f.char.root.visible = true;
+        f.target = player;
+      }
+      continue;
+    }
+    f._respawn = 0;
+
+    // Vida volta ao cheio depois de um tempo sem apanhar — assim dá pra ler
+    // quanto um combo inteiro tirou antes de recomeçar.
+    if (f.health < TUNING.fighter.maxHealth) {
+      f._healTimer = (f._healTimer || 0) + 1;
+      if (f._healTimer >= T.healDelayFrames) {
+        f.health = TUNING.fighter.maxHealth;
+        f.poise = TUNING.fighter.maxPoise;
+        f._healTimer = 0;
+      }
+    } else {
+      f._healTimer = 0;
+    }
+  }
+}
+
+/* ==========================================================================
  *  Projeção mundo → tela (usada pelo marcador de alvo)
  * ========================================================================== */
 const _proj = new THREE.Vector3();
@@ -517,6 +564,16 @@ function step(dt) {
   input.update();
 
   if (input.pressed('debugPanel')) debugPanel.toggle();
+
+  if (input.pressed('training')) {
+    modoTreino = (modoTreino + 1) % MODOS_TREINO.length;
+    cmdTreino.guard = modoTreino === 2;
+    hud.showBanner(`TREINO: ${MODOS_TREINO[modoTreino]}`, 1100);
+    // Ao voltar pro normal, devolve todo mundo inteiro pra luta valer.
+    if (modoTreino === 0) {
+      for (const f of fighters) { if (f.alive) { f.health = TUNING.fighter.maxHealth; f.ki = TUNING.ki.max * TUNING.ki.startPercent; } }
+    }
+  }
   if (input.pressed('reset')) { resetRound(); return; }
 
   if (player) {
@@ -561,13 +618,26 @@ function step(dt) {
   combatCam.getMoveBasis(moveBasis);
 
   player.update(dt, buildPlayerCommand(), ctx);
+
   for (const b of bots) {
     if (!b.f.alive) continue;
+
+    if (modoTreino !== 0) {
+      /* Boneco de treino: não AGE, mas continua REAGINDO. Passamos um comando
+       * vazio em vez de pular o update — pular congelaria hitstun, knockback e
+       * blowaway, e aí o alvo não ensinaria nada sobre o combo. */
+      b.f.target = player;
+      b.f.update(dt, cmdTreino, ctx);
+      continue;
+    }
+
     // Cada IA persegue o inimigo vivo mais próximo — inclusive outras IAs.
     // É isso que faz a arena parecer uma batalha campal e não N duelos.
     if (!b.f.target || !b.f.target.alive) b.f.target = nearestEnemy(b.f, fighters);
     b.f.update(dt, b.update(dt, ctx), ctx);
   }
+
+  if (modoTreino !== 0) manterBonecos();
 
   resolveMelee(fighters, ctx);
   // Dash-contra-dash (clash) tem regra própria e é testado depois do impacto
@@ -578,7 +648,7 @@ function step(dt) {
   beam.update(dt, fighters, ctx);
   resolveOverlap(fighters);
 
-  arena.update(dt);
+  if (modoTreino === 0) arena.update(dt);
 
   for (const f of fighters) {
     drainEvents(f);
@@ -596,7 +666,7 @@ function step(dt) {
 
   // Fim de partida: sobrou um.
   const vivos = fighters.filter((f) => f.alive);
-  if (!roundOver && vivos.length <= 1) {
+  if (!roundOver && modoTreino === 0 && vivos.length <= 1) {
     roundOver = true;
     roundOverTimer = 0;
     const venceu = vivos[0] === player;
@@ -637,7 +707,7 @@ function render(alpha, dtReal) {
 
     vfx.update(dt, player.velocity.length());
     arena.render(dt, vfx.elapsed);
-    hud.update(dt, { player, opponent, arena, loop, fighters });
+    hud.update(dt, { player, opponent, arena, loop, fighters, treino: MODOS_TREINO[modoTreino] });
 
     hud.setLock(
       lockedOn,
@@ -678,6 +748,7 @@ window.PROTO = {
   get fighters() { return fighters; },
   get bots() { return bots; },
   get lockedOn() { return lockedOn; },
+  get modoTreino() { return MODOS_TREINO[modoTreino]; },
   arena, vfx, juice, loop, camera, combatCam,
   projectiles, beam,
   resetRound,

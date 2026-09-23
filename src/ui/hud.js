@@ -32,6 +32,7 @@ export class HUD {
           <div class="timer" id="timer">0:00</div>
           <div class="arena-state" id="arenaState">ARENA ESTÁVEL</div>
           <div class="alive" id="alive"></div>
+          <div class="training" id="training"></div>
         </div>
 
         <div class="bar-block right">
@@ -68,6 +69,7 @@ export class HUD {
     this.lockReticle = $('lockReticle');
     this.lockState = $('lockState');
     this.aliveEl = $('alive');
+    this.trainingEl = $('training');
     this.p2name = $('p2name');
 
     $('help').innerHTML = KEYMAP_HELP
@@ -119,7 +121,16 @@ export class HUD {
   }
 
   /* ---------------------------------------------------------------- */
-  update(dt, { player, opponent, arena, loop, fighters }) {
+  update(dt, { player, opponent, arena, loop, fighters, treino }) {
+    // Modo treino tem que ser VISÍVEL o tempo todo: descobrir depois de dois
+    // minutos que os bonecos estavam parados é frustrante.
+    if (treino && treino !== 'NORMAL') {
+      this.trainingEl.textContent = `TREINO · ${treino}  ·  T muda`;
+      this.trainingEl.style.display = '';
+    } else {
+      this.trainingEl.style.display = 'none';
+    }
+
     // Com N lutadores a barra da direita é do ALVO ATUAL, não de "o oponente".
     if (opponent && this.p2name.textContent !== opponent.name) {
       this.p2name.textContent = opponent.name;

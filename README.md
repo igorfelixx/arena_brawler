@@ -63,9 +63,40 @@ mannequin procedural. Isso é proposital — ver "Sobre o placeholder".
 | `V` | **Vanish** — some e reaparece atrás de quem te bate |
 | `R` | carregar ki (segurar) — parado e vulnerável |
 | `X` | ultimate (precisa de 70 de ki) |
-| `Q` (ou `Tab`) | **soltar / retomar o lock-on** |
+| `Q` | trocar de alvo |
+| `E` (ou `Tab`) | soltar / retomar o lock-on |
+| `T` | **modo treino** — parado / guarda / normal |
 | `P` (ou o botão ⚙) | painel de tuning |
 | `Backspace` | reiniciar a luta |
+
+### Modo treino (`T`)
+
+Para praticar combo sem o boneco fugindo. Cicla três estados:
+
+| Modo | O boneco |
+|---|---|
+| **NORMAL** | luta de verdade |
+| **PARADO** | não age, mas **continua reagindo** (hitstun, knockback, voa longe) |
+| **GUARDA** | fica bloqueando — é onde se aprende que só o smash abre a defesa |
+
+Nos modos de treino o boneco **não morre**: a vida volta ao cheio depois de um
+tempo sem apanhar (dá pra ler quanto o combo inteiro tirou antes de recomeçar),
+e se você mandar ele pra fora com um smash, ele volta sozinho. A arena também
+para de encolher, pra não sumir o chão no meio do exercício.
+
+### Golpes direcionais
+
+A direção que você segura escolhe o golpe — não há ordem fixa, você compõe:
+
+| Entrada | Golpe |
+|---|---|
+| `J` | soco de direita |
+| `J` + esquerda | soco de esquerda |
+| `J` + cima | gancho — levanta o alvo |
+| `J` + baixo | chute descendente — crava |
+
+Qualquer elo emenda em qualquer outro (se o anterior encostou), até 6 elos.
+Depois disso só resta o smash.
 
 ### Lock-on: travado vs. livre
 

@@ -86,6 +86,7 @@ netcode. **Naraka: Bladepoint** é a outra referência (60 jogadores, melee).
 | Rush direcional (J+dir) | 4/4 golpes corretos; gancho +6,7 m/s, chute −8,8 m/s |
 | Troca de alvo por direção | alterna entre rivais conforme a direção apontada |
 | Vários lutadores | 3 na arena, 60 fps, IAs brigando entre si |
+| Modo treino | boneco parado reage e não morre; volta após ring-out |
 | Investida de rush (engajar) | dano em 25 s: 0 → 100; distância mediana 14,7 m → 1,3 m |
 | Combo só emenda ao encostar | encostando: 4 elos; no vazio: 1 elo e recovery exposto |
 | Martelar botão não domina | saldo de martelar: +109 → +10 |
@@ -905,6 +906,23 @@ Também não validado por razão estrutural: **como tudo isso se comporta com 30
 jogadores.** Todo o design foi pensado e testado em 1v1. Com 30, questões novas
 aparecem — seleção de alvo, quem a câmera segue, o que acontece quando três
 pessoas te combam ao mesmo tempo.
+
+---
+
+### Modo treino não é "IA desligada"
+
+Vale registrar porque é fácil implementar errado no Unreal: o boneco de treino
+precisa **parar de AGIR mas continuar REAGINDO**. Se você simplesmente pular o
+tick dele, congela hitstun, knockback e blowaway — e aí o alvo não ensina nada
+sobre o combo, porque a reação É a informação que o jogador está lendo.
+
+A implementação certa é alimentar um Command VAZIO, mantendo o resto do ciclo
+intacto. No Unreal: desabilite o `AIController` (ou o Behavior Tree), nunca o
+tick do `Character`.
+
+Os outros dois requisitos vêm do uso real: o boneco não pode morrer no meio do
+treino, e precisa voltar sozinho quando levar um smash pra fora da arena —
+senão a sessão de treino dura dez segundos.
 
 ---
 

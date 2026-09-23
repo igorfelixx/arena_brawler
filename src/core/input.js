@@ -37,6 +37,7 @@ const BINDINGS = {
   // meta
   lockCycle:  { keys: ['KeyQ'], pad: [8] },          // troca de alvo
   lockToggle: { keys: ['KeyE', 'Tab'], pad: [11] },  // solta/retoma o lock-on
+  training:   { keys: ['KeyT'] },                   // cicla o modo treino
   debugPanel: { keys: ['KeyP'] },
   reset:      { keys: ['Backspace'] },
 };
@@ -233,6 +234,7 @@ export const KEYMAP_HELP = [
   ['X',               'Ultimate'],
   ['Q',               'Trocar de alvo'],
   ['E',               'Soltar / retomar o lock-on'],
+  ['T',               'Modo treino: parado / guarda / normal'],
   ['P',               'Painel de tuning'],
   ['Backspace',       'Reiniciar a luta'],
 ];
