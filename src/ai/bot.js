@@ -54,6 +54,10 @@ export class BotController {
     this._strafeDir = this._rand() > 0.5 ? 1 : -1;
     this._strafeTimer = 0;
     this._blastHold = 0;
+    this._smashHold = 0;
+    /* Compromisso de carregar ki até acender o Max Power. Ver a nota longa no
+     * bloco 2 do update: sorteio por frame não segura botão. */
+    this._maxPowerIntent = 0;
 
     /* Quantos frames ainda vai SEGURAR a guarda.
      *
@@ -192,6 +196,7 @@ export class BotController {
       if (brechaLonga && this._roll(0.55 + diff * 0.3)) {
         c.smash = true;
         c.smashDir = this._pickSmashDir(foe, ctx);
+        this._smashHold = this._rollSmashCharge();
       } else {
         c.rush = true;
       }
@@ -228,21 +233,113 @@ export class BotController {
       return c;
     }
 
+    /* ---------- 1.4 RESPONDER À VANISH BATTLE ----------
+     *
+     * A janela tem 12 frames. Se a IA não responder, a vanish battle só existe
+     * quando o JOGADOR é vanishado — ou seja, ela é uma mecânica de mão única e
+     * o jogador nunca vê a troca acontecer contra ele. Vem antes de tudo porque
+     * a janela é a mais curta do jogo.
+     *
+     * A chance é `vanishChance` reduzida: a IA às vezes deixa passar, e é isso
+     * que a torna legível. Uma IA que SEMPRE responde transforma a troca num
+     * teste de quem tem mais ki, não numa leitura. */
+    if (f.counterVanishFrames > 0) {
+      if (f.ki >= f.vanishCost() && this._roll(A.vanishChance * diff * 0.85)) {
+        c.vanish = true;
+        return c;
+      }
+    }
+
     /* ---------- 1.5 PERSEGUIR ----------
      *
      * A IA precisa participar da segunda disputa, senão ela só existe pro
      * jogador e o lançamento volta a ser um beco sem saída do outro lado.
      * Vem cedo na ordem de propósito: a janela é curta e perder ela é perder
      * a leitura inteira. */
-    if (f.pursuitFrames > 0 && f.ki >= TUNING.pursuit.kiCost
-        && this._roll(A.aggression * 0.8 + diff * 0.2)) {
+    if (f.pursuitFrames > 0 && !f.exhausted && this._roll(A.aggression * 0.8 + diff * 0.2)) {
+      /* ESCOLHE O TIPO (§10). Sem isto a IA só usava a direta e os outros dois
+       * tipos nunca apareciam contra o jogador — existiriam no tuning e não no
+       * jogo. A escolha é situacional, do jeito que um humano faria:
+       *
+       *   alvo já perto da borda  → ALTA VELOCIDADE (o spike re-lança = ring-out)
+       *   alvo longe e com ki     → VANISH (garante chegar, ele ia recuperar)
+       *   resto                   → DIRETA (barata, e a que rende rota nova)   */
+      const alvoBorda = ctx.arena.edgeProximity(foe.position);
+      const podeAlta = f.ki >= TUNING.pursuit.types.highSpeed.kiCost;
+      const podeVanish = f.ki >= TUNING.pursuit.types.vanish.kiCost;
+
+      if (alvoBorda > 0.45 && podeAlta && this._roll(A.ringOutIntent + 0.25)) {
+        c.smash = true;                       // Shift+K
+      } else if (dist > 16 && podeVanish && this._roll(0.4 * diff)) {
+        c.vanish = true;                      // Shift+V
+      }
+
       c.dash = true;
       this._setMoveToward(c, _toFoe, ctx);
       return c;
     }
 
-    /* ---------- 2. sem ki ---------- */
-    if (f.ki < A.chargeKiBelow && dist > 8) {
+    /* ---------- 1.6 GRAB: a resposta a quem só bloqueia ----------
+     *
+     * A medição desta sessão dizia que contra a guarda o ataque tinha uma
+     * resposta só (o smash). Se a IA não usar o grab, o jogador nunca descobre
+     * que segurar F tem um preço — e a ferramenta fica inerte pelo mesmo motivo
+     * que `cancelOnBlock` ficou: ninguém a usa contra ele.
+     *
+     * A condição é o adversário ESTAR DEFENDENDO e estar colado. É exatamente
+     * quando o grab é bom, e é o comportamento que ensina o jogador a não
+     * bloquear cegamente. */
+    const eleDefende = foe.state === S.GUARD || foe.blockstunFrames > 0;
+    if (eleDefende && dist <= TUNING.defense.grab.range * 1.15
+        && f.grabCooldown === 0 && f.canAct
+        && this._roll(A.grabChance * (0.6 + diff * 0.6))) {
+      c.grab = true;
+      this._setMoveToward(c, _toFoe, ctx, 0.4);
+      return c;
+    }
+
+    /* ---------- 2. carregar ki ----------
+     *
+     * Em EXAUSTÃO carregar é a única jogada sensata: nada que custa ki sai, e
+     * ficar tentando é apertar botão morto. Mas só se houver espaço — carregar
+     * colado no adversário é suicídio, e a IA não pode ser burra de um jeito que
+     * falseie a medição do combate. */
+
+    /* ================================================================
+     *  MAX POWER: a IA precisa de uma INTENÇÃO, não de um sorteio
+     * ================================================================
+     *  Medido em 32 s de luta real: `maxPowerStart` disparou ZERO vezes. A causa
+     *  eram duas condições mutuamente exclusivas:
+     *
+     *     a IA só carregava com    ki < chargeKiBelow  (28)
+     *     o Max Power só acende com ki >= enterKiThreshold (78)
+     *
+     *  Ou seja, ela largava o charge aos 28 e nunca chegava perto do limiar.
+     *  `ai.maxPowerChance` era um número inalcançável — a armadilha 8.19 mais
+     *  uma vez, num parâmetro que eu mesmo acabei de criar.
+     *
+     *  A correção é a mesma lição da 8.15 (`guardHoldFrames`): decisão por frame
+     *  não produz botão segurado. Acender exige 26 frames CONTÍNUOS de charge
+     *  acima do limiar, então precisa ser um COMPROMISSO com prazo, não um
+     *  sorteio a cada frame. */
+    if (this._maxPowerIntent > 0) {
+      this._maxPowerIntent--;
+      // Abortar se o adversário chegou: carregar colado é suicídio, e insistir
+      // faria a IA parecer quebrada em vez de ambiciosa.
+      if (dist > 7 && !f.inMaxPower && !f.exhausted) { c.charge = true; return c; }
+      this._maxPowerIntent = 0;
+    } else if (!f.inMaxPower && !f.exhausted && dist > 10
+               && f.ki >= TUNING.maxPower.enterKiThreshold * 0.8
+               && this._roll(A.maxPowerChance * diff * 0.12)) {
+      /* A chance é pequena POR FRAME porque este teste roda todo frame: 12% de
+       * `maxPowerChance` dá ~uma tentativa a cada poucos segundos de neutro
+       * afastado, que é a frequência que um humano usaria. */
+      this._maxPowerIntent = TUNING.maxPower.enterHoldFrames + 40;
+      c.charge = true;
+      return c;
+    }
+
+    if ((f.exhausted || f.ki < A.chargeKiBelow) && dist > 8) {
       c.charge = true;
       return c;
     }
@@ -296,6 +393,7 @@ export class BotController {
           if (dist <= A.attackRange * 1.3) {
             c.smash = true;
             c.smashDir = this._pickSmashDir(foe, ctx);
+            this._smashHold = this._rollSmashCharge();
           } else {
             this._intent = 'reposition';
           }
@@ -317,6 +415,7 @@ export class BotController {
             if (canSmash && this._roll(A.smashChance * (0.6 + diff * 0.6))) {
               c.smash = true;
               c.smashDir = this._pickSmashDir(foe, ctx);
+              this._smashHold = this._rollSmashCharge();
               this._comboCount = 0;
             } else {
               c.rush = true;
@@ -350,7 +449,39 @@ export class BotController {
 
     if (this._blastHold > 0) { this._blastHold--; c.blastHeld = true; }
 
+    /* ================================================================
+     *  A IA CARREGA O SMASH  (§7, §8)
+     * ================================================================
+     *  Sem isto o Perfect Smash é uma mecânica de mão única: o jogador pode
+     *  acertar a janela, mas nunca sente o que é ENFRENTAR um smash carregado —
+     *  que é justamente o mind game que a carga existe pra criar ("quando ele vai
+     *  soltar?"). E é a metade do §34 que testa se o timing tem profundidade dos
+     *  dois lados.
+     *
+     *  A IA não acerta a janela sempre: ela sorteia um alvo DENTRO da janela e
+     *  erra por alguns frames conforme a dificuldade. Uma IA que acerta 100% dos
+     *  Perfect Smashes não mediria o combate, mediria a paciência do jogador. */
+    if (this._smashHold > 0) {
+      this._smashHold--;
+      c.smashHeld = true;
+      c.smash = true;
+    }
+
     return c;
+  }
+
+  /** Decide por quantos frames vai SEGURAR este smash. */
+  _rollSmashCharge() {
+    const A = this._merged;
+    const CH = TUNING.smashCharge;
+    if (!CH.enabled || !this._roll(A.smashChargeChance)) return 0;
+
+    const [ini, fim] = CH.perfectWindow;
+    const meio = (ini + fim) / 2;
+    // Erro de timing que encolhe com a dificuldade: na difícil ela quase sempre
+    // acerta a janela; na fácil solta cedo ou tarde e sai um smash comum.
+    const erro = (this._rand() - 0.5) * 2 * (1 - A.difficulty) * (fim - ini) * 1.8;
+    return Math.max(1, Math.round(meio + erro));
   }
 
   /* ---------------------------------------------------------------- */
@@ -405,6 +536,8 @@ export class BotController {
     this._decisionTimer = 0;
     this._comboCount = 0;
     this._blastHold = 0;
+    this._smashHold = 0;
+    this._maxPowerIntent = 0;
     this._holdGuard = 0;
     this._punishCooldown = 0;
     resetCommand(this.cmd);
@@ -416,6 +549,7 @@ function resetCommand(c) {
   c.moveX = 0; c.moveY = 0; c.vertical = 0;
   c.rush = false; c.smash = false; c.blast = false; c.blastHeld = false;
   c.guard = false; c.vanish = false; c.dash = false; c.charge = false; c.ultimate = false;
+  c.grab = false; c.smashHeld = false;
   c.smashDir = 'forward';
 }
 

@@ -18,8 +18,10 @@
 
 import * as THREE from 'three';
 import { TUNING } from '../tuning.js';
+import { defenseWorks } from './moves.js';
 
 const _hitPos = new THREE.Vector3();
+const _mid = new THREE.Vector3();
 const _victimC = new THREE.Vector3();
 const _dir = new THREE.Vector3();
 const _fwd = new THREE.Vector3();
@@ -53,7 +55,15 @@ export function resolveMelee(fighters, ctx) {
        * esquiva bem cronometrada. Se a invulnerabilidade veio de um step
        * recém-iniciado, foi leitura — e leitura tem que pagar. */
       if (victim.invulnerable) {
-        if (victim.trySonicSway(attacker, ctx)) {
+        /* Mas o golpe pode SUPERAR o sway (§14).
+         *
+         * Sem isto o sway era resposta universal: esquivou no tempo, esquivou de
+         * tudo. `beatsSway` é o que dá ao atacante uma opção contra quem lê bem
+         * a esquiva — e é o que impede a ferramenta grátis do kit defensivo de
+         * ser também a melhor. A matriz decide se a categoria aceita sway; o
+         * golpe decide se ELE fura. */
+        const swayVale = defenseWorks(move, 'sway') && !move.beatsSway;
+        if (swayVale && victim.trySonicSway(attacker, ctx)) {
           const SW = TUNING.defense.sonicSway;
           ctx.juice?.impact({ hitstop: SW.hitstop, shake: SW.shake });
           ctx.juice?.slowMo(SW.slowMoFrames, SW.slowMoScale);
@@ -70,7 +80,7 @@ export function resolveMelee(fighters, ctx) {
        * frame do impacto fez a leitura mais difícil do kit defensivo; se a
        * guarda comum resolvesse primeiro, esse acerto seria tratado como um
        * bloqueio qualquer e a perícia não valeria nada. */
-      if (victim.tryZCounter(attacker, ctx)) {
+      if (victim.tryZCounter(attacker, ctx, move)) {
         const Z = TUNING.defense.zCounter;
         ctx.juice?.impact({ hitstop: Z.hitstop, shake: Z.shake, zoom: 1 });
         ctx.juice?.slowMo(Z.slowMoFrames, Z.slowMoScale);
@@ -79,7 +89,7 @@ export function resolveMelee(fighters, ctx) {
       }
 
       /* --- 5. vanish --- */
-      if (victim.vanishPressFrame <= move.vanishWindow) {
+      if (defenseWorks(move, 'vanish') && victim.vanishPressFrame <= move.vanishWindow) {
         if (victim.doVanish(attacker, ctx)) {
           const V = TUNING.defense.vanish;
           ctx.juice?.impact({ hitstop: V.hitstop, shake: V.shake });
@@ -89,14 +99,31 @@ export function resolveMelee(fighters, ctx) {
         }
       }
 
-      /* --- 6. guarda (precisa estar de frente) --- */
+      /* --- 5.5 GRAB: a pegada não é um acerto, é o começo de uma interação ---
+       *
+       * Vem depois do vanish (dá pra sumir de um grab, com janela apertada) e
+       * ANTES da guarda — porque a guarda não está em `defenseMatrix.grab`, e é
+       * essa ausência que faz o grab ser a resposta ao turtle. A defesa contra
+       * ele é o ESCAPE, que corre dentro do estado GRABBED. */
+      if (move.isGrab) {
+        const G = TUNING.defense.grab;
+        if (G.cannotGrabStates.includes(victim.state)) continue;
+        attacker.beginGrab(victim, ctx);
+        ctx.juice?.impact({ hitstop: G.hitstop, shake: G.shake });
+        ctx.onGrab?.(attacker, victim, _hitPos.clone());
+        break;
+      }
+
+      /* --- 6. guarda (precisa estar de frente E a categoria tem que aceitar) --- */
       _dir.subVectors(_victimC, attacker.position).setY(0);
       if (_dir.lengthSq() < 1e-6) _dir.set(Math.sin(attacker.yaw), 0, Math.cos(attacker.yaw));
       _dir.normalize();
 
       _fwd.set(Math.sin(victim.yaw), 0, Math.cos(victim.yaw));
       const facingAttacker = _fwd.dot(_dir) < -0.15;   // vítima olhando pro golpe
-      const guarded = victim.guarding && facingAttacker;
+      const guardaVale = defenseWorks(move, 'guard')
+        && !move.ignoresGuard && !move.unblockable;
+      const guarded = victim.guarding && facingAttacker && guardaVale;
 
       /* --- 7. aplica --- */
       const result = victim.applyHit({ move, attacker, direction: _dir, guarded, ctx });
@@ -118,6 +145,87 @@ export function resolveMelee(fighters, ctx) {
       if (victim.state === 'blowaway') attacker.openPursuit(victim);
 
       ctx.onHit?.({ attacker, victim, move, result, point: _hitPos.clone() });
+    }
+  }
+}
+
+/* =============================================================================
+ *  TRADES — dois golpes que se encontram no mesmo frame  (§21)
+ * =============================================================================
+ *
+ *  Antes disto, dois lutadores socando ao mesmo tempo simplesmente se acertavam
+ *  os DOIS: cada `resolveMelee` aplicava seu hit, e trocar golpe às cegas era
+ *  neutro. Faltava a consequência que faz escolher o golpe pesado valer a pena.
+ *
+ *      prioridade MAIOR   vence: o golpe dele é cancelado, o meu segue
+ *      prioridade IGUAL   CLASH: os dois ricocheteiam, ninguém ganha
+ *
+ *  Escala: grab 0 · rush 1 · rush pesado 2 · smash 3 · spike de perseguição 4.
+ *
+ *  Roda ANTES de `resolveMelee`, e a ordem é o mecanismo: quem perde a troca vai
+ *  pra HITSTUN, então o `resolveMelee` já não o vê como atacante. O golpe do
+ *  vencedor acerta pelo caminho NORMAL, com toda a lógica de guarda, vanish e
+ *  Z-Counter intacta — nada é reimplementado aqui.
+ *
+ *  Exige os dois na fase ACTIVE (não no startup). É uma janela de ~3 frames de
+ *  cada lado: raro o bastante pra parecer um momento, e não um ruído constante
+ *  de dois lutadores colados.
+ * ========================================================================== */
+export function resolveTrade(fighters, ctx) {
+  const T = TUNING.trade;
+  if (!T.enabled) return;
+
+  for (let i = 0; i < fighters.length; i++) {
+    const a = fighters[i];
+    if (!a.alive || a.attackPhase !== 'active' || !a.move) continue;
+
+    for (let j = i + 1; j < fighters.length; j++) {
+      const b = fighters[j];
+      if (!b.alive || b.attackPhase !== 'active' || !b.move) continue;
+
+      // Já se acertaram neste golpe: a troca não se aplica, o hit já aconteceu.
+      if (a.hitThisMove.has(b) || b.hitThisMove.has(a)) continue;
+      if (a.invulnerable || b.invulnerable) continue;
+
+      if (a.position.distanceToSquared(b.position) > T.range * T.range) continue;
+
+      const pa = a.move.priority ?? 1;
+      const pb = b.move.priority ?? 1;
+      const diff = Math.abs(pa - pb);
+
+      _mid.copy(a.position).lerp(b.position, 0.5);
+      _mid.y += 0.9;
+
+      if (diff <= T.clashWindow) {
+        /* CLASH — ninguém ganha, os dois são empurrados. É a imagem que o
+         * gênero vende, e mecanicamente é um reset de neutro: ambos pagam o
+         * mesmo preço, então trocar às cegas deixa de ser lucrativo sem virar
+         * uma punição arbitrária pra um dos lados. */
+        _dir.subVectors(b.position, a.position).setY(0);
+        if (_dir.lengthSq() < 1e-6) _dir.set(1, 0, 0);
+        _dir.normalize();
+
+        a.stagger(T.clashStunFrames);
+        b.stagger(T.clashStunFrames);
+        a.velocity.copy(_dir).multiplyScalar(-T.clashKnockback);
+        b.velocity.copy(_dir).multiplyScalar(T.clashKnockback);
+
+        ctx.juice?.impact({ hitstop: T.hitstop, shake: T.shake, zoom: 0.8 });
+        ctx.juice?.slowMo(T.slowMoFrames, T.slowMoScale);
+        ctx.onTradeClash?.(a, b, _mid.clone());
+      } else {
+        /* Alguém venceu. O perdedor tem o golpe CANCELADO e fica exposto — e o
+         * golpe do vencedor não é aplicado aqui: ele continua ativo e acerta no
+         * `resolveMelee` logo depois, passando por guarda/vanish/Z-Counter
+         * normalmente. Aplicar o dano aqui duplicaria a resolução. */
+        const perdedor = pa > pb ? b : a;
+        const vencedor = pa > pb ? a : b;
+        perdedor.stagger(T.loserStunFrames);
+        perdedor.tradeLostFrames = T.loserStunFrames;
+
+        ctx.juice?.impact({ hitstop: Math.round(T.hitstop * 0.6), shake: T.shake * 0.6 });
+        ctx.onTradeWin?.(vencedor, perdedor, _mid.clone());
+      }
     }
   }
 }

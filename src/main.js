@@ -38,11 +38,32 @@ import { Arena } from './world/arena.js';
 import { CombatCamera } from './world/camera.js';
 import { VFX } from './world/vfx.js';
 import { Fighter, emptyCommand, S } from './combat/fighter.js';
-import { resolveMelee, resolveDashImpact, resolveDashClash, resolveOverlap } from './combat/resolve.js';
+import { initMoves, hitstopFor, moveCharge } from './combat/moves.js';
+import {
+  resolveMelee, resolveTrade, resolveDashImpact, resolveDashClash, resolveOverlap,
+} from './combat/resolve.js';
 import { pickAttackTarget, cycleTarget, nearestEnemy } from './combat/targeting.js';
 import { ProjectileSystem, BeamSystem } from './combat/projectiles.js';
 import { BotController } from './ai/bot.js';
 import { HUD } from './ui/hud.js';
+
+/* ==========================================================================
+ *  NORMALIZAÇÃO DOS GOLPES — precisa ser a PRIMEIRA coisa a rodar
+ * ==========================================================================
+ *  Ela preenche as propriedades padrão (§21) nos próprios objetos de
+ *  `TUNING.moves`: priority, armor, launch, category…
+ *
+ *  Estava dentro de `boot()`, e o navegador pegou o erro: o `DebugPanel` é
+ *  construído no corpo do módulo, ANTES do boot, e ao montar os sliders ele
+ *  procura `moves.rush_r.priority` — que ainda não existia. O painel descartava
+ *  o slider com um aviso no console e seguia. Ou seja: a alavanca de prioridade
+ *  simplesmente não aparecia, e ninguém ia descobrir por quê.
+ *
+ *  É a armadilha 8.19 outra vez, pelo avesso: aqui o dado existia e a FERRAMENTA
+ *  de ajuste não conseguia vê-lo. Normalizar no topo do módulo resolve, e é
+ *  seguro — a função só mexe em TUNING, não depende de nada carregado.
+ * ========================================================================== */
+initMoves();
 
 /* ==========================================================================
  *  Céu — gradiente em shader. Evita depender de HDRI/cubemap (arquivo pesado).
@@ -224,6 +245,7 @@ const moveBasis = { forward: new THREE.Vector3(), right: new THREE.Vector3() };
 const ctx = {
   arena, vfx, juice, projectiles, beam, moveBasis,
   onHit, onVanish, onClash, onDashImpact, onZCounter, onSway,
+  onGrab, onTradeClash, onTradeWin,
   /* Chamado pelo Fighter no início de CADA golpe. É o que permite trocar de
    * alvo no meio do combo: a direção que você segura escolhe em quem bate. */
   pickTarget: (f, cmd) => pickAttackTarget(f, fighters, cmd, moveBasis, f.target),
@@ -311,6 +333,10 @@ function buildPlayerCommand() {
 
   c.rush = input.buffered('rush', 8);
   c.smash = input.buffered('smash', 10);
+  /* O botão SEGURADO de verdade, sem buffer. É o que sustenta a carga do smash:
+   * com o buffer, todo toque carregaria dez frames sozinho e a janela do Perfect
+   * Smash sairia por acidente — o oposto de uma mecânica de timing. */
+  c.smashHeld = input.down('smash');
   c.blast = input.pressed('blast');
   c.blastHeld = input.down('blast');
   c.guard = input.down('guard');
@@ -318,6 +344,24 @@ function buildPlayerCommand() {
   c.dash = input.down('dash');
   c.charge = input.down('chargeKi');
   c.ultimate = input.pressed('ultimate');
+
+  /* ================================================================
+   *  GRAB = F + J, e a tradução mora AQUI  (§17, §29)
+   * ================================================================
+   *  O Fighter recebe `grab` como campo próprio em vez de deduzir "guarda +
+   *  rush", e a diferença não é estética: a IA aperta guarda e rush por motivos
+   *  independentes (bloquear, e depois punir), e se o Fighter deduzisse, ela
+   *  agarraria por acidente em todo frame que decidisse as duas coisas juntas.
+   *  Intenção é de quem tem a intenção.
+   *
+   *  F+J é o idioma clássico de arremesso e não gasta tecla nova — o pedido
+   *  explícito do §29. O custo é que F+J deixa de sair um rush, e isso é
+   *  deliberado: segurando guarda, um rush não saía de todo jeito (o estado
+   *  GUARD não lê `rush`), então não se perde nada que funcionava.             */
+  c.grab = input.down('guard') && input.buffered('rush', 8);
+  // Um grab não é também um rush: sem isto, F+J tentava as duas coisas e o rush
+  // ganhava a corrida da ordem de leitura em `_sFree`.
+  if (c.grab) c.rush = false;
 
   // Direção do smash: vertical manda. Espaço+K sobe, C+K crava.
   c.smashDir = c.vertical > 0.5 ? 'up' : c.vertical < -0.5 ? 'down' : 'forward';
@@ -376,18 +420,44 @@ function onHit({ attacker, victim, move, result, point, projectile }) {
     return;
   }
 
+  /* ARMOR: o golpe passou por cima do adversário sem interrompê-lo. Precisa de
+   * um som visual PRÓPRIO — se parecesse um acerto normal, o atacante acharia
+   * que tinha ganhado o turno e comeria o golpe que vem. */
+  if (result === 'armor') {
+    juice.impact({ hitstop: 8, shake: 0.3 });
+    vfx.burst(point, { count: 14, color: 0xffc98a, speed: 6, life: 0.3 });
+    vfx.ring(point, { billboard: true, color: 0xffb060, from: 0.3, to: 3.2, life: 0.3 });
+    return;
+  }
+
   if (result === 'guard') {
-    juice.impact({ hitstop: Math.round(move.hitstop * 0.5), shake: move.shake * 0.4 });
+    juice.impact({ hitstop: hitstopFor(move, { guarded: true }), shake: move.shake * 0.4 });
     vfx.burst(point, { count: 10, color: 0x9fd0ff, speed: 5, life: 0.25 });
     vfx.ring(point, { billboard: true, color: 0x9fd0ff, from: 0.3, to: 2.4, life: 0.28 });
     return;
   }
 
+  /* PERFECT SMASH — o teto da escala de impacto (§22).
+   *
+   * Sem uma leitura visual e de tempo muito mais forte que a do smash normal, o
+   * jogador não descobre que acertou a janela, e uma mecânica de timing que não
+   * se percebe não ensina nada. O congelamento longo e a câmera lenta são o
+   * recibo. */
+  const perfect = !!move.isPerfect;
+
   juice.impact({
-    hitstop: move.hitstop,
-    shake: move.shake,
-    zoom: move.punchZoom ? 1 : (move.causesBlowaway ? 0.6 : 0),
+    hitstop: hitstopFor(move, { perfect }),
+    shake: perfect ? TUNING.smashCharge.perfectShake : move.shake,
+    zoom: perfect ? 1.4 : (move.punchZoom ? 1 : (move.causesBlowaway ? 0.6 : 0)),
   });
+
+  if (perfect) {
+    juice.slowMo(TUNING.smashCharge.perfectSlowMoFrames, TUNING.smashCharge.perfectSlowMoScale);
+    vfx.burst(point, { count: 70, color: 0xffe89a, speed: 22, life: 0.75 });
+    vfx.ring(point, { billboard: true, color: 0xffd45c, from: 0.6, to: 18, life: 0.7 });
+    vfx.ring(point, { billboard: true, color: 0xffffff, from: 0.3, to: 9, life: 0.4 });
+    hud.showBanner(isPlayerAttacker ? 'PERFECT SMASH!' : 'PERFECT SMASH', 1300, 'big');
+  }
 
   const heavy = !!move.causesBlowaway;
   vfx.burst(point, {
@@ -441,6 +511,34 @@ function onSway(victim, attacker, point) {
 
 function onClash(point) {
   hud.showBanner('CLASH!', 1000, 'big');
+}
+
+/* GRAB — a pegada pegou. A leitura precisa dizer duas coisas ao mesmo tempo:
+ * "ele te agarrou" e "você tem um instante pra sair". Sem a segunda, o jogador
+ * não descobre que o escape existe e o grab parece injusto. */
+function onGrab(attacker, victim, point) {
+  vfx.burst(point, { count: 20, color: 0xffd2a0, speed: 7, life: 0.35 });
+  vfx.ring(point, { billboard: true, color: 0xffb877, from: 0.4, to: 4.5, life: 0.35 });
+  if (victim === player) hud.showBanner('AGARRADO  ·  F pra escapar!', 800, 'warn');
+  else if (attacker === player) hud.showBanner('AGARROU', 700);
+}
+
+/* CLASH DE GOLPES — os dois com a mesma prioridade. É um reset de neutro, e
+ * merece leitura forte porque é o momento em que ninguém ganhou: sem marcação, o
+ * jogador lê como "meu golpe não saiu". */
+function onTradeClash(a, b, point) {
+  vfx.burst(point, { count: 54, color: 0xffffff, speed: 17, life: 0.55 });
+  vfx.ring(point, { billboard: true, color: 0xcfefff, from: 0.5, to: 13, life: 0.55 });
+  if (a === player || b === player) hud.showBanner('CHOQUE!', 900, 'big');
+}
+
+/* Alguém ATRAVESSOU o golpe do outro pela prioridade. Deliberadamente mais
+ * discreto que o clash: aqui houve vencedor, e o acerto que vem em seguida já é
+ * a informação principal. */
+function onTradeWin(vencedor, perdedor, point) {
+  vfx.burst(point, { count: 22, color: 0xffd36e, speed: 9, life: 0.35 });
+  if (vencedor === player) hud.showBanner('ATRAVESSOU', 700);
+  else if (perdedor === player) { hud.showBanner('GOLPE SUPERADO', 800, 'warn'); hud.resetCombo(); }
 }
 
 /* Tromba de dash: precisa de um baque visível, senão o dash parece ter
@@ -568,6 +666,147 @@ function drainEvents(f) {
       case 'airRecover':
         vfx.burst(f.position, { count: 14, color: f.auraColor, speed: 7, life: 0.3 });
         vfx.ring(f.position, { billboard: true, color: f.auraColor, from: 0.4, to: 4, life: 0.35 });
+        break;
+
+      /* ================================================================
+       *  A JANELA DO PERFECT SMASH  (§8)
+       * ================================================================
+       *  Este é o aviso mais importante que a tela dá, e a razão é direta: uma
+       *  janela de timing invisível não é uma mecânica de timing, é sorte. O
+       *  jogador precisa de um sinal no frame em que soltar vira Perfect — é com
+       *  ele que "às vezes sai forte" se transforma em "eu sei quando soltar".
+       *
+       *  O sinal é no PUNHO e não na HUD de propósito: quem está carregando um
+       *  smash está olhando o adversário, não o canto da tela.                  */
+      case 'smashPerfectWindow': {
+        if (f !== player) break;
+        const punho = f.char.socket(f.move?.socket || 'hand_r')
+          .getWorldPosition(new THREE.Vector3());
+        vfx.burst(punho, { count: 16, color: 0xffe07a, speed: 5, life: 0.28 });
+        vfx.ring(punho, { billboard: true, color: 0xffd45c, from: 0.2, to: 1.9, life: 0.26 });
+        juice.shake(0.06);
+        break;
+      }
+
+      /* Carregando: pulso discreto no punho. Serve pra dizer "o golpe está
+       * suspenso, você está no controle do tempo" — que é o valor real de
+       * segurar, já que a carga não dá dano nenhum. */
+      case 'smashCharging':
+        if (f === player && f.smashChargeFrames % 4 === 0) {
+          vfx.auraTick(f.char.socket(f.move?.socket || 'hand_r')
+            .getWorldPosition(new THREE.Vector3()),
+            { intensity: 1.4, color: 0xffcf6a, count: 2 });
+        }
+        break;
+
+      /* ================================================================
+       *  MAX POWER  (§19)
+       * ================================================================ */
+      // Ki passou do limiar carregando: já dá pra acender. Sem este aviso a
+      // condição de entrada é invisível e ninguém descobre a mecânica.
+      case 'maxPowerReady':
+        if (f === player) hud.showBanner('MAX POWER pronto · continue segurando R', 900);
+        break;
+
+      case 'maxPowerStart': {
+        const p = f.position.clone(); p.y += 0.9;
+        vfx.burst(p, { count: 80, color: 0xfff0b0, speed: 20, life: 0.8 });
+        vfx.ring(p, { billboard: true, color: 0xffe08a, from: 0.6, to: 20, life: 0.8 });
+        vfx.ring(p, { color: f.auraColor, from: 1, to: 14, life: 0.7 });
+        juice.impact({ hitstop: 10, shake: 0.9, zoom: 1.1 });
+        juice.slowMo(20, 0.45);
+        hud.showBanner(f === player ? 'MAX POWER!' : `${f.name}: MAX POWER`, 1400,
+          f === player ? 'big' : 'warn');
+        break;
+      }
+
+      /* Acabou → cai na exaustão. Este é o momento que o DEFENSOR estava
+       * esperando, e ele precisa ser visível dos dois lados: é a janela em que o
+       * outro não tem vanish, não tem dash e não tem perseguição. */
+      case 'maxPowerEnd':
+        vfx.burst(f.position, { count: 20, color: 0x8899aa, speed: 5, life: 0.5 });
+        break;
+
+      case 'exhaustStart':
+        vfx.ring(f.position, { billboard: true, color: 0x8899aa, from: 0.4, to: 5, life: 0.5 });
+        if (f === player) hud.showBanner('SEM KI  ·  nem vanish nem dash', 1100, 'warn');
+        else if (f === opponent) hud.showBanner(`${f.name} SEM KI`, 900);
+        break;
+
+      case 'exhaustEnd':
+        if (f === player) hud.showBanner('KI DE VOLTA', 600);
+        break;
+
+      /* ================================================================
+       *  VANISH BATTLE  (§12)
+       * ================================================================
+       *  A janela de resposta tem 12 frames. Sem aviso ela não existe pro
+       *  jogador — ele é vanishado, não sabe que pode responder, e a mecânica
+       *  fica só no tuning. É o mesmo problema que `pursuitOpen` resolveu pra
+       *  perseguição, e a mesma solução. */
+      case 'vanishBattleOpen':
+        if (f === player) hud.showBanner(`RESPONDA  ·  V  (troca ${e.exchange})`, 500, 'warn');
+        juice.slowMo(TUNING.defense.vanishBattle.slowMoFrames,
+                     TUNING.defense.vanishBattle.slowMoScale);
+        break;
+
+      case 'counterVanish': {
+        const VB = TUNING.defense.vanishBattle;
+        for (let i = 0; i < 5; i++) vfx.afterimage(f.char, f.auraColor);
+        vfx.burst(f.position, { count: 30, color: 0xffffff, speed: 14, life: 0.4 });
+        juice.impact({ hitstop: VB.hitstop, shake: VB.shake });
+        juice.slowMo(VB.slowMoFrames, VB.slowMoScale);
+        if (f === player) hud.showBanner(`CONTRA-VANISH  ${e.exchange}`, 700, 'big');
+        break;
+      }
+
+      case 'vanishBattleWin':
+        if (f === player) hud.showBanner('VENCEU A TROCA!', 1100, 'big');
+        else if (e.foe === player) hud.showBanner('PERDEU A TROCA', 1000, 'warn');
+        break;
+
+      /* ================================================================
+       *  GRAB  (§17)
+       * ================================================================ */
+      case 'grabEscape': {
+        const p = f.position.clone(); p.y += 0.9;
+        vfx.burst(p, { count: 30, color: 0xbfe4ff, speed: 11, life: 0.4 });
+        vfx.ring(p, { billboard: true, color: 0x9fd0ff, from: 0.4, to: 6, life: 0.4 });
+        juice.impact({ hitstop: 12, shake: 0.4, zoom: 0.5 });
+        if (f === player) hud.showBanner('ESCAPOU!', 900, 'big');
+        else { hud.showBanner('ELE ESCAPOU', 900, 'warn'); hud.resetCombo(); }
+        break;
+      }
+
+      case 'throw':
+        vfx.burst(f.position, { count: 26, color: 0xffd9a0, speed: 12, life: 0.45 });
+        if (f === player) hud.addCombo();
+        break;
+
+      /* ================================================================
+       *  PERSEGUIÇÃO: os tipos precisam ser distinguíveis  (§10)
+       * ================================================================
+       *  Três tipos com riscos diferentes só viram decisão se o jogador
+       *  souber qual saiu. Sem isso ele aperta Shift+algo e não aprende a
+       *  relação entre o modificador e o resultado. */
+      case 'pursuitSpike':
+        juice.impact({ shake: 0.6, zoom: 0.8 });
+        vfx.ring(f.position, { billboard: true, color: 0xffd45c, from: 0.5, to: 10, life: 0.45 });
+        if (f === player) hud.showBanner('SPIKE!', 700, 'big');
+        break;
+
+      /* Errou a perseguição. A de alta velocidade cobra 26 frames de recovery
+       * aqui — mais que o smash frente — e o jogador precisa entender que foi a
+       * ESCOLHA do tipo que custou isso, não azar. */
+      case 'pursuitWhiff':
+        vfx.burst(f.position, { count: 10, color: 0x8899aa, speed: 4, life: 0.3 });
+        if (f === player && e.style === 'highSpeed') {
+          hud.showBanner('PASSOU RETO  ·  exposto', 900, 'warn');
+        }
+        break;
+
+      case 'armorAbsorb':
+        vfx.burst(f.position, { count: 10, color: 0xffb060, speed: 5, life: 0.25 });
         break;
 
       case 'vanish':
@@ -954,6 +1193,14 @@ function step(dt) {
 
   if (emTreino()) manterBonecos();
 
+  /* TRADES ANTES DO MELEE, e a ordem é o mecanismo (§21).
+   *
+   * Quem perde a troca de prioridade vai pra HITSTUN aqui, então `resolveMelee`
+   * já não o vê como atacante — e o golpe do vencedor acerta pelo caminho
+   * NORMAL, passando por guarda, vanish e Z-Counter sem nada reimplementado.
+   * Invertida, a ordem faria os dois se acertarem antes de a troca existir. */
+  resolveTrade(fighters, ctx);
+
   resolveMelee(fighters, ctx);
   // Dash-contra-dash (clash) tem regra própria e é testado depois do impacto
   // normal, senão um dos dois seria tratado como tromba comum.
@@ -1044,6 +1291,12 @@ function render(alpha, dtReal) {
         hitstop: juice.hitstopFrames,
         slowMo: juice.slowMoFrames,
         perfil: PERFIS_IA[perfilIA],
+        // Config da carga do golpe ATUAL: a janela perfeita é por golpe.
+        charge: player.move ? moveCharge(player.move) : null,
+        vbMax: TUNING.defense.vanishBattle.maxExchanges,
+        mpDamageMul: TUNING.maxPower.damageMul,
+        mpKiMul: TUNING.maxPower.kiCostMul,
+        mpHold: TUNING.maxPower.enterHoldFrames,
       },
     });
 
@@ -1095,4 +1348,11 @@ window.PROTO = {
    * golpe o Z-Counter ainda sai" exige dirigir os lutadores na mão, fora do
    * step normal — e sem isto não há como responder essa pergunta. */
   resolveMelee,
+  /* TRADES pelo mesmo motivo: "com que prioridade o smash atravessa o rush" só
+   * se mede na mão. Faltando aqui, um harness roda um combate SEM trades e
+   * conclui que eles não funcionam — medição errada por instrumento incompleto,
+   * que é a armadilha que o CLAUDE.md manda desconfiar. */
+  resolveTrade,
+  resolveDashImpact, resolveDashClash, resolveOverlap,
+  moveCharge, hitstopFor,
 };

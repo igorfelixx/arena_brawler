@@ -127,6 +127,82 @@ export const TUNING = {
 
     // Ki baixo bloqueia as ferramentas de escape — é o que gera pressão.
     lowKiThreshold: 20,
+
+    /* ================================================================
+     *  EXAUSTÃO  —  o fundo do poço tem consequência
+     * ================================================================
+     *  `lowKiThreshold` avisava que o ki estava baixo e era só isso: a barra
+     *  ficava vermelha e o jogo continuava igual. Gastar até o zero não custava
+     *  nada além de esperar — e recurso que não tem fundo não é recurso, é
+     *  cronômetro.
+     *
+     *  Agora zerar o ki tem um estado próprio. Durante a exaustão NENHUMA ação
+     *  que custa ki sai: nem dash, nem vanish, nem perseguição, nem blast. Você
+     *  fica com o kit básico (voar, rush, smash, guarda) e tem que sobreviver
+     *  com ele.
+     *
+     *  O regen durante a exaustão é MAIOR que o passivo de propósito. A punição
+     *  é perder as ferramentas por um instante, não ficar de castigo: castigo
+     *  longo pune quem está aprendendo (que gasta ki errado) muito mais do que
+     *  pune quem já sabe. */
+    exhaustFrames: 90,            // 1,5 s sem nenhuma ferramenta de ki
+    exhaustRegenPerSec: 7.0,      // sobe mais rápido que o passivo (2.2)
+    /* Sair da exaustão exige um mínimo de ki na barra, não só tempo. Sem isso
+     * você voltava com 1 de ki, gastava num dash e caía de novo na exaustão —
+     * um serrote em vez de uma recuperação. */
+    exhaustExitKi: 12,
+  },
+
+  /* ================================================================== */
+  /*  MAX POWER  —  o estado de poder máximo                             */
+  /* ================================================================== */
+  /*  A ferramenta que faltava pro ki ser DECISÃO e não só combustível.
+   *
+   *  Antes, ki servia pra três coisas (dash, vanish, blast) e todas eram
+   *  compras pequenas. Não havia nada em que apostar a barra inteira, e por isso
+   *  não havia momento de "agora eu vou pra cima": carregar ki era uma pausa.
+   *
+   *  A entrada é DELIBERADA e custa caro:
+   *
+   *      carregar ki (R)  →  ki >= enterKiThreshold  →  segurar enterHoldFrames
+   *                                      ↓
+   *                              MAX POWER (durationFrames)
+   *                                      ↓
+   *                            acaba  →  EXAUSTÃO
+   *
+   *  O counterplay é o que impede isto de ser "apertei botão, fiquei
+   *  invencível", e ele não é uma regra nova — sai da própria estrutura:
+   *
+   *    1. a entrada exige ficar PARADO carregando, que é a posição mais
+   *       vulnerável do jogo. Quem lê entra em cima e interrompe.
+   *    2. o estado DRENA ki, então as ferramentas de escape (vanish,
+   *       perseguição) ficam cada vez mais caras justamente enquanto você está
+   *       sendo agressivo
+   *    3. acabar joga direto na EXAUSTÃO. Quem sobreviveu ao Max Power ganha
+   *       uma janela em que o outro não tem vanish, não tem dash e não tem
+   *       perseguição. Aguentar é uma estratégia legítima.
+   *
+   *  Ou seja: não é um botão de vitória, é uma APOSTA com prazo.               */
+  maxPower: {
+    enterKiThreshold: 78,         // abaixo disto não entra
+    enterHoldFrames: 26,          // frames carregando ACIMA do limiar
+    enterKiCost: 22,              // o preço de acender
+    entryFrames: 18,              // estado de entrada (o clarão), invulnerável
+    durationFrames: 420,          // 7 s
+    drainPerSec: 11,              // a barra escorre enquanto durar
+
+    /* Modificadores. Deliberadamente MODESTOS: um multiplicador grande
+     * transformaria o estado em "quem acender primeiro ganha", que é o oposto
+     * de um jogo de leitura. O valor do Max Power está em CONSISTÊNCIA (ki mais
+     * barato, poise mais duro, sai do hitstun antes), não em dano bruto. */
+    damageMul: 1.20,
+    kiCostMul: 0.65,              // vanish/dash/perseguição ficam baratos
+    speedMul: 1.12,
+    poiseMul: 1.6,                // muito mais difícil de arrancar da pressão
+    hitstunTakenMul: 0.82,        // sai do stun um pouco antes
+    /* Acabar cai na exaustão. É o que dá ao defensor uma razão pra AGUENTAR em
+     * vez de entrar em pânico — e é o contrapeso do estado inteiro. */
+    endsInExhaustion: true,
   },
 
   /* ================================================================== */
@@ -452,6 +528,38 @@ export const TUNING = {
    *
    *  O prêmio de acertar a leitura é uma ROTA NOVA (`clearsChainOnArrive`):
    *  é assim que a pressão se estende por mérito, e não por martelar.        */
+  /*  ---------------------------------------------------------------------
+   *  TRÊS TIPOS, E POR QUE NÃO UM SÓ
+   *  ---------------------------------------------------------------------
+   *  A primeira versão tinha um `pursuit()` que fazia tudo: voava até o alvo,
+   *  alcançava e dava rota nova. Funcionava, mas só havia UMA resposta certa —
+   *  se você tinha 12 de ki, perseguir era sempre melhor que não perseguir.
+   *  Decisão sem alternativa não é decisão.
+   *
+   *  Agora o lançamento faz uma PERGUNTA com três respostas, cada uma boa numa
+   *  situação diferente e ruim nas outras:
+   *
+   *    DIRETA (Shift)            barata, viaja pelo espaço, dá ROTA NOVA.
+   *                              É a que rende dano — e a única que pode ERRAR:
+   *                              o defensor que recupera no tempo certo te vê
+   *                              chegando em linha reta.
+   *
+   *    VANISH (Shift+V)          caríssima e INFALÍVEL: você aparece do lado
+   *                              dele, não há como evitar. Mas NÃO dá rota
+   *                              nova — só te põe em posição. É a resposta pra
+   *                              "ele vai se recuperar e eu preciso estar lá".
+   *
+   *    ALTA VELOCIDADE (Shift+K) acerta sozinha um spike que RE-LANÇA, o que a
+   *                              torna a ferramenta de ring-out: dois desses
+   *                              seguidos atravessam meia arena. O preço é o
+   *                              recovery mais longo do jogo se ela não pegar.
+   *
+   *  A regra que amarra as três: SÓ A DIRETA dá rota nova. Se todas dessem, a
+   *  perseguição viraria o combo infinito que o `maxChain` existe pra impedir.
+   *  As outras duas compram POSIÇÃO e DANO, não tempo de pressão.
+   *
+   *  Entrada sem tecla nova (§29): a perseguição é sempre Shift, e o que você
+   *  está SEGURANDO junto escolhe o tipo.                                     */
   pursuit: {
     // Quanto tempo a janela fica aberta depois de você lançar alguém.
     windowFrames: 75,
@@ -482,6 +590,283 @@ export const TUNING = {
      * lançamento — e é o que separa "estender a pressão por perícia" de
      * "estender a pressão por martelar". */
     clearsChainOnArrive: true,
+
+    /* Alcance máximo da perseguição. Sem teto, um lançamento de 40 m ainda era
+     * perseguível e o defensor nunca conseguia criar espaço de verdade. */
+    range: 70.0,
+
+    /* ----------------------------------------------------------------
+     *  Os três tipos. O que não estiver listado num tipo vem dos campos
+     *  acima — mesmo padrão dos perfis de IA, e pelo mesmo motivo: um
+     *  slider arrastado no painel continua valendo pra todos.
+     * ---------------------------------------------------------------- */
+    types: {
+      /* DIRETA — o comportamento medido nesta sessão, preservado inteiro.
+       * É a linha de base: barata, rende rota nova, e é evitável. */
+      direct: {
+        label: 'DIRETA',
+      },
+
+      /* VANISH PURSUIT — paga pra não errar.
+       *
+       * Não viaja: reaparece ao lado do alvo. Como não há trajetória, não há
+       * como o defensor ver chegando — e é por isso que ela NÃO pode dar rota
+       * nova, senão seria estritamente melhor que a direta. O que ela compra é
+       * estar lá quando ele se recuperar.
+       *
+       * O custo é quase o dobro de um vanish normal de propósito: é a ação mais
+       * cara do kit fora do ultimate, e gastar isto significa não ter vanish
+       * defensivo depois. Essa é a troca. */
+      vanish: {
+        label: 'VANISH',
+        kiCost: 26,
+        teleport: true,
+        appearDistance: 2.0,      // ao lado dele, não dentro
+        startupFrames: 6,         // curto, mas não instantâneo
+        iframes: 12,
+        windowFrames: 34,         // janela MENOR: exige decidir rápido
+        clearsChainOnArrive: false,
+        carryFrames: 24,          // voa junto por mais tempo (é o prêmio)
+        recoveryFrames: 10,
+        range: 40.0,
+      },
+
+      /* ALTA VELOCIDADE — a ferramenta de ring-out.
+       *
+       * Acerta sozinha ao chegar (`autoHit`) com um spike que RE-LANÇA. É o
+       * único jeito de encadear lançamentos, e por isso é o que atravessa a
+       * arena — mas justamente por isso não dá rota nova: ela troca pressão por
+       * DISTÂNCIA.
+       *
+       * O risco é real: `recoveryFrames: 26` é mais longo que o recovery do
+       * smash frente (24). Perseguir assim e não pegar é o maior convite a
+       * punição do jogo. */
+      highSpeed: {
+        label: 'ALTA VELOCIDADE',
+        kiCost: 20,
+        speed: 78.0,
+        turnSpeed: 7.0,           // curva mal: comprometida de verdade
+        maxFrames: 44,
+        attackAt: 2.8,
+        autoHit: true,
+        spikeMove: 'pursuit_spike',
+        clearsChainOnArrive: false,
+        carryFrames: 10,
+        recoveryFrames: 26,       // o maior recovery do kit. É o preço.
+        range: 90.0,
+      },
+    },
+  },
+
+  /* ================================================================== */
+  /*  MATRIZ ATAQUE ↔ DEFESA                                             */
+  /* ================================================================== */
+  /*  "Cada defesa responde a uma situação diferente" era verdade no papel e
+   *  mentira no código: a resolução de acerto testava vanish → Z-Counter →
+   *  guarda na mesma ordem pra QUALQUER golpe. Na prática toda defesa servia
+   *  contra tudo, e a escolha entre elas era só uma questão de quanto ki você
+   *  tinha — não de que ataque estava vindo.
+   *
+   *  Aqui a matriz fica explícita e em DADOS. Cada CATEGORIA de ataque lista as
+   *  defesas que funcionam contra ela; o que não está na lista simplesmente não
+   *  responde. É isso que faz o grab existir como ameaça (a guarda não o para)
+   *  e o que dá ao smash um conjunto de respostas diferente do rush.
+   *
+   *      ataque     defesas que funcionam
+   *      ──────     ─────────────────────────────────────
+   *      rush       guarda · sway · vanish · Z-Counter
+   *      smash      step · vanish · Z-Counter · recuperação
+   *      grab       ESCAPE e nada mais    ← a guarda não salva
+   *      blast      movimento · guarda · dash · rebate
+   *      pursuit    vanish · Z-Counter · recuperação
+   *
+   *  A assimetria do grab é o ponto todo: ele é a resposta a quem segura F pra
+   *  sempre, e só existe como resposta porque a guarda NÃO está na lista dele.
+   *
+   *  Ler a matriz daqui (e não de um `if`) é o que permite um personagem ter um
+   *  golpe que fura sway, ou um grab que a guarda para, sem tocar no código.  */
+  defenseMatrix: {
+    rush:    ['guard', 'sway', 'vanish', 'zcounter'],
+    smash:   ['guard', 'step', 'sway', 'vanish', 'zcounter'],
+    grab:    ['escape'],
+    blast:   ['guard', 'deflect', 'step', 'vanish'],
+    pursuit: ['guard', 'vanish', 'zcounter'],
+    dash:    ['guard', 'vanish', 'step'],
+  },
+
+  /* ================================================================== */
+  /*  PROPRIEDADES PADRÃO DE GOLPE  (§21)                                */
+  /* ================================================================== */
+  /*  Todo golpe passa por uma normalização no boot (ver combat/moves.js) que
+   *  preenche o que falta com estes valores. O motivo é a armadilha 8.19 do doc
+   *  de passagem — "frame data que ninguém lê é pior que frame data errado":
+   *  se `armor` existe em três golpes e não nos outros, ninguém sabe se o campo
+   *  vale zero ou não existe. Com default explícito, vale zero.               */
+  moveDefaults: {
+    /* PRIORIDADE — quem ganha quando dois golpes se encontram no mesmo frame.
+     *
+     * Sem isto, dois lutadores socando ao mesmo tempo simplesmente se acertavam
+     * os dois (cada um aplicava dano no outro), e trocar golpe às cegas era
+     * neutro. Com prioridade, o golpe mais comprometido VENCE o mais rápido —
+     * que é o que dá sentido a escolher o smash sabendo que vai ser trocado.
+     *
+     *   rush 1 · smash 3 · pursuit spike 4 · grab 0 (perde de tudo)
+     *
+     * Diferença menor que `tradeWindow` = CLASH: os dois ricocheteiam. */
+    priority: 1,
+
+    /* ARMOR — quanto de `poiseDamage` o golpe AGUENTA sem ser interrompido
+     * durante o startup. Zero = qualquer toque cancela.
+     *
+     * É a ferramenta que permite um personagem pesado atravessar um jab. Fica em
+     * zero por padrão porque armor barato destrói o jogo de turnos: se o smash
+     * comum tivesse armor, martelar rush pararia de ser punido e a regra do
+     * `cancelOnBlock` perderia o sentido. */
+    armor: 0,
+
+    /* Janela de invulnerabilidade PRÓPRIA do golpe, em frames [de, até].
+     * null = nenhuma. Usada por golpes que atravessam (o spike de perseguição). */
+    invulnerability: null,
+
+    /* Dano à estamina de guarda. null = usa `defense.guard.staminaPerHit`.
+     * Explícito por golpe é o que permite um golpe "quebra-guarda" sem ter que
+     * ser um smash. */
+    guardDamage: null,
+
+    // Um golpe pode superar o Sonic Sway: quem esquivou cedo demais come mesmo
+    // assim. É o que impede o sway de ser resposta universal (§14).
+    beatsSway: false,
+
+    // Este golpe pode ser contra-atacado com Z-Counter?
+    zCounterable: true,
+  },
+
+  /* ================================================================== */
+  /*  TRADES  —  dois golpes que se encontram                            */
+  /* ================================================================== */
+  trade: {
+    enabled: true,
+    /* Diferença de prioridade ATÉ a qual é CLASH em vez de vitória.
+     *
+     * Zero = só prioridade IGUAL dá clash. Tem que ser zero pra que o grab
+     * (prioridade 0) perca do rush (1) em vez de empatar com ele — "grab perde
+     * de qualquer golpe" é uma das três relações que o §17 pede, e com
+     * clashWindow 1 ela não existiria. */
+    clashWindow: 0,
+    // Alcance em que dois golpes ativos são considerados "se encontrando".
+    range: 3.2,
+    loserStunFrames: 26,        // quem perdeu a troca fica exposto
+    clashKnockback: 16.0,
+    clashStunFrames: 14,
+    hitstop: 20,
+    shake: 0.7,
+    slowMoFrames: 14,
+    slowMoScale: 0.35,
+  },
+
+  /* ================================================================== */
+  /*  SMASH CARREGADO E PERFECT SMASH  (§7, §8)                          */
+  /* ================================================================== */
+  /*  O smash era um toque: 13 frames de startup e saía. Forte, lento, evitável
+   *  — funcionava, mas era a única ferramenta do jogo sem NENHUMA decisão
+   *  dentro dela. Você apertava e assistia.
+   *
+   *  Agora segurar K SUSPENDE o golpe no meio do startup, e soltar é que o
+   *  dispara. Isso cria duas coisas de uma vez:
+   *
+   *  1. MIND GAME DE TIMING (o que o §34 chama de "A changes timing").
+   *     O defensor precisa adivinhar QUANDO o golpe vem pra cronometrar sway,
+   *     Z-Counter ou vanish. Segurar meio segundo e soltar bate a antecipação
+   *     dele — e não custa número nenhum, só exposição.
+   *
+   *  2. PERFECT SMASH — uma JANELA, não uma rampa.
+   *
+   *  ATENÇÃO, a decisão mais importante deste bloco: soltar fora da janela dá
+   *  EXATAMENTE os números do smash normal. `chargedDamageMul` é 1.0 e vai
+   *  continuar sendo.
+   *
+   *  O pedido era explícito: "não deve ser simplesmente hold longer = more
+   *  damage". Se segurar rendesse dano crescente, o jogo ótimo seria sempre
+   *  segurar o máximo, a janela perfeita seria irrelevante e a mecânica viraria
+   *  uma barra de carregamento. Segurar não paga dano: paga CONTROLE DO TEMPO.
+   *  O bônus vem de acertar a janela, e só.
+   *
+   *      0        holdAt        janela perfeita         maxHold
+   *      |──startup──|───────────[■■■■■■■]──────────────|
+   *                  ^           ^     ^               ^
+   *                  congela     18    26              56 → solta sozinho
+   *                  aqui        Perfect Smash          (sem bônus)
+   *
+   *  A janela é larga (9 frames) de propósito. O §34 quer que um iniciante
+   *  consiga acertar às vezes; estreitar isso é ajuste de playtest, e é por
+   *  isso que está no painel (P).                                             */
+  smashCharge: {
+    enabled: true,
+    holdAtFrame: 6,             // em que frame do startup o golpe congela
+    minHoldFrames: 3,           // abaixo disto é um toque: smash normal
+    maxHoldFrames: 56,          // estourou: dispara sozinho, sem bônus
+    perfectWindow: [18, 26],    // frames de carga em que soltar dá Perfect
+
+    /* Soltar carregado mas FORA da janela = smash normal. Estes multiplicadores
+     * são 1.0 e é de propósito (ver a nota acima). Ficam aqui, explícitos, pra
+     * que a próxima pessoa saiba que a escolha foi feita e não esquecida. */
+    chargedDamageMul: 1.0,
+    chargedKnockbackMul: 1.0,
+
+    /* PERFECT SMASH — a recompensa por precisão. */
+    perfectDamageMul: 1.55,
+    perfectKnockbackMul: 1.45,
+    perfectPoiseMul: 1.5,
+    perfectHitstop: 26,         // congela muito mais: o impacto tem que gritar
+    perfectShake: 1.25,
+    perfectSlowMoFrames: 22,
+    perfectSlowMoScale: 0.3,
+    /* Perfect Smash fura a guarda mesmo em golpe que não é guardBreak. É o que
+     * o torna a resposta ao turtle: não é dano, é a guarda deixar de funcionar. */
+    perfectGuardBreak: true,
+    // Devolve um pouco de ki: acertar o timing sustenta a próxima leitura.
+    perfectKiRefund: 10,
+
+    /* Aviso visual quando a janela abre. Sem isto a janela é invisível e o
+     * Perfect Smash vira sorte — e mecânica de timing que não se vê não é
+     * mecânica de timing. */
+    telegraphFrames: 2,
+  },
+
+  /* ================================================================== */
+  /*  LAUNCH SYSTEM  (§9, §23)                                           */
+  /* ================================================================== */
+  /*  "Acertar" e "lançar" eram a mesma coisa com um booleano de diferença
+   *  (`causesBlowaway`), e a direção do empurrão era sempre
+   *  `knockback` na horizontal + `knockup` na vertical. Isso bastou pra três
+   *  smashes e trava na hora de ter personagens: não há como descrever "manda
+   *  na diagonal a 30° pra fora da arena", que é justamente o golpe que um
+   *  arena fighter de ring-out mais precisa.
+   *
+   *  Agora cada golpe declara um RESULTADO, e o resultado tem tipo:
+   *
+   *      hitstun    empurra e prende. O combo continua sendo do atacante.
+   *      blowaway   voando sem controle. ABRE PERSEGUIÇÃO — a segunda disputa.
+   *      slam       crava pro chão. Quica, abre cratera, pode virar knockdown.
+   *      knockdown  derruba direto.
+   *
+   *  E a FORÇA pode ser escrita de duas formas, porque as duas são úteis:
+   *
+   *      knockback + knockup   (componentes)  ← forma dos golpes atuais
+   *      speed + angle         (polar)        ← forma de quem desenha um kit
+   *
+   *  Os golpes existentes continuam em componentes de propósito: são os números
+   *  MEDIDOS desta sessão, e reescrevê-los em polar mudaria o jogo por causa de
+   *  arredondamento. Os dois formatos convivem; a conversão é uma função só.  */
+  launch: {
+    // Tipo assumido quando o golpe não diz nada.
+    defaultType: 'hitstun',
+    /* Só `blowaway` e `slam` abrem a janela de perseguição. `hitstun` não —
+     * senão todo jab abriria perseguição e a segunda disputa perderia o sentido
+     * de ser uma consequência do LANÇAMENTO. */
+    opensPursuit: ['blowaway', 'slam'],
+    // Teto duro de velocidade de lançamento (anti-explosão numérica).
+    maxSpeed: 90.0,
   },
 
   /* ================================================================== */
@@ -636,6 +1021,12 @@ export const TUNING = {
       causesBlowaway: true,     // vítima entra em estado "voando descontrolado"
       trail: true,
       punchZoom: true,
+      /* Smash ganha de rush numa troca (prioridade 3 contra 1). É o que faz
+       * valer a pena escolher o golpe lento contra quem está martelando: você
+       * come o jab e o atravessa. */
+      priority: 3,
+      chargeable: true,         // segurar K suspende no startup — ver smashCharge
+      launch: { type: 'blowaway' },
     },
 
     smash_up: {                 // manda pra cima — prepara perseguição aérea
@@ -664,6 +1055,9 @@ export const TUNING = {
       vanishWindow: 14,
       causesBlowaway: true,
       trail: true,
+      priority: 3,
+      chargeable: true,
+      launch: { type: 'blowaway' },
     },
 
     smash_down: {               // crava pro chão — slam com cratera
@@ -692,6 +1086,152 @@ export const TUNING = {
       vanishWindow: 14,
       causesBlowaway: true,
       groundSlam: true,         // impacto extra + cratera ao bater no chão
+      trail: true,
+      punchZoom: true,
+      priority: 3,
+      chargeable: true,
+      launch: { type: 'slam' },
+    },
+
+    /* ================================================================
+     *  GRAB / THROW  —  a resposta a quem só segura a guarda  (§17)
+     * ================================================================
+     *  O buraco que ele preenche, e que a medição desta sessão escancarou: o
+     *  perfil DEFESA passa 37% do tempo em guarda e leva 88 golpes limpos
+     *  contra 32 aparados. Ou seja, contra a guarda o ataque tinha UMA resposta
+     *  — o smash, que é lento e telegrafado. Faltava a segunda.
+     *
+     *  A relação que o §17 pede, e que a matriz de defesa implementa:
+     *
+     *      GRAB  vence  GUARDA      (a guarda não está na lista dele)
+     *      GRAB  perde  ESCAPE      (a vítima aperta guarda na janela)
+     *      GRAB  perde  qualquer golpe (prioridade 0: perde de tudo)
+     *
+     *  Essa terceira linha é o que impede o grab de virar a jogada dominante:
+     *  ele só funciona contra quem está DEFENDENDO. Contra quem ataca, você
+     *  perde a troca; contra quem espera, come o escape. Grab é uma leitura,
+     *  não um botão bom.
+     *
+     *  Entrada: F+J. É o idioma clássico de arremesso (guarda+ataque) e não
+     *  gasta tecla nova, que era um pedido explícito (§29).                   */
+    grab: {
+      clip: 'attack_light_1',
+      startup: 8, active: 4, recovery: 26,
+      /* Recovery ENORME de propósito: 26 frames é mais que o smash frente.
+       * Errar um grab tem que ser a coisa mais punível do jogo, senão tentar
+       * grab às cegas seria barato e ele viraria spam. */
+      damage: 0,                // o dano está no ARREMESSO, não na pegada
+      poiseDamage: 0,
+      socket: 'hand_r',
+      hitboxRadius: 0.62,
+      knockback: 0,
+      knockup: 0,
+      hitstop: 6,
+      shake: 0.2,
+      hitstun: 0,
+      blockstun: 0,
+      chipDamage: 0,
+      cancelInto: [],
+      cancelWindow: null,
+      homingRange: 2.2,         // alcance curto: tem que estar colado
+      homingStrength: 0.9,
+      advanceSpeed: 5.0,
+      advanceFrames: [1, 7],
+      vanishWindow: 6,          // dá pra vanishar de um grab, mas é apertado
+      priority: 0,              // perde de QUALQUER golpe
+      type: 'grab',
+      category: 'grab',
+      ignoresGuard: true,       // é isto que a matriz de defesa materializa
+      zCounterable: false,      // Z-Counter é contra golpe, não contra pegada
+      isGrab: true,
+    },
+
+    /* O ARREMESSO. Sai sozinho quando a pegada segura o tempo do `holdFrames`
+     * sem escape. A direção segurada escolhe pra onde — é aqui que o grab vira
+     * ferramenta de ring-out: agarrar perto da borda e arremessar pra fora. */
+    grab_throw: {
+      clip: 'attack_heavy',
+      startup: 2, active: 2, recovery: 18,
+      damage: 13,
+      poiseDamage: 0,           // já está indefeso: poise não se aplica
+      socket: 'hand_r',
+      hitboxRadius: 0.8,
+      knockback: 34.0,
+      knockup: 6.0,
+      hitstop: 16,
+      shake: 0.7,
+      hitstun: 48,
+      blockstun: 0,
+      chipDamage: 0,
+      cancelInto: [],
+      cancelWindow: null,
+      homingRange: 0,
+      homingStrength: 0,
+      vanishWindow: 0,          // não há como vanishar de dentro do arremesso
+      priority: 3,
+      type: 'grab',
+      category: 'grab',
+      causesBlowaway: true,
+      launch: { type: 'blowaway' },
+      trail: true,
+      punchZoom: true,
+      unblockable: true,
+    },
+
+    /* ================================================================
+     *  SPIKE DE PERSEGUIÇÃO  —  o golpe da perseguição de alta velocidade
+     * ================================================================
+     *  Sai SOZINHO quando a perseguição de alta velocidade alcança o alvo. Não
+     *  tem entrada própria: você o compra ao escolher aquele tipo de
+     *  perseguição, e o risco já foi pago na escolha.
+     *
+     *  Ele RE-LANÇA (`blowaway` de novo), e é o único golpe do jogo que faz
+     *  isso. É assim que se atravessa a arena — e é por isso que a perseguição
+     *  de alta velocidade não dá rota nova: ela já paga em distância.          */
+    pursuit_spike: {
+      clip: 'attack_heavy',
+      startup: 3, active: 4, recovery: 16,
+      damage: 12,
+      poiseDamage: 30,
+      socket: 'hand_r',
+      hitboxRadius: 1.1,        // generoso: a perseguição já mirou por você
+      knockback: 40.0,
+      knockup: 4.0,
+      hitstop: 18,
+      shake: 0.85,
+      hitstun: 50,
+      blockstun: 22,
+      chipDamage: 2.4,
+      guardBreak: true,         // perseguir bem fura a guarda
+      cancelInto: [],
+      cancelWindow: null,
+      homingRange: 3.4,
+      homingStrength: 0.95,
+      advanceSpeed: 12.0,
+      advanceFrames: [1, 6],
+      vanishWindow: 12,
+      priority: 4,              // a maior do jogo: atravessa qualquer coisa
+      type: 'pursuit',
+      category: 'pursuit',
+      causesBlowaway: true,
+      launch: { type: 'blowaway' },
+
+      /* NÃO LIBERA A ROTA, e isto foi um vazamento pego medindo.
+       *
+       * O spike é um "ender" (tipo `pursuit`), e `combo.enderClearsChain` zera a
+       * rota de todo ender. Medido no navegador: a rota ia de 3 pra 0 no frame do
+       * spike — ou seja, a perseguição de alta velocidade RE-LANÇAVA e ainda
+       * devolvia rota nova, apesar de `clearsChainOnArrive: false` dizer o
+       * contrário. Ela virava estritamente melhor que a direta: mais dano, mais
+       * distância E a mesma recompensa de pressão.
+       *
+       * A regra que o §10 pede é que só a DIRETA compre tempo de pressão. As
+       * outras duas compram posição e dano. Este campo é o que faz a intenção
+       * declarada valer no código. */
+      noChainClear: true,
+      // Invulnerável enquanto atravessa — senão o spike trocava com o corpo
+      // que está voando e os dois se anulavam.
+      invulnerability: [0, 6],
       trail: true,
       punchZoom: true,
     },
@@ -951,6 +1491,96 @@ export const TUNING = {
       iframes: [0, 12],
       // Sem isto, levar um smash = morte garantida. Com isto, vira leitura.
     },
+
+    /* ================================================================
+     *  GRAB / THROW  —  a pegada, o arremesso e o escape  (§17)
+     * ================================================================
+     *  Ver o comentário do golpe `grab` em `moves` pra saber por que ele existe.
+     *  Aqui ficam os tempos da INTERAÇÃO, que é o que o §17 pede como sistema:
+     *
+     *      pegou  →  [ holdFrames ]  →  arremesso
+     *                      │
+     *                 escapeWindow: a vítima aperta guarda e se solta
+     *
+     *  O escape é a única defesa contra grab (ver `defenseMatrix.grab`), e ele
+     *  é de LEITURA, não de martelada: a janela abre no começo da pegada e
+     *  fecha. Quem martela guarda por reflexo acerta às vezes; quem percebe a
+     *  pegada acerta sempre. É a mesma gramática do Z-Counter, de propósito —
+     *  o botão de guarda tem três significados conforme o timing, e isso é
+     *  profundidade sem tecla nova.                                            */
+    grab: {
+      holdFrames: 20,           // quanto tempo a pegada segura antes de arremessar
+      range: 2.2,               // tem que estar colado
+      escapeWindow: 12,         // frames iniciais em que o escape funciona
+      escapeKiCost: 6,          // escapar custa: não é de graça
+      /* Escapou: o AGRESSOR fica exposto. A troca é justa — ele apostou numa
+       * leitura e errou, e agora come uma punição do tamanho do recovery que
+       * teria comido se tivesse errado o grab inteiro. */
+      escapeAttackerStunFrames: 30,
+      escapeVictimIframes: 8,
+      /* Não dá pra agarrar quem já está indefeso. Sem esta regra, grab depois de
+       * um lançamento seria dano garantido e o jogo viraria uma sequência
+       * fechada — exatamente o que o `maxChain` existe pra impedir. */
+      cannotGrabStates: ['blowaway', 'knockdown', 'getup', 'hitstun', 'dead'],
+      // Cooldown após um grab (qualquer resultado): impede spam de pegada.
+      cooldownFrames: 40,
+      hitstop: 8,
+      shake: 0.25,
+    },
+
+    /* ================================================================
+     *  VANISH BATTLE  —  a troca de leituras em alta velocidade  (§12)
+     * ================================================================
+     *  O vanish já existia e já era bom: você some e reaparece atrás de quem te
+     *  bate. Mas terminava aí. Quem vanishava ganhava a posição e pronto — o
+     *  atacante não tinha resposta, então não havia DISPUTA, só um resultado.
+     *
+     *  A imagem que falta é a mais reconhecível do gênero: dois lutadores
+     *  piscando pelo céu, cada um aparecendo atrás do outro, até que um erra.
+     *
+     *      A ataca
+     *         ↓
+     *      B vanisha            → B atrás de A       (A tem responseFrames)
+     *         ↓
+     *      A contra-vanisha     → A atrás de B       (B tem responseFrames)
+     *         ↓
+     *      B contra-vanisha     → B atrás de A            ...
+     *         ↓
+     *      quem não responder PERDE A POSIÇÃO
+     *      quem chegar ao teto de trocas leva STUN
+     *
+     *  Duas regras impedem o laço infinito que o §12 manda evitar, e elas são
+     *  diferentes de propósito:
+     *
+     *  1. CUSTO CRESCENTE (`chainKiMultiplier`, já existia). Cada troca custa
+     *     40% mais que a anterior. A quarta troca custa ~77 de ki: a barra
+     *     acaba antes da paciência. É o freio ECONÔMICO.
+     *
+     *  2. TETO DE TROCAS com punição no último. Chegar em `maxExchanges` não
+     *     "termina empatado" — quem tinha a vez de responder e não tinha mais
+     *     ki (ou passou do teto) leva `loserStunFrames`. É o freio de RISCO, e é
+     *     o que transforma a troca numa aposta em vez de um desperdício mútuo
+     *     de recurso.
+     *
+     *  A janela de resposta é CURTA (12 frames) porque isto é o topo da curva de
+     *  perícia (nível 🟣 do idea.txt). Não é pra iniciante acertar — é pra ser a
+     *  coisa que dois jogadores bons fazem um com o outro.                     */
+    vanishBattle: {
+      enabled: true,
+      responseFrames: 12,       // janela pra contra-vanishar
+      maxExchanges: 4,
+      /* Quem perde a troca final fica exposto. Menor que o stun do Z-Counter
+       * (34) de propósito: a vanish battle já custou ki dos dois lados, e somar
+       * uma punição longa a isso tornaria a mecânica assustadora de tentar. */
+      loserStunFrames: 24,
+      slowMoFrames: 20,
+      slowMoScale: 0.26,
+      hitstop: 10,
+      shake: 0.4,
+      // O contra-vanish reaparece um pouco mais longe — senão os dois corpos
+      // ficam empilhados e a leitura visual da troca se perde.
+      reappearDistance: 2.3,
+    },
   },
 
   /* ================================================================== */
@@ -1009,6 +1639,35 @@ export const TUNING = {
     hitstopEnabled: true,
     hitstopScale: 1.0,
     hitstopShakeAmp: 0.05,      // vibração DURANTE o congelamento
+
+    /* ================================================================
+     *  HITSTOP POR CATEGORIA  (§22)
+     * ================================================================
+     *  Cada golpe carregava um `hitstop` solto (4, 6, 16, 18…) e não havia como
+     *  saber se 16 era "pesado" ou só um número que alguém digitou. Pior: golpes
+     *  de peso parecido tinham congelamentos diferentes por descuido, e o
+     *  jogador lê isso como inconsistência de impacto sem saber dizer por quê.
+     *
+     *  Agora existe uma ESCALA nomeada, e o golpe se encaixa numa categoria. O
+     *  `hitstop` do golpe continua funcionando e VENCE a categoria quando
+     *  presente — é o escape pra um golpe que precisa ser exceção.
+     *
+     *  A ordem é a hierarquia de peso do jogo, e ela tem que ser respeitada:
+     *
+     *      guarda  <  normal  <  counter  <  pesado  <  lançamento  <  perfect
+     *
+     *  O aviso do §22 ("não exagerar") está embutido nos números: o topo é 26
+     *  frames, menos de meio segundo. Hitstop generoso demais deixa o combate
+     *  pastoso, e o erro é difícil de perceber porque cada golpe isolado parece
+     *  ótimo — é a sequência que fica lenta.                                   */
+    hitstopProfiles: {
+      guard:   6,               // aparar tem que dar um baque, não um freio
+      normal:  4,               // rush: curto, o combo precisa fluir
+      counter: 16,              // Z-Counter / trade: o momento de reviravolta
+      heavy:   16,              // smash
+      launch:  18,              // o que manda voando
+      perfect: 26,              // Perfect Smash: o teto
+    },
 
     shakeEnabled: true,
     shakeScale: 1.0,
@@ -1133,6 +1792,38 @@ export const TUNING = {
     stepChance: 0.26,
     vanishChance: 0.45,         // chance de escapar de um golpe (se tiver ki)
     smashChance: 0.34,          // chance de finalizar combo com smash
+
+    /* ================================================================
+     *  AS FERRAMENTAS NOVAS, DO LADO DA IA
+     * ================================================================
+     *  Uma mecânica que só o jogador usa não é testável. A lição está registrada
+     *  na seção 11 do doc de passagem: `cancelOnBlock` fazia o que prometia e
+     *  ficou INERTE porque o bot mal bloqueava — "ferramenta defensiva só cobra
+     *  preço se alguém de fato a usar no tempo certo". O mesmo vale do lado
+     *  ofensivo, e é por isso que cada mecânica desta passada tem uma chance
+     *  aqui.
+     *
+     *  Nenhuma delas está em 1.0 de propósito. Uma IA que sempre agarra quem
+     *  bloqueia, sempre acerta o Perfect Smash e sempre responde à vanish battle
+     *  não mede o combate — mede a paciência do jogador, e o resultado vira
+     *  "impossível" em vez de "tem profundidade". */
+
+    /* Chance de AGARRAR quando o adversário está defendendo e colado.
+     * É a ferramenta que ensina o jogador a não segurar F cegamente — e o único
+     * jeito de ele descobrir isso é levando. */
+    grabChance: 0.45,
+
+    /* Chance de SEGURAR o smash pra tentar o Perfect (§8).
+     * Baixa porque carregar expõe: um bot que carrega todo smash viraria um saco
+     * de pancada telegrafado, e o jogador aprenderia a punir carga em vez de
+     * aprender a ler o timing — o oposto do que a mecânica existe pra treinar.
+     * A precisão dentro da janela escala com `difficulty`, não com isto. */
+    smashChargeChance: 0.35,
+
+    /* Chance de acender o MAX POWER quando já está carregando com ki cheio.
+     * Importa pro playtest pelo lado RECEPTOR: é a única forma de o jogador
+     * sentir o counterplay (aguentar os 7 s e punir a exaustão que vem depois). */
+    maxPowerChance: 0.5,
     blastChance: 0.30,
     chargeKiBelow: 28,          // carrega ki quando abaixo disto
     recoverChance: 0.6,         // chance de se recuperar após levar smash
@@ -1283,6 +1974,73 @@ export const DEBUG_SLIDERS = [
   ['defense.zCounter.attemptCooldownFrames', 0, 90, 1, 'Z-Counter: recarga da tentativa'],
   ['defense.sonicSway.window',      0, 12,  1,   'Sonic Sway: janela (frames)'],
   ['defense.sonicSway.kiRefund',    0, 30,  1,   'Sonic Sway: ki devolvido'],
+
+  /* ---- As mecânicas desta passada. Todas com janela ajustável ao vivo, porque
+   * o ponto entre "impossível" e "dominante" numa janela de timing NÃO sai de
+   * leitura de código — só de jogar e sentir. É a lição mais repetida deste
+   * projeto. ---- */
+  ['__group', 'Smash carregado / Perfect Smash'],
+  ['smashCharge.perfectWindow.0',   1, 60,  1,   'Perfect: início da janela (f)'],
+  ['smashCharge.perfectWindow.1',   1, 80,  1,   'Perfect: fim da janela (f)'],
+  ['smashCharge.holdAtFrame',       1, 20,  1,   'Frame em que o smash congela'],
+  ['smashCharge.maxHoldFrames',    10, 120, 1,   'Carga máxima (solta sozinho)'],
+  ['smashCharge.perfectDamageMul',  1, 3,   0.05,'Perfect: multiplicador de dano'],
+  ['smashCharge.perfectKnockbackMul', 1, 3, 0.05,'Perfect: multiplicador de empurrão'],
+  ['smashCharge.perfectHitstop',    0, 60,  1,   'Perfect: congelamento (f)'],
+  ['smashCharge.perfectKiRefund',   0, 40,  1,   'Perfect: ki devolvido'],
+
+  ['__group', 'Perseguição (3 tipos)'],
+  ['pursuit.windowFrames',          10, 180, 5,  'Janela de perseguição (f)'],
+  ['pursuit.kiCost',                 0, 60,  1,  'DIRETA: custo de ki'],
+  ['pursuit.carryFrames',            0, 60,  1,  'DIRETA: frames voando junto'],
+  ['pursuit.types.vanish.kiCost',    0, 80,  1,  'VANISH: custo de ki'],
+  ['pursuit.types.vanish.windowFrames', 5, 90, 1,'VANISH: janela mais curta (f)'],
+  ['pursuit.types.highSpeed.kiCost', 0, 80,  1,  'ALTA VEL.: custo de ki'],
+  ['pursuit.types.highSpeed.speed', 20, 140, 2,  'ALTA VEL.: velocidade'],
+  ['pursuit.types.highSpeed.recoveryFrames', 0, 90, 1, 'ALTA VEL.: recovery se errar'],
+
+  ['__group', 'Grab / Throw'],
+  ['defense.grab.range',           1, 6,   0.1, 'Alcance da pegada'],
+  ['defense.grab.holdFrames',      4, 60,  1,   'Tempo segurando até arremessar'],
+  ['defense.grab.escapeWindow',    0, 40,  1,   'Janela de escape (f)'],
+  ['defense.grab.escapeAttackerStunFrames', 0, 90, 1, 'Punição por ser escapado'],
+  ['defense.grab.cooldownFrames',  0, 120, 1,   'Recarga do grab'],
+  ['moves.grab.recovery',          5, 60,  1,   'Recovery do grab errado'],
+  ['moves.grab_throw.knockback',   5, 90,  1,   'Arremesso: empurrão'],
+  ['ai.grabChance',                0, 1,   0.02,'IA: chance de agarrar quem bloqueia'],
+
+  ['__group', 'Vanish Battle'],
+  ['defense.vanishBattle.responseFrames', 2, 40, 1, 'Janela pra contra-vanishar (f)'],
+  ['defense.vanishBattle.maxExchanges',   1, 10, 1, 'Máx. de trocas'],
+  ['defense.vanishBattle.loserStunFrames',0, 90, 1, 'Punição de quem perde a troca'],
+  ['defense.vanish.chainKiMultiplier',  1, 3, 0.05,'Custo ×N por troca seguida'],
+
+  ['__group', 'Ki: Max Power / Exaustão'],
+  ['maxPower.enterKiThreshold',    20, 100, 1,   'Max Power: ki mínimo'],
+  ['maxPower.enterHoldFrames',      1, 120, 1,   'Max Power: frames segurando R'],
+  ['maxPower.durationFrames',      60, 900, 10,  'Max Power: duração (f)'],
+  ['maxPower.drainPerSec',          0, 40,  0.5, 'Max Power: ki escoado /s'],
+  ['maxPower.damageMul',            1, 2.5, 0.05,'Max Power: multiplicador de dano'],
+  ['maxPower.kiCostMul',          0.1, 1,   0.05,'Max Power: custo de ki ×'],
+  ['ki.exhaustFrames',              0, 300, 5,   'Exaustão: duração (f)'],
+  ['ki.exhaustRegenPerSec',         0, 30,  0.5, 'Exaustão: regen /s'],
+  ['ai.maxPowerChance',             0, 1,   0.02,'IA: chance de acender Max Power'],
+
+  ['__group', 'Trades / Prioridade'],
+  ['trade.enabled',                 0, 1,   1,   'Trades ligados?'],
+  ['trade.range',                   1, 8,   0.2, 'Alcance de uma troca'],
+  ['trade.loserStunFrames',         0, 90,  1,   'Punição de quem perde a troca'],
+  ['trade.clashKnockback',          0, 60,  1,   'Clash: empurrão'],
+  ['moves.smash_forward.priority',  0, 8,   1,   'Prioridade do smash'],
+  ['moves.rush_r.priority',         0, 8,   1,   'Prioridade do rush'],
+
+  ['__group', 'Hitstop por categoria'],
+  ['juice.hitstopProfiles.normal',   0, 30, 1,   'Hitstop: rush'],
+  ['juice.hitstopProfiles.heavy',    0, 40, 1,   'Hitstop: smash'],
+  ['juice.hitstopProfiles.launch',   0, 50, 1,   'Hitstop: lançamento'],
+  ['juice.hitstopProfiles.counter',  0, 50, 1,   'Hitstop: counter / trade'],
+  ['juice.hitstopProfiles.perfect',  0, 60, 1,   'Hitstop: Perfect Smash'],
+  ['juice.hitstopProfiles.guard',    0, 30, 1,   'Hitstop: aparado'],
 
   ['__group', 'Vanish / Defesa'],
   ['moves.smash_forward.vanishWindow', 0, 30, 1, 'Janela de vanish (smash)'],
