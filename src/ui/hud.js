@@ -168,13 +168,45 @@ export class HUD {
       const total = m.startup + m.active + m.recovery;
       const cw = m.cancelWindow;
       const naJanela = cw && player.stateFrame >= cw[0] && player.stateFrame <= cw[1];
-      L.push(`golpe   ${player.moveKey}  f ${player.stateFrame}/${total}  [${player.attackPhase}]`);
-      L.push(`        startup ${m.startup} · active ${m.active} · recovery ${m.recovery}`);
+      L.push(`golpe   ${player.moveKey}  f ${player.stateFrame}/${total}  [${player.attackPhase}]`
+           + `  prio ${m.priority}${m.armor ? `  armor ${m.armor}` : ''}`);
+      L.push(`        startup ${m.startup} · active ${m.active} · recovery ${m.recovery}`
+           + `   launch ${m.launch?.type ?? '--'}`);
       L.push(`cancel  ${cw ? `${cw[0]}–${cw[1]}` : 'nenhum'}   ${naJanela ? '◄ ABERTA' : 'fechada'}`
            + `   emenda: ${player.contactAllowsChain ? 'LIBERADA' : 'travada'}`);
       L.push(`combo   elo ${player.comboCount}/${extra.maxChain}   vanishWindow ${m.vanishWindow ?? '--'}`);
     } else {
       L.push(`estado  ${player.state}  f ${player.stateFrame}`);
+    }
+
+    /* ================================================================
+     *  CARGA DO SMASH E JANELA PERFEITA  (§8, §28)
+     * ================================================================
+     *  A linha mais importante desta passada. O Perfect Smash é uma janela de
+     *  9 frames: sem ver o contador subindo e a janela abrir e FECHAR, não há
+     *  como afinar o número — e "acertei ou não?" fica sendo palpite. É
+     *  exatamente o que o §28 pede a ferramenta pra resolver.               */
+    if (player.smashHolding && extra.charge) {
+      const [ini, fim] = extra.charge.perfectWindow;
+      const h = player.smashChargeFrames;
+      const dentro = h >= ini && h <= fim;
+      const barra = '█'.repeat(Math.min(28, Math.round(h / 2)));
+      L.push(`CARGA   ${h}f  janela ${ini}–${fim}`
+           + (dentro ? '   ◄◄ SOLTE AGORA (PERFECT)' : h < ini ? `   faltam ${ini - h}f` : '   passou'));
+      L.push(`        ${barra}`);
+    } else if (player.smashPerfect) {
+      L.push(`CARGA   último smash: PERFECT`);
+    }
+
+    /* MAX POWER e EXAUSTÃO: mudam o que o jogador PODE fazer, então precisam de
+     * linha própria — ki na barra não diz que nada sai. */
+    if (player.inMaxPower) {
+      L.push(`MAX POWER ${player.maxPowerFrames}f   dano ×${extra.mpDamageMul}`
+           + `  ki ×${extra.mpKiMul}   (acaba em exaustão)`);
+    } else if (player.exhausted) {
+      L.push(`EXAUSTO ${player.exhaustFrames}f   ◄ sem dash, vanish, blast nem perseguição`);
+    } else if (player._maxPowerCharge > 0) {
+      L.push(`MAX POWER  carregando ${player._maxPowerCharge}/${extra.mpHold}f — continue segurando R`);
     }
 
     /* ROTA e PERSEGUIÇÃO são os dois conceitos novos do combate, e os dois
@@ -184,9 +216,43 @@ export class HUD {
     L.push(`rota    ${player.comboCount}/${extra.maxChain}`
          + `  reset em ${player.chainResetTimer}f`
          + (rotaCheia ? '   ◄ ESGOTADA: só ender / reposicionar' : ''));
+    /* A janela de perseguição agora tem TRÊS respostas, e cada uma com custo e
+     * janela próprios. Mostrar qual está disponível é o que transforma "aperto
+     * Shift" numa escolha — sem isto o jogador nunca descobre os modificadores. */
     if (player.pursuitFrames > 0) {
-      L.push(`PERSEGUIR ${player.pursuitFrames}f   (Shift persegue · K spike)`);
+      const ki = player.ki;
+      const t = TUNING.pursuit.types;
+      const dir = ki >= player.kiCost(TUNING.pursuit.kiCost);
+      const van = ki >= player.kiCost(t.vanish.kiCost)
+               && player.pursuitElapsed <= t.vanish.windowFrames;
+      const alt = ki >= player.kiCost(t.highSpeed.kiCost);
+      L.push(`PERSEGUIR ${player.pursuitFrames}f`
+           + `   Shift:${dir ? 'DIRETA' : '--'}`
+           + `  +V:${van ? 'VANISH' : '--'}`
+           + `  +K:${alt ? 'ALTA VEL.' : '--'}`);
     }
+    if (player.state === 'pursuit') {
+      L.push(`        perseguindo [${player.pursuitType}]`
+           + `  carry ${player._pursuitCarry}f`);
+    }
+
+    /* VANISH BATTLE: a janela tem 12 frames. Precisa estar na tela pra ser
+     * afinável — e é o número que decide se a mecânica é jogável ou decorativa. */
+    if (player.counterVanishFrames > 0) {
+      L.push(`VANISH BATTLE  responda em ${player.counterVanishFrames}f`
+           + `   troca ${player.vanishExchange}/${extra.vbMax}`
+           + `   custo ${player.vanishCost().toFixed(0)} ki`);
+    }
+
+    // GRAB: os dois lados da interação, porque os dois têm relógio.
+    if (player.state === 'grab') {
+      L.push(`AGARROU  arremessa em ${player.grabHold}f`);
+    } else if (player.state === 'grabbed') {
+      const jan = TUNING.defense.grab.escapeWindow;
+      const resta = jan - player.stateFrame;
+      L.push(`AGARRADO  escape ${resta > 0 ? `${resta}f ◄ APERTE F` : 'PERDIDO'}`);
+    }
+    if (player.grabCooldown > 0) L.push(`grab    recarga ${player.grabCooldown}f`);
 
     // --- vantagem de frames: o número que decide o jogo de turnos ---
     const meu = HUD._framesAteAgir(player);

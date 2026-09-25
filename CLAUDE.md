@@ -63,7 +63,36 @@ para os números):
   blockstun, estamina de guarda, distância à borda e **vantagem em frames**
 - IA com punição de recovery baseada em frame data real
 
-Não implementado: **áudio**, **rede**, troca de alvo por gamepad no ciclo.
+### Passada BT3-like (branch `combate-bt3-like`)
+
+Tudo abaixo foi medido no navegador com `window.PROTO` (números na seção 13 do
+doc de passagem):
+
+- **smash carregável + PERFECT SMASH**: segurar `K` congela o golpe no startup;
+  soltar na janela (18–26f de carga) dá ×1,55 de dano e ×1,45 de empurrão.
+  Fora da janela o golpe é **exatamente** o smash normal — segurar não paga
+  dano, paga *controle do tempo do impacto*
+- **três tipos de perseguição**: `Shift` direta (barata, dá rota nova, pode
+  errar) · `Shift+V` vanish (caríssima, infalível, sem rota) · `Shift+K` alta
+  velocidade (spike automático que re-lança; recovery de 26f se errar)
+- **grab / arremesso** (`F+J`): passa pela guarda, perde pro escape (`F` na
+  janela, exige TOQUE novo), perde de qualquer golpe (prioridade 0)
+- **vanish battle**: quem é vanishado tem 12f pra contra-vanishar; custo escala
+  40% por troca, teto de 4 trocas com punição no último
+- **Max Power**: entra carregando ki acima de 78 por 26f; 7 s de ×1,20 de dano e
+  ki 35% mais barato, e **termina em exaustão** — que é o counterplay
+- **exaustão**: zerar o ki tranca *todas* as ferramentas de ki por 90f
+- **launch system**: `launch.type` (`hitstun`/`blowaway`/`slam`) separado de
+  "acerto"; só blowaway e slam abrem perseguição
+- **prioridade e trades**: dois golpes ativos no mesmo frame — igual = clash,
+  diferente = o mais comprometido atravessa
+- **matriz de defesa em dados** (`TUNING.defenseMatrix`): é ela que faz a guarda
+  não responder a grab, e permite golpe que fura Sonic Sway
+- **hitstop por categoria** (guarda < normal < counter < pesado < lançamento <
+  perfect), em vez de número solto por golpe
+
+Não implementado: **áudio**, **rede**, troca de alvo por gamepad no ciclo,
+**personagens/movesets múltiplos** (cortado do MVP de propósito — um lutador só).
 
 ### O loop de combate (reconstruído — leia antes de mexer no J)
 
@@ -90,7 +119,7 @@ Quatro regras que sustentam isso, e que **não podem ser desfeitas por engano**:
 4. `homing.maxPull` limita o quanto um golpe te puxa. Antes puxava 3,1 m de
    uma vez: era o "boneco gruda".
 
-### O kit defensivo — quatro ferramentas, quatro papéis
+### O kit defensivo — cinco ferramentas, cinco papéis
 
 Nenhuma duplica a outra. Se uma parecer redundante, é sinal de que algum
 número saiu do lugar:
@@ -101,6 +130,28 @@ número saiu do lugar:
 | **Sonic Sway** | F+direção **antes** | grátis (cooldown) | antecipar | evade, devolve ki e **rota nova** |
 | **Z-Counter** | **tocar** F no impacto | 12 ki | ~4 frames | **stun de 34f no atacante** |
 | Vanish | V na janela | 20 ki, escalando | 9–14 frames | reaparece **atrás** |
+| **Escape de grab** | **tocar** F agarrado | 6 ki | 12 frames | **stun de 30f no atacante** |
+
+O botão `F` tem **quatro** significados conforme o timing, e isso é deliberado:
+é profundidade sem tecla nova (§29). Segurar absorve; tocar no impacto
+contra-ataca; tocar agarrado escapa; tocar perto de um blast rebate.
+
+**Regra que vale pra todos os "tocar":** exige o EDGE, nunca o botão segurado.
+O escape de grab nasceu errado nisso — com `cmd.guard` ele saía no primeiro
+frame da pegada sempre que a vítima já estivesse de guarda, ou seja, quem fazia
+turtle escapava de graça. Exatamente a pessoa contra quem o grab existe.
+
+### O eixo anti-guarda — duas respostas, não uma
+
+A medição que motivou o grab: contra quem martela, o perfil DEFESA passa 37% do
+tempo em guarda e ainda leva 88 golpes limpos contra 32 aparados. O ataque tinha
+UMA resposta à guarda — o smash, lento e telegrafado.
+
+| contra a guarda | como abre | preço de errar |
+|---|---|---|
+| Smash | quebra na hora (ring-out) | recovery 24f |
+| **Perfect Smash** | fura mesmo sem `guardBreak` | janela de 9f pra acertar |
+| **Grab** | a guarda não responde | recovery 26f + escape devolve 30f de stun |
 
 Propriedade que emerge do frame data e que vale preservar: contra um rush
 (startup 4) o Z-Counter é **antecipação**; contra um smash (startup 13) dá
@@ -157,6 +208,26 @@ navegador: 7 golpes aparados esgotam a guarda; **1 smash abre na hora**.
    — isto precisa de playtest humano antes de virar mudança.**
 3. **As rotas direcionais** (gancho/chute) nunca foram julgadas por humano: não
    se sabe se levantam/cravam o tanto certo.
+
+3b. **Tudo da passada BT3-like funciona MECANICAMENTE e nada foi jogado por
+   humano.** A distinção importa neste projeto: `cancelOnBlock` já fez
+   exatamente o que prometia e ficou inerte. Ver seção 11 do doc de passagem
+   para a lista completa; os três maiores riscos:
+
+   - a **direta** pode dominar as outras duas perseguições (é a única que dá
+     rota nova)
+   - o **grab** pode ser opressivo contra quem não sabe que o escape existe
+   - o **Max Power** pode simplesmente não compensar (22 de ki + ficar parado +
+     exaustão no fim, por 7 s de ×1,20)
+
+3c. **`armor` está implementado e em ZERO em todos os golpes.** É alavanca
+   disponível, não mecânica em uso — não foi testada. Idem os **trades**:
+   funcionam, mas só quando os dois golpes ficam ativos no MESMO frame
+   (janela de ~1 frame), então são raros por construção.
+
+3d. **A IA quase não acende o Max Power** e **nunca exercitou grab nem vanish
+   battle** contra o jogador (o grab exige o adversário de guarda; a vanish
+   battle exige que ele vanishe). Ver armadilha 8.29.
 4. **Os números novos da guarda** (`staminaPerHit: 13`, `breakStunFrames: 42`,
    `blockstun` agora vivo) nunca foram jogados por humano. 7 golpes pra esgotar
    é um palpite coerente, não um valor validado.

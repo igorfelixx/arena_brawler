@@ -1059,6 +1059,109 @@ Descobrir que a arquitetura de combate não replica bem no degrau de 16 jogadore
 
 ---
 
+## 10.5 Passada BT3-like — o que entrou, e o que a medição mostrou
+
+Branch `combate-bt3-like`. Escopo decidido pelo dono: **sem refatoração de
+arquitetura e sem sistema de personagens** — o código three.js não porta, e o
+MVP existe pra responder uma pergunta só ("o combate é divertido o bastante pra
+valer o porte?"). O que entrou é mecânica e, sobretudo, `tuning.js`.
+
+### As mecânicas, e o número medido de cada uma
+
+Tudo abaixo foi medido no navegador dirigindo os dois lutadores na mão
+(`PROTO.resolveTrade` / `PROTO.resolveMelee`), nunca por leitura de código.
+
+| mecânica | medido |
+|---|---|
+| **Smash carregado** | congela no frame 6 do startup; o acerto anda de f12 (toque) a f67 (carga máxima) |
+| **Perfect Smash** | janela 18–26f de carga → **24,8 de dano / 66,8 m/s** (×1,55 e ×1,45) |
+| Smash **fora** da janela | **16 / 46,1** — idêntico ao toque, por decisão |
+| **Perseguição direta** | 11,2 ki · voa junto 18f · **zera a rota** |
+| **Perseguição vanish** | 25,1 ki · teleporta · voa junto 24f · não zera a rota |
+| **Perseguição alta vel.** | 19,1 ki · spike automático de 12 de dano · não zera a rota |
+| Laço de perseguição | **autolimita em 2 perseguições / 1 spike / 28 de dano** — não há combo infinito |
+| **Grab vs guarda segurada** | agarra, arremessa, **13 de dano**, o escape NÃO sai |
+| **Escape de grab** | soltar+reapertar F na janela → 0 de dano, atacante em hitstun 30f |
+| **Prioridade** | smash (3) atravessa rush (1); rush (1) atravessa grab (0) |
+| **Clash** | prioridade igual e ativos no mesmo frame → os dois em hitstun, hp intacto, corpos separados de 1,07 → 3,87 m |
+| **Max Power** | acende com ki 77 · dura **exatamente 420f** · termina em exaustão |
+| **Exaustão** | 90f · `canSpend` falso pra tudo · dash não sai |
+
+**Nenhuma regressão.** Os números da passada anterior foram remedidos e batem:
+7 golpes aparados esgotam a guarda (85→70→55→40→23→8→0), defensor sai **+8
+frames**, `cancelOnBlock` continua travando a emenda, Z-Counter intacto, rota
+teto 4. Luta real de 32 s + 60 s a 60 fps, **zero erro de JS**.
+
+### 8.27 ⚠️ Botão com dois significados precisa DESARMAR o primeiro
+
+`Shift+V` virou "perseguição de vanish". Só que `update()` já registrava todo
+`cmd.vanish` como tentativa de vanish. Resultado medido: Shift+V custava
+**18,2 de ki** — 12 da perseguição MAIS 7 da multa de vanish desperdiçado — e
+ainda deixava 22 frames de cooldown. O jogador pagava quase o dobro por uma ação
+que devia custar 26, e ficava sem vanish defensivo sem entender por quê.
+
+A correção é uma linha (`vAsModificador`), mas a lição é geral e vale pro
+Unreal: ao dar um segundo significado a um botão conforme o contexto, o segundo
+significado tem que **cancelar explicitamente** o primeiro. Em GAS isso é uma
+tag de bloqueio na ability original, não um `if` na nova.
+
+### 8.28 ⚠️ Defesa que aceita botão SEGURADO anula a mecânica que ela responde
+
+O escape de grab nasceu lendo `cmd.guard`. Medido: quem estava de guarda
+escapava no **primeiro frame** da pegada, sempre. Ou seja, o grab — que existe
+justamente pra punir quem segura F — perdia pro botão que o turtle já estava
+segurando.
+
+A regra que o resto do kit já seguia e que faltou aqui: toda defesa de TIMING lê
+o **edge**, nunca o botão pressionado. É o que separa "segurar absorve" de
+"tocar na hora certa reverte", e é o que dá ao botão de guarda quatro
+significados sem quatro teclas.
+
+### 8.29 ⚠️ Parâmetro de IA pode nascer inalcançável
+
+`ai.maxPowerChance` foi criado, documentado, exposto no painel — e media zero.
+Em 32 s de luta real o Max Power **nunca acendeu**. A causa: a IA só carregava
+ki com `ki < chargeKiBelow` (28), e o Max Power só acende com `ki >= 78`. Duas
+condições mutuamente exclusivas.
+
+É a 8.19 ("frame data que ninguém lê") aplicada a um parâmetro de IA, e a 8.15
+("decisão por frame não segura botão") ao mesmo tempo: acender exige 26 frames
+contínuos de charge, então precisa ser um COMPROMISSO com prazo
+(`_maxPowerIntent`), não um sorteio.
+
+**Ainda assim, mesmo corrigido, a IA raramente acende** — ela quase nunca está a
+mais de 10 m com ki acima de 62. Fica registrado como pendência de ajuste, não
+como mecânica validada.
+
+### 8.30 O harness mentiu três vezes na mesma sessão
+
+Vale mais que as três correções, porque é o padrão:
+
+1. medir guarda com o defensor apertando F **no mesmo frame** do ataque media
+   **Z-Counter**, não guarda (o toque arma o contador)
+2. colher eventos **antes** de `resolveTrade`/`resolveMelee` perdia todo
+   `stagger`/`damaged` — a conclusão foi "trades não funcionam" quando o traço
+   frame a frame mostrava o clash disparando normalmente
+3. enviar o modificador de perseguição **em um frame só** media sempre
+   `direct`, porque a perseguição só é aceita alguns frames depois
+
+Nos três casos o código estava certo e o instrumento errado. O CLAUDE.md já
+mandava desconfiar do próprio teste; isto é a terceira, quarta e quinta provas.
+
+### O que fica pro Unreal
+
+`tuning.js` cresceu de ~1340 para ~2000 linhas e continua sendo **o produto**.
+Os blocos novos que viram linha de `UDataTable` ou `UDeveloperSettings`:
+`smashCharge`, `launch`, `pursuit.types`, `defense.grab`,
+`defense.vanishBattle`, `maxPower`, `ki.exhaust*`, `defenseMatrix`,
+`moveDefaults`, `trade`, `juice.hitstopProfiles`.
+
+`defenseMatrix` em particular deve virar dado no Unreal (uma tabela
+categoria→defesas), não uma cadeia de `if`: é ela que permite um golpe que fura
+Sonic Sway ou um grab que a guarda para, sem tocar em código.
+
+---
+
 ## 11. O que ainda NÃO foi validado
 
 **Esta seção é a mais importante para não portar um erro.**
@@ -1106,6 +1209,44 @@ Especificamente não validado:
 - [ ] O teto competitivo existe? Profundidade nasce entre dois humanos que
       punem o erro um do outro, e isso NÃO é mensurável com bot roteirizado —
       nem com os bots "casual" e "bom" usados aqui, que são laços fixos.
+
+### Da passada BT3-like — mecânica funciona ≠ mecânica é boa
+
+Tudo da seção 10.5 foi verificado MECANICAMENTE (dispara, custa o que deve,
+respeita as regras). **Nada foi julgado por humano jogando.** A distinção
+importa: a sessão anterior já registrou uma regra que fazia exatamente o que
+prometia e era inerte na prática (`cancelOnBlock`).
+
+- [ ] **A janela do Perfect Smash (9 frames) é justa?** É larga de propósito pra
+      iniciante acertar às vezes. Pode estar fácil demais — só playtest diz.
+- [ ] **Segurar o smash é de fato um mind game, ou só te deixa exposto?**
+      A aposta do design é que controlar o frame do impacto vale mais que dano.
+      Medido: um smash carregado foi interrompido no meio em luta real. Isso é o
+      risco funcionando — ou é a mecânica sendo inviável? Não dá pra saber sem jogar.
+- [ ] **Os três tipos de perseguição são três decisões ou uma boa e duas ruins?**
+      A direta é a única que dá rota nova. Suspeita a testar: ela domina, e as
+      outras duas só valem em situações raras demais pra importar.
+- [ ] **O grab é a resposta ao turtle ou é forte demais?** Ele passa pela guarda,
+      e a única defesa é um toque de F em 12 frames. Contra quem não sabe que o
+      escape existe, ele pode ser opressivo.
+- [ ] **A vanish battle é jogável?** 12 frames de janela. Foi validada
+      mecanicamente com 1 troca; quatro trocas encadeadas entre dois humanos
+      nunca aconteceram.
+- [ ] **O Max Power compensa?** 7 s de ×1,20 de dano em troca de 22 de ki, ficar
+      parado carregando e cair em exaustão no fim. A conta pode simplesmente não
+      fechar — e aí ninguém vai usar.
+- [ ] **A exaustão (90f sem nenhuma ferramenta de ki) pune ou frustra?**
+- [ ] **Os trades acontecem o bastante pra importar?** Medido: só quando os dois
+      golpes ficam ativos no MESMO frame — janela de ~1 frame. Raro por
+      construção. Pode ser um momento especial ou pode ser irrelevante.
+- [ ] **`armor` está implementado e em ZERO em todos os golpes.** É uma alavanca
+      disponível, não uma mecânica em uso. Fica explícito pra ninguém achar que
+      foi testada.
+- [ ] **A IA quase não acende o Max Power** mesmo depois da correção da 8.29 —
+      então o jogador ainda não sentiu o counterplay do lado receptor.
+- [ ] **Grab e vanish battle nunca foram exercitados pela IA** contra o jogador:
+      o grab exige o adversário estar de guarda, e a vanish battle exige que ele
+      vanishe. Com o jogador passivo nos testes, nenhum dos dois ocorreu.
 
 **Antes do porte:** jogar, ajustar no painel (`P`), gravar os valores em
 `src/tuning.js`, e atualizar esta seção marcando o que foi validado.

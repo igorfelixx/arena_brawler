@@ -231,12 +231,14 @@ export const KEYMAP_HELP = [
   // Um TOQUE = um elo. Segurar não emenda: a direção escolhe o golpe, então a
   // decisão tem que estar em algum lugar, e ela está no toque.
   ['J  ou  Botão esq.','Rush — 1 toque = 1 elo · a direção escolhe o golpe'],
-  ['K  ou  Botão dir.','Smash — com direção manda pra cima/baixo'],
+  ['K  ou  Botão dir.','Smash — SEGURE pra carregar · solte na janela = PERFECT'],
   ['L',               'Ki blast (segure = carregado)'],
   ['F',               'Guarda (segure) · TOQUE no impacto = Z-Counter'],
   ['F + direção',     'Step · no tempo certo vira Sonic Sway'],
+  ['F + J',           'Grab — passa pela guarda · F na hora = escape'],
   ['V',               'Vanish — some atrás de quem te bate (errar custa ki)'],
-  ['R',               'Carregar ki (segure)'],
+  ['Shift (lançou)',  'Perseguir · +V = vanish · +K = alta velocidade'],
+  ['R (ki cheio)',    'Carregar até o fim = MAX POWER'],
   ['X',               'Ultimate'],
   ['Q',               'Trocar de alvo'],
   ['E',               'Soltar / retomar o lock-on'],
