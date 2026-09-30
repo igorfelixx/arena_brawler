@@ -262,17 +262,24 @@ Ver seção 11 do documento de passagem antes de tratá-los como verdade.
 - `?modo=duelo` (padrão) — 1×1. **Não sobrescreve nenhum número.** É o MVP
   validado e a única base de comparação do projeto.
 - `?modo=arena&n=30` — 20–30 jogadores, cronograma de fases (INÍCIO → MEIO →
-  CONFRONTO → FINAL → CLÍMAX), regeneração de vida fora de combate, IA que recua.
+  CONFRONTO → FINAL → CLÍMAX). Regeneração e recuo da IA existem mas estão em ZERO.
 - `PROTO.simular(1500, { ateSobrar: 1 })` — roda a simulação sem render. Uma
   partida de 30 min leva segundos. É o que torna ajustar ritmo viável.
 
-⚠️ **A meta de 20–25 min NÃO foi atingida: a partida de 30 dura ~2–4 min, e
-nenhum número chega lá.** Com 30 lutadores há ~15 brigas em paralelo; para
-25 min cada briga precisaria passar 13 minutos sem matar ninguém. O que governa
-a duração é a fração do tempo em combate (medida em 43–60%; precisaria ser
-3–5%), e a causa é estrutural — **não há limite de informação**, todo mundo
-sempre sabe onde todo mundo está. Ver seção 10.8 do doc de passagem para os
-números e os quatro caminhos possíveis.
+**Combate rebalanceado (vida 100 → 900).** O 1×1 durava 14,5 s; agora dura
+~2 min. O dano NÃO foi tocado — só a razão vida/dano importa, e manter o dano
+intacto preserva o significado de cada número. Junto vieram: 4 s fora da arena
+antes de eliminar (era 0,8 s) e recuperação aérea barata (ki 10 → 4), que foi o
+maior salto isolado de duração.
+
+Preservado e verificado: poise, guarda (7 golpes), knockback (46,1), frame data.
+Custo registrado: uma rota inteira tira só 4% da barra — se o golpe "não sentir"
+no playtest, o conserto é a BARRA mostrar melhor o dano, não baixar a vida.
+
+Efeito desejado: ring-out virou caminho de vitória de igual peso (era 0/8, agora
+~5/10). Com 30 jogadores a partida passou de 1,2 min para **~5 min**, e isso
+EMERGIU do combate — regeneração de vida e recuo da IA estão em ZERO (eram
+curativo que mascarava o TTK baixo, e foram vetados com razão).
 
 ## Como trabalhar aqui
 

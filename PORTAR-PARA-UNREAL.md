@@ -1436,6 +1436,108 @@ de 30 lutadores.
 
 ---
 
+## 10.9 REBALANCEAMENTO DO COMBATE BASE — vida 100 → 900
+
+O passo que veio ANTES de mexer em duração de partida, e que mudou tudo.
+
+### O diagnóstico do dono estava certo
+
+Eu tinha alongado a partida de 30 jogadores com regeneração de vida e recuo da
+IA. Os dois foram vetados com a razão certa: **alongavam a partida mascarando um
+TTK baixo em vez de consertá-lo.** Estão desligados (em zero, como alavanca).
+
+Medido, 1×1 entre dois bots: **14,5 segundos.** Para uma luta de 2–4 minutos o
+TTK precisava subir ~10×.
+
+### Duas formas idênticas, e por que a escolhida importa
+
+Só a RAZÃO vida/dano importa:
+
+| | razão | medido |
+|---|---|---|
+| vida 500 · todo dano ×0,55 | 909 | 1,9 min |
+| **vida 900 · dano INTACTO** | 900 | **2,1 min** |
+
+Escolhida a segunda. Com o dano intacto, cada `damage` continua significando
+"HP removido" e a relação entre golpes fica legível (um smash vale 3,2 rushes).
+A primeira produziria dezoito decimais como 2,75 e 1,43, que não dizem nada a
+quem for montar a DataTable.
+
+### O que mais mudou, e por quê
+
+| | de | para | efeito medido |
+|---|---|---|---|
+| `fighter.maxHealth` | 100 | **900** | TTK ×10 |
+| `arena.outOfBoundsFrames` | 50 (0,8 s) | **240 (4 s)** | ring-out vira disputa, não sentença |
+| `defense.recover.kiCost` | 10 | **4** | 37 s → 74 s: o MAIOR salto isolado |
+| `ai.recoverChance` | 0,6 | **0,85** | a IA parava de se deixar cair |
+
+O ki era o gargalo da recuperação: quem levava um smash normalmente estava com
+ki baixo por ter gastado defendendo, e não tinha como se salvar. Baratear a
+recuperação sozinho dobrou a duração da luta.
+
+### O que foi PRESERVADO (verificado, não presumido)
+
+Frame data, knockback, poise, estamina de guarda — nada tocado:
+
+- poise quebra na mesma frequência (3× em 10 s de martelada)
+- guarda ainda esgota em **7 golpes**
+- smash ainda lança a **46,1 m/s**
+- rush startup 4, maxChain 4, janela perfeita 18–26
+
+### ⚠️ O custo: legibilidade do golpe
+
+Com vida 900, cada acerto move muito menos a barra:
+
+| golpe | % da barra |
+|---|---|
+| rush | 0,56% |
+| smash | 1,8% |
+| Perfect Smash | 2,8% |
+| **rota inteira (4 rushes + smash)** | **4,0%** |
+
+25 rotas completas para matar por HP. Quatro por cento por rota é o limite do
+que ainda é visível — foi por isso que a vida ficou em 900 e não em 1600: é a
+MENOR que alcança a faixa de 2 minutos.
+
+**Se o playtest disser que o golpe "não sente", o conserto NÃO é baixar a vida**
+(isso devolve a luta de 15 segundos). É a barra mostrar o dano recente — o
+rastro branco já faz metade disso.
+
+### Efeito colateral desejado: o ring-out virou caminho de igual peso
+
+| | ring-out | nocaute |
+|---|---|---|
+| vida 100 | 0/8 | 8/8 |
+| **vida 900** | **5/10** | 5/10 |
+
+Com vida alta, matar por HP demora e a borda passa a ser a via rápida — que é a
+identidade do jogo.
+
+### A duração de 30 jogadores EMERGIU, não foi forçada
+
+| | duração |
+|---|---|
+| combate original | 1,2 min |
+| com regeneração + recuo (mascarado, descartado) | 2–4 min |
+| **vida 900, sem curativo nenhum** | **~5 min** |
+
+E o cronograma de fases foi recalibrado pela duração REAL: espalhado por 30 min
+a partida inteira cabia na fase INÍCIO. Comprimido para 8 min:
+
+| cronograma | duração | ring-out | fases vividas |
+|---|---|---|---|
+| de 30 min | 5,6 min | 18% | 2 de 6 |
+| **comprimido** | 5,0 min | **47%** | **4 de 6** |
+
+Mesma duração, o dobro de ring-out e o dobro de arco. Um cronograma que não
+termina não é pressão, é decoração.
+
+**Ressalva:** bots não recuam nem evitam briga; humanos fazem as duas coisas.
+Cinco minutos é um PISO, não um teto.
+
+---
+
 ## 11. O que ainda NÃO foi validado
 
 **Esta seção é a mais importante para não portar um erro.**

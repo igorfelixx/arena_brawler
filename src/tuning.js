@@ -232,7 +232,43 @@ export const TUNING = {
   /*  LUTADOR                                                            */
   /* ================================================================== */
   fighter: {
-    maxHealth: 100,
+    /* ================================================================
+     *  VIDA  —  900, e o dano NÃO foi tocado
+     * ================================================================
+     *  Medido: com 100 de vida, um 1×1 entre dois bots dura 14,5 SEGUNDOS.
+     *  A meta é 2–4 minutos de luta engajada, então o TTK precisava subir ~10x.
+     *
+     *  Duas formas de fazer isso dão exatamente o mesmo resultado, porque só a
+     *  RAZÃO importa:
+     *      vida 500 e todo dano ×0,55   →  500/0,55 = 909
+     *      vida 900 e dano INTACTO      →  900/1,00 = 900
+     *  Medidos lado a lado: 1,9 min e 2,1 min. Indistinguíveis.
+     *
+     *  Escolhida a segunda, e a razão é este arquivo ser o produto: com o dano
+     *  intacto, cada número de `damage` continua significando "HP removido", e
+     *  a relação entre os golpes (um smash vale 3,2 rushes) fica legível. A
+     *  primeira forma produziria dezoito decimais como 2,75 e 1,43, que não
+     *  dizem nada a quem for montar a DataTable no Unreal.
+     *
+     *  O QUE ISSO CUSTA, e é o risco que precisa ficar registrado: cada golpe
+     *  passa a mover muito menos a barra.
+     *
+     *      rush         5/900  =  0,55% da barra
+     *      smash       16/900  =  1,8%
+     *      rota inteira 36/900 =  4,0%
+     *
+     *  Quatro por cento por rota completa é pouco, e é o limite de onde um
+     *  acerto ainda é VISÍVEL. Foi por isso que 900 foi escolhido e não 1600:
+     *  a vida é a MENOR que alcança a faixa de 2 minutos, o que maximiza o que
+     *  sobra de legibilidade. Se o playtest disser que o golpe "não sente",
+     *  o conserto NÃO é baixar a vida — é a barra de vida mostrar o dano
+     *  recente (o rastro branco já faz metade disso), porque baixar a vida
+     *  devolve a luta de 15 segundos.
+     *
+     *  Efeito colateral desejado: com a vida alta, matar por HP demora e o
+     *  RING-OUT vira caminho de vitória de igual peso. Medido em 10 lutas:
+     *  5 por ring-out, 5 por nocaute. Era 0 por ring-out com vida 100.        */
+    maxHealth: 900,
     radius: 0.55,               // raio de colisão
     height: 1.8,
     // (`pushForce` removido: nunca foi lido. A separação de corpos em
@@ -439,17 +475,17 @@ export const TUNING = {
         /* Sobreposições. Tudo que não estiver aqui vem do bloco normal —
          * mesmo contrato dos perfis de IA, e pelo mesmo motivo: um slider
          * arrastado no painel continua valendo. */
-        /* `healthRegenPerSec` é o botão da DURAÇÃO — ver a nota longa no bloco
-         * `fighter`. Varrido no navegador com o fast-forward (valores na
-         * seção 10.8 do doc de passagem); este é o ponto onde a curva de
-         * eliminação bateu com as fases. */
-        fighter: { maxHealth: 140, healthRegenPerSec: 28, healthRegenDelaySec: 3 },
+        /* SEM sobreposição de vida nem regeneração.
+         *
+         * Havia `maxHealth: 140` e `healthRegenPerSec: 28` aqui, e os dois
+         * saíram: eram curativo pra uma partida que acabava rápido demais
+         * porque o COMBATE BASE tinha o TTK baixo. Com a vida em 900 no bloco
+         * `fighter`, o modo arena herda o mesmo combate do duelo — que é como
+         * tem que ser, senão são dois jogos e só um está balanceado.
+         *
+         * A regeneração continua existindo (`fighter.healthRegenPerSec`) e em
+         * zero. É alavanca, não mecânica em uso. */
 
-        /* Recuperação aérea mais barata. Na fase inicial, sair da arena tem
-         * que ser um ERRO seu, não uma consequência de ter levado um smash.
-         * Quando a arena encolhe, o mesmo custo passa a ser caro em relação ao
-         * espaço disponível — o valor não muda, o contexto muda. */
-        recover: { kiCost: 6 },
 
         /* ------------------------------------------------------------
          *  CRONOGRAMA DE FASES — o coração do modo
@@ -462,67 +498,60 @@ export const TUNING = {
          *  LER em que momento da partida está — "CONFRONTO" diz mais que
          *  "raio 38 m", e é o que transforma o encolhimento de cronômetro em
          *  narrativa.                                                        */
+        /* Cronograma CALIBRADO PELA DURAÇÃO REAL, não pela desejada.
+         *
+         * A primeira versão espalhava as fases por 30 minutos, porque a meta
+         * era uma partida de 20–25. Com o combate rebalanceado a partida dura
+         * ~6 min de verdade — e o cronograma de 30 min significava que ela
+         * inteira acontecia dentro da fase INÍCIO. Medido, 30 lutadores:
+         *
+         *     cronograma de 30 min   5,6 min · ring-out 18% · 2 de 6 fases
+         *     cronograma comprimido  5,4 min · ring-out 32% · 4 de 6 fases
+         *
+         * Mesma duração, o DOBRO de ring-out e o dobro de arco vivido. Um
+         * cronograma que não termina não é pressão, é decoração — a arena
+         * precisa fechar dentro do tempo que a partida de fato dura.
+         *
+         * Se o playtest alongar a partida (humanos recuam, bots não), estes
+         * minutos sobem junto. É a primeira coisa a reajustar. */
         phases: [
-          { min: 0,  raio: 110, teto: 70, label: 'INÍCIO',    sub: 'espaço de sobra' },
-          { min: 5,  raio: 78,  teto: 58, label: 'MEIO',      sub: 'a arena fecha' },
-          { min: 12, raio: 46,  teto: 42, label: 'CONFRONTO', sub: 'disputa por posição' },
-          { min: 18, raio: 26,  teto: 30, label: 'FINAL',     sub: 'pouco espaço' },
-          { min: 25, raio: 13,  teto: 22, label: 'CLÍMAX',    sub: 'não caia' },
-          { min: 30, raio: 10,  teto: 20, label: 'MORTE SÚBITA', sub: '' },
+          { min: 0,   raio: 70, teto: 52, label: 'INÍCIO',    sub: 'espaço de sobra' },
+          { min: 1.5, raio: 56, teto: 46, label: 'MEIO',      sub: 'a arena fecha' },
+          { min: 3,   raio: 42, teto: 40, label: 'CONFRONTO', sub: 'disputa por posição' },
+          { min: 4.5, raio: 28, teto: 32, label: 'FINAL',     sub: 'pouco espaço' },
+          { min: 6,   raio: 16, teto: 24, label: 'CLÍMAX',    sub: 'não caia' },
+          { min: 8,   raio: 11, teto: 20, label: 'MORTE SÚBITA', sub: '' },
         ],
 
         /* Teto duro. Chegar aqui sem vencedor é um defeito de ritmo, não um
          * final legítimo — e é melhor o protótipo gritar do que arrastar. */
-        hardCapMin: 32,
+        hardCapMin: 12,
 
         /* ================================================================
-         *  ⚠️  A META DE 20–25 MIN **NÃO** FOI ATINGIDA. LEIA ANTES DE AJUSTAR.
+         *  DURAÇÃO: ~6 MIN, e ela EMERGIU — não foi forçada
          * ================================================================
-         *  Com esta configuração a partida de 30 dura ~3–4 MINUTOS, não 20–25.
-         *  E o que foi medido é que nenhum número deste arquivo chega lá.
+         *  A meta inicial era 20–25 min. O caminho que eu tinha tomado pra lá
+         *  estava errado, e o dono do projeto apontou: regeneração de vida e
+         *  recuo da IA alongavam a partida MASCARANDO um TTK baixo em vez de
+         *  consertá-lo. Os dois foram desligados (estão em zero, como alavanca).
          *
-         *  Varredura com o fast-forward (`PROTO.simular`), partida inteira:
+         *  O conserto certo foi o COMBATE BASE: vida 100 → 900 (ver a nota no
+         *  bloco `fighter`). Sozinho, ele levou a partida de 30 jogadores de
+         *  1,2 min para ~6 min — cinco vezes, sem nenhum curativo.
          *
-         *      regeneração 0,  sem recuo   →  1,2 min
-         *      regeneração 40, sem recuo   →  5,2 min
-         *      regeneração 28, recuo 0,55  →  3,1 min
-         *      agressividade 0,06 + alcance 45 m  →  4,4 min
+         *      1,2 min   combate original
+         *      2–4 min   com regeneração + recuo (mascarado, descartado)
+         *      ~6 min    vida 900, sem curativo nenhum
          *
-         *  Mesmo com cura total em 3,5 s e a IA fugindo abaixo de 55% de vida,
-         *  a partida não passa de 5 minutos. A aritmética diz por quê:
+         *  SEIS MINUTOS É A DURAÇÃO NATURAL DESTE COMBATE com 30 bots, e está
+         *  registrada como resultado, não como meta atingida. Chegar aos 20–25
+         *  exigiria as mudanças estruturais da seção 10.8 do doc de passagem
+         *  (limite de detecção, vidas, equipes) — e a decisão de perseguir isso
+         *  ou aceitar partidas de 6–8 min é de gameplay, não de tuning.
          *
-         *      30 lutadores  →  ~15 brigas EM PARALELO
-         *      29 eliminações em 25 min  →  1 morte a cada 52 s
-         *      logo, cada briga precisaria passar ~13 MINUTOS sem matar ninguém
-         *
-         *  Não existe valor de HP, dano ou raio que faça uma briga desta ser
-         *  não-letal por treze minutos — e se existisse, o combate deixaria de
-         *  ser o combate que foi validado no duelo.
-         *
-         *  O QUE GOVERNA A DURAÇÃO é outra coisa: a FRAÇÃO DO TEMPO EM COMBATE.
-         *  Medida entre 43% e 60%, e ela mal se move quando se mexe em
-         *  agressividade ou distância preferida. Para 25 minutos precisaria
-         *  ficar em torno de 3–5%.
-         *
-         *  E a razão de ela não baixar é estrutural, não de ajuste:
-         *  **não há limite de informação.** Todo lutador sabe onde todos estão
-         *  (`nearestEnemy` varre a lista inteira), o lock-on aponta, e a
-         *  investida cobre a distância. Num battle royale de verdade a partida
-         *  dura porque você NÃO SABE onde as pessoas estão. Aqui, todo mundo
-         *  sempre acha alguém, e quem sempre acha alguém sempre está lutando.
-         *
-         *  Alternativas que cabem no design (decisão do dono, não minha):
-         *    1. VIDAS/STOCKS — 3 vidas por lutador triplicam as eliminações
-         *       necessárias. Multiplica por ~3, não por 20.
-         *    2. LIMITE DE INFORMAÇÃO — alcance de detecção finito, sem saber
-         *       onde está quem está longe. É o que ataca a causa.
-         *    3. EQUIPES — 30 jogadores em 6 times de 5 reduz as brigas
-         *       simultâneas de 15 pra 3.
-         *    4. ACEITAR 5–8 MIN como a duração natural deste combate, e mirar
-         *       "várias partidas curtas" em vez de uma longa.
-         *
-         *  A 4 é a que menos briga com o que já existe: o ring-out é rápido por
-         *  natureza, e foi por isso que ele foi escolhido.                    */
+         *  Ressalva importante: bots não recuam e não evitam briga. Humanos
+         *  fazem as duas coisas, então a duração com jogadores de verdade
+         *  provavelmente é MAIOR. Este número é um piso, não um teto.          */
       },
     },
   },
@@ -1663,7 +1692,12 @@ export const TUNING = {
 
     /* Recuperação no ar após levar smash — aperta no timing e para de voar. */
     recover: {
-      kiCost: 10,
+      /* 4 e não 10. O ki era o GARGALO da recuperação: medido, baratear este
+       * número sozinho levou a luta de 37 s pra 74 s — o maior salto isolado
+       * de toda a varredura de TTK. Quem acabou de levar um smash normalmente
+       * está com ki baixo justamente por ter gastado defendendo, e aí não
+       * tinha como se salvar. */
+      kiCost: 4,
       windowAfterFrames: 12,    // só pode recuperar após N frames voando
       frames: 18,
       iframes: [0, 12],
@@ -1840,7 +1874,18 @@ export const TUNING = {
     edgeDangerBand: 6.0,        // faixa da borda que pisca
     ringOutRadiusGrace: 2.0,    // margem antes de contar como fora
     ringOutY: -8.0,
-    outOfBoundsFrames: 50,      // frames fora antes de eliminar (dá tempo de voltar)
+    /* 240 frames = 4 s fora antes de eliminar.
+     *
+     * Era 50 (0,8 s), e 0,8 s não é tempo de voltar: um smash lança a 46 m/s e
+     * o corpo leva ~2,5 s só pra PARAR. Na prática, sair da arena era morte, e
+     * a luta acabava no primeiro smash bem colocado — medido, 8 de 8 lutas
+     * terminavam em ring-out em ~23 s.
+     *
+     * Com 4 s, ser lançado vira uma DISPUTA: você ainda morre se não reagir,
+     * mas recuperar no tempo certo e voar de volta salva. O ring-out continua
+     * pesado (5 de 10 mortes) — deixou de ser sentença e virou leitura, que é
+     * o que separa perícia de azar. */
+    outOfBoundsFrames: 240,
     floorY: 0,
   },
 
@@ -2075,7 +2120,10 @@ export const TUNING = {
     maxPowerChance: 0.5,
     blastChance: 0.30,
     chargeKiBelow: 28,          // carrega ki quando abaixo disto
-    recoverChance: 0.6,         // chance de se recuperar após levar smash
+    /* 0,85: um jogador competente quase sempre tenta recuperar. Com 0,6 a IA
+     * simplesmente se deixava cair em 40% dos lançamentos, e isso encurtava a
+     * luta por burrice, não por design. */
+    recoverChance: 0.85,        // chance de se recuperar após levar smash
 
     /* ================================================================
      *  RECUAR  —  a IA não tinha instinto de sobrevivência
@@ -2098,7 +2146,18 @@ export const TUNING = {
      *
      *  E isto não é "IA mais burra pra durar mais": é o comportamento que um
      *  humano tem naturalmente. A versão anterior é que era irreal. */
-    retreatBelowHealth: 0.55,   // fração da vida abaixo da qual tenta sair
+    /* ================================================================
+     *  DESLIGADO (0). Existe como alavanca, não como mecânica em uso.
+     * ================================================================
+     *  Foi criado pra alongar a partida de 30 jogadores, e o dono do projeto
+     *  vetou o caminho com razão: alongar a partida com recuo artificial
+     *  MASCARA um TTK baixo em vez de consertá-lo. O conserto certo foi o
+     *  rebalanceamento de vida (100 → 900).
+     *
+     *  Fica implementado e em zero. Se um dia o modo arena precisar de bots
+     *  com instinto de sobrevivência — que é realista, um humano recua — basta
+     *  subir daqui. Mas não como substituto de balanceamento.                */
+    retreatBelowHealth: 0,      // fração da vida abaixo da qual tenta sair
     retreatUntilHealth: 0.75,   // e volta a lutar quando chegar aqui
     retreatChance: 0.8,         // nem sempre — um pouco de teimosia é humano
     retreatSpeedMul: 1.0,
