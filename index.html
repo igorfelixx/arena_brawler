@@ -181,6 +181,26 @@
   .lock-reticle span:nth-child(3) { left: 0;  bottom: 0; border-right: none; border-top: none; }
   .lock-reticle span:nth-child(4) { right: 0; bottom: 0; border-left: none;  border-top: none; }
 
+  /* ---- seta de alvo FORA DA TELA ----
+     Nasceu da medição de escala: com 16 lutadores o alvo passa a maior parte do
+     tempo fora do enquadramento, e o retículo simplesmente sumia. Ver setLock()
+     em src/ui/hud.js. */
+  .lock-arrow {
+    position: fixed; left: 0; top: 0;
+    display: flex; align-items: center; gap: 4px;
+    color: rgba(120, 220, 255, .95);
+    filter: drop-shadow(0 0 6px rgba(80,200,255,.9));
+    opacity: 0; transition: opacity .12s linear;
+    will-change: transform;
+    pointer-events: none;
+  }
+  .lock-arrow b {
+    font: 600 12px/1 ui-monospace, monospace;
+    letter-spacing: .5px;
+    color: rgba(200, 240, 255, .95);
+    text-shadow: 0 1px 3px rgba(0,0,0,.9);
+  }
+
   .lock-state {
     position: fixed; left: 50%; bottom: 76px;
     transform: translateX(-50%);

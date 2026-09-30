@@ -49,6 +49,14 @@ export class HUD {
       <div class="lock-reticle" id="lockReticle">
         <span></span><span></span><span></span><span></span>
       </div>
+      <div class="lock-arrow" id="lockArrow">
+        <svg viewBox="0 0 40 24" width="40" height="24" aria-hidden="true">
+          <path d="M2 12 H28 M20 4 L30 12 L20 20" fill="none"
+                stroke="currentColor" stroke-width="3"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <b id="lockArrowLabel"></b>
+      </div>
       <div class="lock-state" id="lockState"></div>
 
       <div class="telemetry" id="telemetry"></div>
@@ -69,6 +77,8 @@ export class HUD {
     this.edgeWarn = $('edgeWarn');
     this.stats = $('stats');
     this.lockReticle = $('lockReticle');
+    this.lockArrow = $('lockArrow');
+    this.lockArrowLabel = $('lockArrowLabel');
     this.lockState = $('lockState');
     this.aliveEl = $('alive');
     this.trainingEl = $('training');
@@ -109,22 +119,77 @@ export class HUD {
   resetCombo() { this._comboCount = 0; this.combo.className = 'combo'; }
 
   /**
-   * Marcador sobre o alvo travado.
+   * Marcador sobre o alvo travado — e, quando ele sai da tela, uma SETA na
+   * borda apontando pra onde ele está.
+   *
+   * ---------------------------------------------------------------------
+   * POR QUE A SETA EXISTE: a legibilidade quebra na ESCALA, não no 1×1
+   * ---------------------------------------------------------------------
+   * A regra anterior era "fora da tela o marcador não ajuda, some com ele" — e
+   * com 2 lutadores está certa: vocês estão sempre perto, e um marcador preso
+   * numa borda só polui.
+   *
+   * Com 16 é o oposto. Medido: 25,8% do tempo sem NINGUÉM num raio de 12 m, e
+   * distância mediana de 11 m ao mais próximo. Numa captura com 16 lutadores a
+   * tela não mostrava uma única pessoa — só cenário — enquanto o HUD dizia
+   * "LOCK-ON" e o canto dizia "dist 58,4 m". O jogador fica travado em alguém
+   * que ele não tem como achar.
+   *
+   * A seta custa uma div e resolve a pergunta "pra onde eu vou?", que é a
+   * pergunta central de um brawler de arena com muita gente. A DISTÂNCIA junto
+   * é o que diferencia "ele está logo ali" de "ele está do outro lado".
+   *
    * @param {boolean} locked
-   * @param {{x:number,y:number,onScreen:boolean}|null} screen  projeção do alvo
+   * @param {{x:number,y:number,onScreen:boolean}|null} screen
+   * @param {number} [dist]  distância em metros até o alvo
    */
-  setLock(locked, screen) {
+  setLock(locked, screen, dist = null) {
     this.lockState.textContent = locked ? 'LOCK-ON' : 'LIVRE  ·  Q trava';
     this.lockState.className = 'lock-state' + (locked ? '' : ' free');
 
-    // Fora da tela o marcador não ajuda — e ainda aparece grudado numa borda
-    // em posição errada, porque a projeção atrás da câmera espelha o ponto.
-    if (!locked || !screen || !screen.onScreen) {
+    if (!locked || !screen) {
       this.lockReticle.style.opacity = 0;
+      this.lockArrow.style.opacity = 0;
       return;
     }
-    this.lockReticle.style.opacity = 1;
-    this.lockReticle.style.transform = `translate(${screen.x}px, ${screen.y}px) translate(-50%, -50%)`;
+
+    if (screen.onScreen) {
+      this.lockArrow.style.opacity = 0;
+      this.lockReticle.style.opacity = 1;
+      this.lockReticle.style.transform =
+        `translate(${screen.x}px, ${screen.y}px) translate(-50%, -50%)`;
+      return;
+    }
+
+    /* FORA DA TELA: gruda a seta na borda, na direção do alvo.
+     *
+     * Projeção de ponto ATRÁS da câmera vem espelhada (a divisão por w negativo
+     * inverte) — por isso `projectToScreen` devolve `onScreen` calculado por
+     * produto escalar, e por isso viramos o vetor quando o alvo está atrás.
+     * Sem isso a seta aponta exatamente pro lado errado, que é pior do que não
+     * ter seta. */
+    this.lockReticle.style.opacity = 0;
+
+    const cx = innerWidth / 2, cy = innerHeight / 2;
+    let dx = screen.x - cx, dy = screen.y - cy;
+    if (screen.behind) { dx = -dx; dy = -dy; }
+
+    const len = Math.hypot(dx, dy) || 1;
+    dx /= len; dy /= len;
+
+    // Encosta na borda com uma margem, pra seta não ficar cortada pela metade.
+    const margem = 64;
+    const escala = Math.min((cx - margem) / Math.abs(dx || 1e-6),
+                            (cy - margem) / Math.abs(dy || 1e-6));
+    const x = cx + dx * escala, y = cy + dy * escala;
+    const ang = Math.atan2(dy, dx) * 180 / Math.PI;
+
+    this.lockArrow.style.opacity = 1;
+    this.lockArrow.style.transform =
+      `translate(${x}px, ${y}px) translate(-50%, -50%) rotate(${ang}deg)`;
+    this.lockArrowLabel.textContent = dist != null ? `${dist.toFixed(0)}m` : '';
+    // O rótulo gira de volta, senão a distância aparece de cabeça pra baixo.
+    this.lockArrowLabel.style.transform = `rotate(${-ang}deg)`;
   }
 
   /* ================================================================== */

@@ -1641,6 +1641,43 @@ export const TUNING = {
     hitstopShakeAmp: 0.05,      // vibração DURANTE o congelamento
 
     /* ================================================================
+     *  ALCANCE DO HITSTOP  —  o bloqueador da escala
+     * ================================================================
+     *  O hitstop era GLOBAL: um contador só, e `juice.hitstop()` pegando o
+     *  MAIOR entre o atual e o novo. Com dois lutadores isso é perfeito — eles
+     *  revezam, e o congelamento pontua cada troca.
+     *
+     *  Com muitos, vira outra coisa. Medido no navegador, % do tempo com a
+     *  simulação inteira parada:
+     *
+     *       2 lutadores   20,6%     ← o jogo validado. Isto é "gostoso".
+     *       4 lutadores   88,7%
+     *       8 lutadores   36,2%
+     *      16 lutadores   77,0%     ← 12 janelas de 2 s, nenhuma abaixo de 57%
+     *
+     *  Com 16, a simulação rodava 0,18 passo por frame de render. O jogo não
+     *  estava lento por falta de CPU (a simulação custa 0,3 ms) — estava PARADO,
+     *  porque sempre havia alguém batendo em alguém, e o congelamento global
+     *  nunca soltava. É um defeito de DESIGN que se disfarça de problema de
+     *  performance, e não apareceria nunca num teste 1×1.
+     *
+     *  A raiz é conceitual: hitstop é propriedade de uma TROCA, não do mundo.
+     *  Não faz sentido o seu combo congelar porque dois desconhecidos do outro
+     *  lado da arena se acertaram.
+     *
+     *    'player'    (padrão) os DOIS envolvidos congelam sempre; a TELA só
+     *                congela quando você é um dos dois. Em 1×1 é idêntico ao
+     *                comportamento antigo — toda troca é sua. Com 16, só as
+     *                suas trocas param a tela, e as dos outros congelam apenas
+     *                os corpos deles.
+     *    'fighters'  ninguém congela a tela. Mais correto pra espectador/rede,
+     *                menos impactante pra quem joga.
+     *    'global'    o comportamento antigo. Só pra comparar lado a lado —
+     *                não use acima de 2 lutadores.
+     */
+    hitstopScope: 'player',
+
+    /* ================================================================
      *  HITSTOP POR CATEGORIA  (§22)
      * ================================================================
      *  Cada golpe carregava um `hitstop` solto (4, 6, 16, 18…) e não havia como

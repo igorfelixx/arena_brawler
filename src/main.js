@@ -33,6 +33,7 @@ import { FixedLoop } from './core/loop.js';
 import { Input } from './core/input.js';
 import { Juice } from './core/juice.js';
 import { DebugPanel } from './core/debugPanel.js';
+import { prof } from './core/profiler.js';
 import { loadCharacter, loadArenaModel } from './assets/registry.js';
 import { Arena } from './world/arena.js';
 import { CombatCamera } from './world/camera.js';
@@ -242,10 +243,40 @@ let roundOverTimer = 0;
 const playerCmd = emptyCommand();
 const moveBasis = { forward: new THREE.Vector3(), right: new THREE.Vector3() };
 
+/* ==========================================================================
+ *  CONGELAR UMA TROCA  —  o ponto único que decide quem para
+ * ==========================================================================
+ *  Todo hitstop do jogo passa por aqui. Ter UM lugar é o que impede a regra de
+ *  divergir entre os seis sítios que congelam alguma coisa (acerto, guarda,
+ *  Z-Counter, sway, vanish, grab, trade) — e foi divergência assim que deixou
+ *  o congelamento global passar despercebido até a medição de escala.
+ *
+ *  Os DOIS corpos envolvidos sempre param: é o que vende o peso, e é local.
+ *  A TELA só para conforme `juice.hitstopScope`:
+ *
+ *      'player'   só quando você é um dos dois  (padrão)
+ *      'fighters' nunca
+ *      'global'   sempre — o comportamento antigo, só pra comparar
+ *
+ *  Em 1×1 'player' é idêntico ao antigo, porque toda troca é sua. Com 16, as
+ *  brigas dos outros deixam de parar o seu jogo.
+ * ========================================================================== */
+function congelarTroca(a, b, frames) {
+  if (!frames) return;
+  a?.applyHitstop?.(frames);
+  b?.applyHitstop?.(frames);
+
+  const escopo = TUNING.juice.hitstopScope;
+  if (escopo === 'global' || (escopo === 'player' && (a === player || b === player))) {
+    juice.hitstop(frames);
+  }
+}
+
 const ctx = {
   arena, vfx, juice, projectiles, beam, moveBasis,
   onHit, onVanish, onClash, onDashImpact, onZCounter, onSway,
   onGrab, onTradeClash, onTradeWin,
+  congelarTroca,
   /* Chamado pelo Fighter no início de CADA golpe. É o que permite trocar de
    * alvo no meio do combo: a direção que você segura escolhe em quem bate. */
   pickTarget: (f, cmd) => pickAttackTarget(f, fighters, cmd, moveBasis, f.target),
@@ -256,7 +287,16 @@ const ctx = {
  * ========================================================================== */
 async function boot() {
   try {
-    const nInimigos = Math.max(1, TUNING.match.opponents);
+    /* Nº de lutadores pela URL: `?n=16` sobe 16 no total.
+     *
+     * Existe porque a escada de escala (2→4→8→16) precisa de RELOAD — os
+     * personagens são carregados no boot — e editar `tuning.js` entre cada
+     * medição é lento e dá margem a medir com o valor errado. Um parâmetro na
+     * URL torna cada degrau uma aba nova, reproduzível e comparável. */
+    const nURL = parseInt(new URLSearchParams(location.search).get('n') || '', 10);
+    const nInimigos = Number.isFinite(nURL) && nURL >= 2
+      ? nURL - 1
+      : Math.max(1, TUNING.match.opponents);
     loadingMsg.textContent = `carregando ${nInimigos + 1} lutadores…`;
     const chars = await Promise.all([
       loadCharacter('fighter_default'),
@@ -413,7 +453,8 @@ function onHit({ attacker, victim, move, result, point, projectile }) {
   // O banner fica no evento `guardShattered` (drainEvents), porque a guarda
   // também arrebenta por TEMPO — e aí não há acerto nenhum pra passar por aqui.
   if (result === 'guardexhaust') {
-    juice.impact({ hitstop: 12, shake: 0.5, zoom: 0.6 });
+    congelarTroca(attacker, victim, 12);
+    juice.impact({ shake: 0.5, zoom: 0.6 });
     vfx.burst(point, { count: 34, color: 0x9fd0ff, speed: 11, life: 0.45 });
     vfx.ring(point, { billboard: true, color: 0x9fd0ff, from: 0.4, to: 7, life: 0.4 });
     if (isPlayerAttacker) hud.addCombo(); else hud.resetCombo();
@@ -424,14 +465,16 @@ function onHit({ attacker, victim, move, result, point, projectile }) {
    * um som visual PRÓPRIO — se parecesse um acerto normal, o atacante acharia
    * que tinha ganhado o turno e comeria o golpe que vem. */
   if (result === 'armor') {
-    juice.impact({ hitstop: 8, shake: 0.3 });
+    congelarTroca(attacker, victim, 8);
+    juice.impact({ shake: 0.3 });
     vfx.burst(point, { count: 14, color: 0xffc98a, speed: 6, life: 0.3 });
     vfx.ring(point, { billboard: true, color: 0xffb060, from: 0.3, to: 3.2, life: 0.3 });
     return;
   }
 
   if (result === 'guard') {
-    juice.impact({ hitstop: hitstopFor(move, { guarded: true }), shake: move.shake * 0.4 });
+    congelarTroca(attacker, victim, hitstopFor(move, { guarded: true }));
+    juice.impact({ shake: move.shake * 0.4 });
     vfx.burst(point, { count: 10, color: 0x9fd0ff, speed: 5, life: 0.25 });
     vfx.ring(point, { billboard: true, color: 0x9fd0ff, from: 0.3, to: 2.4, life: 0.28 });
     return;
@@ -445,8 +488,8 @@ function onHit({ attacker, victim, move, result, point, projectile }) {
    * recibo. */
   const perfect = !!move.isPerfect;
 
+  congelarTroca(attacker, victim, hitstopFor(move, { perfect }));
   juice.impact({
-    hitstop: hitstopFor(move, { perfect }),
     shake: perfect ? TUNING.smashCharge.perfectShake : move.shake,
     zoom: perfect ? 1.4 : (move.punchZoom ? 1 : (move.causesBlowaway ? 0.6 : 0)),
   });
@@ -598,7 +641,10 @@ function drainEvents(f) {
         vfx.dust(p, { count: 30, speed: 7 * (0.5 + power), radius: 1.4, life: 1.2 });
         vfx.ring(p, { color: 0xd8c8a0, from: 1, to: 16 * (0.4 + power), life: 0.6 });
         vfx.burst(p, { count: 24, color: 0xffd9a0, speed: 10, life: 0.5 });
-        juice.impact({ hitstop: 8, shake: 0.5 * (0.4 + power), zoom: 0.7 });
+        /* Bater no chao e um evento DE UM corpo. Congelava a tela pra todo
+          * mundo — e com 16 lutadores sempre tem alguem batendo no chao. */
+        congelarTroca(f, null, 8);
+        juice.impact({ shake: 0.5 * (0.4 + power), zoom: 0.7 });
         break;
       }
 
@@ -628,7 +674,8 @@ function drainEvents(f) {
         const p = f.position.clone(); p.y += 0.9;
         vfx.burst(p, { count: 30, color: 0xfff0c0, speed: 12, life: 0.45 });
         vfx.ring(p, { billboard: true, color: 0xffe3a0, from: 0.5, to: 8, life: 0.4 });
-        juice.impact({ hitstop: 10, shake: 0.5, zoom: 0.5 });
+        congelarTroca(f, e.attacker, 10);
+        juice.impact({ shake: 0.5, zoom: 0.5 });
         if (f === opponent) hud.showBanner('SE SOLTOU', 800);
         else if (f === player) hud.showBanner('VOCÊ SE SOLTOU', 800);
         break;
@@ -713,7 +760,8 @@ function drainEvents(f) {
         vfx.burst(p, { count: 80, color: 0xfff0b0, speed: 20, life: 0.8 });
         vfx.ring(p, { billboard: true, color: 0xffe08a, from: 0.6, to: 20, life: 0.8 });
         vfx.ring(p, { color: f.auraColor, from: 1, to: 14, life: 0.7 });
-        juice.impact({ hitstop: 10, shake: 0.9, zoom: 1.1 });
+        congelarTroca(f, null, 10);
+        juice.impact({ shake: 0.9, zoom: 1.1 });
         juice.slowMo(20, 0.45);
         hud.showBanner(f === player ? 'MAX POWER!' : `${f.name}: MAX POWER`, 1400,
           f === player ? 'big' : 'warn');
@@ -754,7 +802,8 @@ function drainEvents(f) {
         const VB = TUNING.defense.vanishBattle;
         for (let i = 0; i < 5; i++) vfx.afterimage(f.char, f.auraColor);
         vfx.burst(f.position, { count: 30, color: 0xffffff, speed: 14, life: 0.4 });
-        juice.impact({ hitstop: VB.hitstop, shake: VB.shake });
+        congelarTroca(f, e.foe, VB.hitstop);
+        juice.impact({ shake: VB.shake });
         juice.slowMo(VB.slowMoFrames, VB.slowMoScale);
         if (f === player) hud.showBanner(`CONTRA-VANISH  ${e.exchange}`, 700, 'big');
         break;
@@ -772,7 +821,8 @@ function drainEvents(f) {
         const p = f.position.clone(); p.y += 0.9;
         vfx.burst(p, { count: 30, color: 0xbfe4ff, speed: 11, life: 0.4 });
         vfx.ring(p, { billboard: true, color: 0x9fd0ff, from: 0.4, to: 6, life: 0.4 });
-        juice.impact({ hitstop: 12, shake: 0.4, zoom: 0.5 });
+        congelarTroca(f, e.attacker, 12);
+        juice.impact({ shake: 0.4, zoom: 0.5 });
         if (f === player) hud.showBanner('ESCAPOU!', 900, 'big');
         else { hud.showBanner('ELE ESCAPOU', 900, 'warn'); hud.resetCombo(); }
         break;
@@ -973,6 +1023,9 @@ function projectToScreen(worldPos) {
     x: (_proj.x * 0.5 + 0.5) * innerWidth,
     y: (-_proj.y * 0.5 + 0.5) * innerHeight,
     onScreen: inFront && Math.abs(_proj.x) <= 1.1 && Math.abs(_proj.y) <= 1.1,
+    /* A seta de fora-da-tela precisa saber disto: ponto atras da camera vem
+     * ESPELHADO da projecao, e apontaria exatamente pro lado errado. */
+    behind: !inFront,
   };
 }
 
@@ -1034,7 +1087,12 @@ function announceKO(loser, reason) {
   // Com vários lutadores, uma eliminação NÃO acaba a partida — só tira um.
   // O fim é decidido no fim do step, quando sobra um vivo.
   hud.showBanner(`${reason}: ${loser.name}`, 1200, loser === player ? 'warn' : '');
-  juice.impact({ hitstop: 12, shake: 0.7, zoom: 0.8 });
+  /* Uma eliminacao e um momento — mas com 16 lutadores sao 15 deles numa
+   * partida. Congelar a tela em cada uma transformaria o fim de jogo num
+   * soluco continuo, entao segue a mesma regra do resto: so para a tela se
+   * for VOCE. */
+  congelarTroca(loser, null, 12);
+  juice.impact({ shake: 0.7, zoom: 0.8 });
 
   loser.char.root.visible = false;
   vfx.burst(loser.position, { count: 70, color: 0xffffff, speed: 18, life: 0.9 });
@@ -1165,14 +1223,28 @@ function step(dt) {
 
   if (!player || !opponent) return;
 
-  // Congelado no impacto: nada de gameplay anda.
-  if (juice.frozen) return;
+  /* Congelamento DA TELA. Só existe quando `hitstopScope` deixa — ver a nota
+   * longa em `juice.hitstopScope`. Com escopo 'fighters' este `return` nunca
+   * acontece e cada corpo congela sozinho, dentro do próprio `update()`. */
+  if (juice.frozen && TUNING.juice.hitstopScope !== 'fighters') return;
 
   combatCam.getMoveBasis(moveBasis);
 
+  /* ================================================================
+   *  A PARTIR DAQUI É SIMULAÇÃO PURA — o que decide a escala.
+   * ================================================================
+   *  Tudo entre `sim.begin` e `sim.end` é CPU: máquinas de estado, IA,
+   *  resolução de acerto, física. É o único custo que se pode afirmar fora
+   *  desta máquina, e é o único que PORTA (no Unreal esse trabalho continua
+   *  existindo, com outro nome). Ver o cabeçalho de profiler.js. */
+  prof.begin('SIMULAÇÃO');
+
+  prof.begin('lutadores');
   player.update(dt, buildPlayerCommand(), ctx);
   consumePlayerInputs();
+  prof.end('lutadores');
 
+  prof.begin('IA');
   for (const b of bots) {
     if (!b.f.alive) continue;
 
@@ -1190,6 +1262,7 @@ function step(dt) {
     if (!b.f.target || !b.f.target.alive) b.f.target = nearestEnemy(b.f, fighters);
     b.f.update(dt, b.update(dt, ctx), ctx);
   }
+  prof.end('IA');
 
   if (emTreino()) manterBonecos();
 
@@ -1199,23 +1272,28 @@ function step(dt) {
    * já não o vê como atacante — e o golpe do vencedor acerta pelo caminho
    * NORMAL, passando por guarda, vanish e Z-Counter sem nada reimplementado.
    * Invertida, a ordem faria os dois se acertarem antes de a troca existir. */
-  resolveTrade(fighters, ctx);
+  prof.time('trades', () => resolveTrade(fighters, ctx));
+  prof.time('melee', () => resolveMelee(fighters, ctx));
 
-  resolveMelee(fighters, ctx);
+  prof.begin('dash+projéteis');
   // Dash-contra-dash (clash) tem regra própria e é testado depois do impacto
   // normal, senão um dos dois seria tratado como tromba comum.
   resolveDashImpact(fighters, ctx);
   resolveDashClash(fighters, ctx);
   projectiles.update(dt, fighters, ctx);
   beam.update(dt, fighters, ctx);
-  resolveOverlap(fighters);
+  prof.end('dash+projéteis');
+
+  prof.time('overlap', () => resolveOverlap(fighters));
 
   if (!emTreino()) arena.update(dt);
 
+  prof.begin('eventos+ringout');
   for (const f of fighters) {
     drainEvents(f);
     checkRingOut(f);
   }
+  prof.end('eventos+ringout');
 
   // O alvo do jogador morreu ou saiu: reengata no mais próximo sem pedir nada.
   if (player.alive && (!player.target || !player.target.alive)) {
@@ -1225,6 +1303,8 @@ function step(dt) {
     if (novo) hud.showBanner(`ALVO: ${novo.name}`, 600);
   }
   opponent = player.target;
+
+  prof.end('SIMULAÇÃO');
 
   // Fim de partida: sobrou um.
   const vivos = fighters.filter((f) => f.alive);
@@ -1256,8 +1336,14 @@ function render(alpha, dtReal) {
      * propósito: congelar 100% parece travamento, não impacto. */
     const animScale = juice.frozen ? 0 : 1;
 
+    prof.begin('anim+aura/lutador');
     for (const f of fighters) {
-      f.char.update(dt * animScale * (f.state === S.KNOCKDOWN ? 0.6 : 1));
+      /* A POSE congela junto com o corpo (armadilha 8.21: "hitstop que não
+       * congela a animação não é hitstop"). Agora é POR LUTADOR: quem está na
+       * troca para, quem está do outro lado da arena continua se mexendo — que
+       * é o ponto inteiro de o hitstop ter deixado de ser global. */
+      const paradoNaTroca = f.hitstopFrames > 0 ? 0 : 1;
+      f.char.update(dt * animScale * paradoNaTroca * (f.state === S.KNOCKDOWN ? 0.6 : 1));
       f.aura?.update(dt, vfx.elapsed);
 
       if (f.aura && f.aura.intensity > 0.3) {
@@ -1273,14 +1359,16 @@ function render(alpha, dtReal) {
         f.trail.update(socket.getWorldPosition(new THREE.Vector3()), camera.position);
       }
     }
+    prof.end('anim+aura/lutador');
 
     combatCam.update(dt, player, opponent, juice);
 
     const look = input.takeMouseDelta();
     if (look.x || look.y) combatCam.addLookInput(look.x, look.y);
 
-    vfx.update(dt, player.velocity.length());
+    prof.time('vfx.update', () => vfx.update(dt, player.velocity.length()));
     arena.render(dt, vfx.elapsed);
+    prof.begin('hud');
     hud.update(dt, {
       player, opponent, arena, loop, fighters,
       treino: treino().nome,
@@ -1303,14 +1391,22 @@ function render(alpha, dtReal) {
     hud.setLock(
       lockedOn,
       opponent && opponent.alive ? projectToScreen(opponent.center(_toTarget.clone())) : null,
+      opponent && opponent.alive ? player.position.distanceTo(opponent.position) : null,
     );
+    prof.end('hud');
   }
 
   bloom.strength = TUNING.juice.bloomStrength;
   bloom.radius = TUNING.juice.bloomRadius;
   bloom.threshold = TUNING.juice.bloomThreshold;
 
-  composer.render();
+  /* RENDER = GPU. Num navegador headless isto rasteriza por SOFTWARE, e o
+   * número não vale nem como estimativa — está aqui só pra que a comparação
+   * "simulação vs render" exista na máquina de quem for jogar de verdade. */
+  prof.time('RENDER(GPU)', () => composer.render());
+
+  // Fecha o frame do medidor. UMA vez, no fim — ver o comentário em frame().
+  prof.frame();
 }
 
 /* ==========================================================================
@@ -1355,4 +1451,15 @@ window.PROTO = {
   resolveTrade,
   resolveDashImpact, resolveDashClash, resolveOverlap,
   moveCharge, hitstopFor,
+
+  /* Medidor de custo por sistema. Desligado por padrão (overhead zero).
+   *     PROTO.prof.enabled = true;  // …deixe rodar…
+   *     PROTO.prof.report()
+   * Ver profiler.js sobre por que SIMULAÇÃO e RENDER são medidos separados. */
+  prof,
+
+  /* Exposto pra instrumentação de ESCALA: sem isto o jogador fica parado
+   * durante um teste de estresse e a medição vale N−1 lutadores, não N.
+   * Com ele dá pra pôr uma IA no jogador e medir a arena cheia de verdade. */
+  BotController,
 };

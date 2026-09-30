@@ -1162,6 +1162,112 @@ Sonic Sway ou um grab que a guarda para, sem tocar em código.
 
 ---
 
+## 10.6 ESCALA — a pendência nº 1, finalmente medida
+
+Branch `combate-bt3-like`. `?n=2|4|8|16` na URL escolhe o nº de lutadores;
+`tools/escala.js` é o harness; `src/core/profiler.js` mede.
+
+**Método:** simulação e render medidos SEPARADOS. Só a simulação é comparável
+entre máquinas e é a única que porta — o render aqui é rasterizado por software
+e o número não vale nem como estimativa. Todas as passadas de estresse rodam
+com os lutadores imortais, senão a luta acaba no meio e o custo medido é o de
+uma arena vazia (aconteceu: com 4 mortais, a simulação "custou" MENOS que com 2).
+
+### Custo de simulação (CPU) — arena cheia, 22–25 s por degrau
+
+| lutadores | média | p95 | max | % do orçamento de 16,7 ms (p95) |
+|---|---|---|---|---|
+| 2 | 0,36 ms | 1,5 | 2,9 | 9% |
+| 4 | 0,38 ms | 1,9 | 7,8 | 11% |
+| 8 | 0,95 ms | 3,4 | 4,5 | 20% |
+| **16** | **1,31 ms** | **4,5** | 20,2 | **27%** |
+
+**Escala LINEAR, não quadrática.** Os laços N² (`melee` 0,053 · `trades` 0,009 ·
+`overlap` 0,013 ms com 16) são irrelevantes — otimizá-los seria trabalho jogado
+fora. Os maiores custos de simulação são `eventos+ringout` (0,87 ms) e a IA
+(0,27 ms); o primeiro é VFX sendo instanciado por evento, não lógica.
+
+Extrapolando linearmente, 32 lutadores ≈ 2,6 ms de média e ~9 ms de p95 — cabe,
+apertado. **O gargalo de 20–30 não vai ser a CPU da simulação.**
+
+### 8.31 ⚠️ HITSTOP GLOBAL É UM BUG DE ESCALA DISFARÇADO DE PERFORMANCE
+
+O achado que importa, e que nenhum teste 1×1 encontraria.
+
+`juice.hitstopFrames` era um contador ÚNICO pro mundo inteiro. Com dois
+lutadores é perfeito: eles revezam, e o congelamento pontua cada troca. Medido,
+% do tempo com a simulação inteira parada:
+
+| lutadores | tela congelada | passos de simulação por frame |
+|---|---|---|
+| 2 | 20,6% | — |
+| 4 | 88,7% | 0,18 |
+| 16 | 77,0% | 0,20 |
+
+Com 16, o jogo rodava **0,2 passo de simulação por frame de render**. Não estava
+lento por falta de CPU — a simulação custa 1,3 ms. Estava **parado**, porque
+sempre havia alguém batendo em alguém e o congelamento global nunca soltava.
+
+A raiz é conceitual: **hitstop é propriedade de uma TROCA, não do mundo.** Não
+faz sentido o seu combo congelar porque dois desconhecidos se acertaram do outro
+lado da arena.
+
+Correção (`juice.hitstopScope`): os dois corpos envolvidos sempre congelam; a
+TELA só congela quando o jogador é um dos dois. Em 1×1 é idêntico ao antigo —
+toda troca é sua, então o feeling validado não mudou.
+
+| escopo | tela congelada (16) | passos/frame |
+|---|---|---|
+| `global` (antigo) | 67,7% | 0,38 |
+| **`player` (padrão)** | **13,4%** | **0,73** |
+| `fighters` | 0% | 0,69 |
+
+Achar todos os sítios importou: além do acerto, congelavam a tela o `groundSlam`,
+o `poiseBreak`, o `maxPowerStart`, o `counterVanish`, o rebate de blast e o KO —
+todos eventos DE UM corpo. Centralizar em `ctx.congelarTroca()` foi o que fechou
+a conta (a primeira tentativa só trocou 74,8% por 72,5%, porque eu tinha perdido
+esses seis).
+
+**No Unreal:** não use um `UGameplayStatics::SetGlobalTimeDilation` pra hitstop.
+Com mais de dois personagens ele produz exatamente este defeito. Pause os dois
+`ACharacter` envolvidos (custom time dilation por ator), e reserve a dilatação
+global pra momentos de partida (KO final, ultimate cinematográfico).
+
+### Legibilidade e balanceamento com 16 — arena cheia, 30 s
+
+| métrica | valor |
+|---|---|
+| distância ao alvo | mediana **1,9 m** (p10 1,1 · p90 17,4) |
+| tamanho do alvo na tela | mediana **705 px** · só 0,8% abaixo de 40 px |
+| outros lutadores a ≤ 30 m | média **2,4** · máx 10 |
+| tempo com 2+ atacantes em cima de você | **0,5%** · máx 2 |
+
+Ou seja: **não vira bagunça.** Os lutadores emparelham com o vizinho mais
+próximo e brigam a ~2 m; o medo de "três pessoas te combando ao mesmo tempo"
+(seção 11) não se materializou — 0,5% do tempo com dois, nunca três.
+
+Partida real de 40 s com 16: 12 eliminações, primeira aos 15,2 s, **4 por
+ring-out contra 8 por nocaute**.
+
+### 8.32 O harness mentiu mais duas vezes (agora são cinco)
+
+1. medir sem imortalidade fez a simulação com 4 lutadores parecer **mais barata**
+   que com 2, porque metade da janela mediu uma arena com um sobrevivente
+2. a mesma falta de imortalidade produziu "alvo a 66,5 m, 20 px na tela, jogo
+   ilegível" — era o fim de round, com quase todos mortos. Com a arena
+   comprovadamente cheia o número é 1,9 m e 705 px. **Cheguei a escrever a
+   conclusão errada antes de conferir.**
+
+A proteção que ficou no harness: `medicaoValida` compara os vivos DURANTE a
+medição com N e marca a passada como inválida se a arena esvaziou.
+
+E uma sexta, fora do navegador: `node --check` num arquivo ESM falha sempre, e
+`node --check "$f" | head && echo OK` imprime OK de qualquer jeito porque o
+`head` come o código de saída. Meu "todos parseiam" da passada anterior era
+falso.
+
+---
+
 ## 11. O que ainda NÃO foi validado
 
 **Esta seção é a mais importante para não portar um erro.**

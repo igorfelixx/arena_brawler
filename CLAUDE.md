@@ -179,10 +179,22 @@ navegador: 7 golpes aparados esgotam a guarda; **1 smash abre na hora**.
 
 ### Pendências conhecidas — pergunte ao dono antes de assumir
 
-1. **Escala.** `match.opponents` está em 2 (3 lutadores) porque foi o que deu pra
-   verificar: o navegador headless usado nos testes renderiza por software e
-   travou com 5. O teto real na máquina dele é **desconhecido** — é informação
-   valiosa, porque a escala de 20–30 é o maior risco do projeto.
+1. ~~**Escala.**~~ **MEDIDA.** `?n=2|4|8|16` na URL; harness em `tools/escala.js`,
+   medidor em `src/core/profiler.js` (separa SIMULAÇÃO de RENDER — só a primeira
+   é comparável entre máquinas). Resultado: a simulação escala **linear**, não
+   quadrática — 16 lutadores custam **1,31 ms** de média (p95 4,5 = 27% do
+   orçamento de um frame). Os laços N² são irrelevantes (`melee` 0,05 ms).
+   32 lutadores devem caber. **O gargalo não é a CPU da simulação.**
+
+   O que ERA o gargalo: o **hitstop global**. Com 16, o jogo passava 77% do tempo
+   congelado e rodava 0,2 passo de simulação por frame — parado, não lento.
+   Corrigido com `juice.hitstopScope` (padrão `player`): os dois corpos da troca
+   congelam sempre, a tela só congela se você for um deles. Em 1×1 é idêntico ao
+   comportamento validado. Ver armadilha 8.31 do doc de passagem.
+
+   **Ainda desconhecido:** o teto de RENDER na máquina dele. Aqui é rasterizado
+   por software e o número não vale. É a única medição de escala que falta, e só
+   ele pode fazer.
 2. **Martelar botão AINDA GANHA — e a causa medida não é a que se supunha.**
    `combo.cancelOnBlock: false` foi implementado e faz o que promete (o
    defensor sai +8 frames), mas medindo o saldo de martelar por 45 s contra
@@ -231,6 +243,16 @@ navegador: 7 golpes aparados esgotam a guarda; **1 smash abre na hora**.
 4. **Os números novos da guarda** (`staminaPerHit: 13`, `breakStunFrames: 42`,
    `blockstun` agora vivo) nunca foram jogados por humano. 7 golpes pra esgotar
    é um palpite coerente, não um valor validado.
+
+5. **Com 16 lutadores NÃO vira bagunça** (medido, arena cheia 30 s): alvo a
+   1,9 m de mediana, 705 px na tela, 2,4 outros lutadores num raio de 30 m, e
+   apenas **0,5% do tempo com dois atacantes em cima de você** (nunca três). O
+   medo registrado na seção 11 — "o que acontece quando três pessoas te combam
+   ao mesmo tempo" — não se materializou com a IA atual. Com humanos, aberto.
+
+   Sinal de balanceamento a olhar: numa partida de 16, **4 eliminações por
+   ring-out contra 8 por nocaute**. Pra um jogo cuja identidade é o ring-out,
+   a proporção está invertida.
 
 **Não validado por playtest:** a maior parte dos números de `src/tuning.js`.
 Ver seção 11 do documento de passagem antes de tratá-los como verdade.
