@@ -184,6 +184,15 @@ export function resolveTrade(fighters, ctx) {
     if (!a.alive || a.attackPhase !== 'active' || !a.move) continue;
 
     for (let j = i + 1; j < fighters.length; j++) {
+      /* `a` é RECHECADO aqui dentro, e não só no laço de fora.
+       *
+       * Se `a` perdeu uma troca contra um `b` anterior, ele foi pra HITSTUN e
+       * `_enter` zerou `a.move`. O laço continuava pro próximo `j` e lia
+       * `a.move.priority` num null. Crash — e um que só existe com três ou
+       * mais lutadores no alcance de troca, então nenhum teste 1×1 o pegaria.
+       * Apareceu na primeira varredura de 30 lutadores. */
+      if (a.attackPhase !== 'active' || !a.move) break;
+
       const b = fighters[j];
       if (!b.alive || b.attackPhase !== 'active' || !b.move) continue;
 

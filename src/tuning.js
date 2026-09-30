@@ -258,6 +258,32 @@ export const TUNING = {
      *
      * 18 m/s com arrasto 1.35 ≈ 13 m de separação: longe o bastante pra sair
      * do alcance do rush (2.6 m) e perto o bastante pra valer perseguir. */
+    /* ================================================================
+     *  REGENERAÇÃO DE VIDA  —  zero no duelo, é o motor do modo ARENA
+     * ================================================================
+     *  Medido: 30 lutadores produzem 52 de dano POR SEGUNDO na arena. A
+     *  reserva inteira de vida (30 × 140 = 4200) é consumida em 81 segundos.
+     *  Para uma partida de 25 minutos seria preciso derrubar isso pra ~2,8/s —
+     *  ou dar 2500 de vida a cada um, que é a "sessão de espancamento
+     *  administrativo" que o design veta explicitamente.
+     *
+     *  A causa não é o HP ser baixo. É que 30 lutadores ficam em combate
+     *  ININTERRUPTO, e o dano só ACUMULA. Num battle royale de 25 minutos a
+     *  maior parte do tempo não é briga: você luta, sobrevive, se afasta, se
+     *  recompõe. Sem recomposição, a soma dos danos mata todo mundo rápido
+     *  independentemente do tamanho da barra.
+     *
+     *  Daí a regeneração FORA DE COMBATE. Ela não deixa ninguém mais durão
+     *  numa troca — o dano por golpe é o mesmo, a leitura é a mesma, o combo
+     *  mata igual. O que ela muda é que PERDER UMA BRIGA deixa de ser uma
+     *  sentença acumulada: quem se afastou a tempo volta inteiro, e quem
+     *  insiste sob pressão contínua morre do mesmo jeito.
+     *
+     *  Zero no DUELO, e tem que continuar zero: num 1×1 de 90 segundos,
+     *  regeneração só faria a luta não acabar. */
+    healthRegenPerSec: 0,
+    healthRegenDelaySec: 0,
+
     maxPoise: 34,
     poiseRegenPerSec: 14,
     poiseBreakStunFrames: 30,
@@ -347,6 +373,158 @@ export const TUNING = {
      * estados e uma árvore de decisão por frame, e o teto real na sua máquina
      * ainda é desconhecido. */
     opponents: 1,
+
+    /* ================================================================
+     *  MODOS DE PARTIDA  —  DUELO e ARENA são jogos diferentes
+     * ================================================================
+     *  Medido: 30 jogadores com os números do duelo acabam em 53–75 SEGUNDOS.
+     *  Um brawler de eliminação com 30 pessoas resolvido em um minuto não é
+     *  uma partida curta — é um intervalo comercial com socos.
+     *
+     *  Mas a correção NÃO é inflar HP. 30 jogadores × uma barra gigante produz
+     *  uma sessão de espancamento administrativo: o mesmo jogo, mais devagar,
+     *  e chato. O que controla o ritmo de eliminação é outra coisa, e a
+     *  medição mostrou qual:
+     *
+     *      arena raio 48  →  41% de ring-out
+     *      arena raio 30  →  79% de ring-out
+     *
+     *  O ESPAÇO é o botão. Num jogo cuja identidade é o ring-out, quanto mais
+     *  perto a borda está, mais rápido as pessoas saem. Então a duração de uma
+     *  partida é, antes de tudo, o CRONOGRAMA DA ARENA.
+     *
+     *  Por isso os dois modos existem separados, e por isso o DUELO não muda
+     *  nem um número: ele é o MVP validado, e é contra ele que tudo foi medido.
+     *  Mexer nele pra acomodar o modo de 30 jogaria fora a única base de
+     *  comparação que o projeto tem.
+     *
+     *  Escolha na URL:  ?modo=duelo   (padrão)
+     *                   ?modo=arena&n=30
+     */
+    mode: 'duelo',
+
+    modes: {
+      /* DUELO — 1×1. NÃO SOBRESCREVE NADA de propósito: usa `arena`,
+       * `fighter` e `defense` exatamente como estão no resto deste arquivo.
+       * Se um dia este bloco ganhar um campo, a base de comparação morre. */
+      duelo: {
+        label: 'DUELO',
+        fighters: 2,
+      },
+
+      /* ================================================================
+       *  ARENA — 20 a 30 jogadores, 20–25 minutos
+       * ================================================================
+       *  A curva-alvo, em jogadores restantes:
+       *
+       *      0–5 min    INÍCIO      30 → 22   espaço amplo, primeiras quedas
+       *      5–12 min   MEIO        22 → 13   a arena começa a fechar
+       *      12–18 min  CONFRONTO   13 → 7    disputa por posição
+       *      18–25 min  FINAL        7 → 3    arena pequena
+       *      25–30 min  CLÍMAX       3 → 1    ring-out decide
+       *
+       *  O que a faz acontecer: a arena começa GRANDE o bastante pra que um
+       *  smash quase nunca mate (raio 110 contra os ~34 m que um corpo lançado
+       *  percorre), e termina PEQUENA o bastante pra que qualquer lançamento
+       *  seja fatal. A morte deixa de ser um evento e vira uma consequência do
+       *  relógio — que é exatamente o arco "começo tranquilo, final caótico".
+       *
+       *  HP sobe pouco (100 → 140) e só pra que a fase inicial não seja
+       *  decidida por nocaute. O aumento é deliberadamente modesto: o objetivo
+       *  é que as pessoas saiam pela BORDA, não que demorem mais pra morrer.  */
+      arena: {
+        label: 'ARENA',
+        fighters: 30,
+
+        /* Sobreposições. Tudo que não estiver aqui vem do bloco normal —
+         * mesmo contrato dos perfis de IA, e pelo mesmo motivo: um slider
+         * arrastado no painel continua valendo. */
+        /* `healthRegenPerSec` é o botão da DURAÇÃO — ver a nota longa no bloco
+         * `fighter`. Varrido no navegador com o fast-forward (valores na
+         * seção 10.8 do doc de passagem); este é o ponto onde a curva de
+         * eliminação bateu com as fases. */
+        fighter: { maxHealth: 140, healthRegenPerSec: 28, healthRegenDelaySec: 3 },
+
+        /* Recuperação aérea mais barata. Na fase inicial, sair da arena tem
+         * que ser um ERRO seu, não uma consequência de ter levado um smash.
+         * Quando a arena encolhe, o mesmo custo passa a ser caro em relação ao
+         * espaço disponível — o valor não muda, o contexto muda. */
+        recover: { kiCost: 6 },
+
+        /* ------------------------------------------------------------
+         *  CRONOGRAMA DE FASES — o coração do modo
+         * ------------------------------------------------------------
+         *  `min` é o minuto em que a fase COMEÇA; `raio`/`teto` são os valores
+         *  no FIM dela. Entre duas fases o valor é interpolado, então a arena
+         *  nunca dá saltos.
+         *
+         *  Fases nomeadas em vez de uma curva só porque o jogador precisa
+         *  LER em que momento da partida está — "CONFRONTO" diz mais que
+         *  "raio 38 m", e é o que transforma o encolhimento de cronômetro em
+         *  narrativa.                                                        */
+        phases: [
+          { min: 0,  raio: 110, teto: 70, label: 'INÍCIO',    sub: 'espaço de sobra' },
+          { min: 5,  raio: 78,  teto: 58, label: 'MEIO',      sub: 'a arena fecha' },
+          { min: 12, raio: 46,  teto: 42, label: 'CONFRONTO', sub: 'disputa por posição' },
+          { min: 18, raio: 26,  teto: 30, label: 'FINAL',     sub: 'pouco espaço' },
+          { min: 25, raio: 13,  teto: 22, label: 'CLÍMAX',    sub: 'não caia' },
+          { min: 30, raio: 10,  teto: 20, label: 'MORTE SÚBITA', sub: '' },
+        ],
+
+        /* Teto duro. Chegar aqui sem vencedor é um defeito de ritmo, não um
+         * final legítimo — e é melhor o protótipo gritar do que arrastar. */
+        hardCapMin: 32,
+
+        /* ================================================================
+         *  ⚠️  A META DE 20–25 MIN **NÃO** FOI ATINGIDA. LEIA ANTES DE AJUSTAR.
+         * ================================================================
+         *  Com esta configuração a partida de 30 dura ~3–4 MINUTOS, não 20–25.
+         *  E o que foi medido é que nenhum número deste arquivo chega lá.
+         *
+         *  Varredura com o fast-forward (`PROTO.simular`), partida inteira:
+         *
+         *      regeneração 0,  sem recuo   →  1,2 min
+         *      regeneração 40, sem recuo   →  5,2 min
+         *      regeneração 28, recuo 0,55  →  3,1 min
+         *      agressividade 0,06 + alcance 45 m  →  4,4 min
+         *
+         *  Mesmo com cura total em 3,5 s e a IA fugindo abaixo de 55% de vida,
+         *  a partida não passa de 5 minutos. A aritmética diz por quê:
+         *
+         *      30 lutadores  →  ~15 brigas EM PARALELO
+         *      29 eliminações em 25 min  →  1 morte a cada 52 s
+         *      logo, cada briga precisaria passar ~13 MINUTOS sem matar ninguém
+         *
+         *  Não existe valor de HP, dano ou raio que faça uma briga desta ser
+         *  não-letal por treze minutos — e se existisse, o combate deixaria de
+         *  ser o combate que foi validado no duelo.
+         *
+         *  O QUE GOVERNA A DURAÇÃO é outra coisa: a FRAÇÃO DO TEMPO EM COMBATE.
+         *  Medida entre 43% e 60%, e ela mal se move quando se mexe em
+         *  agressividade ou distância preferida. Para 25 minutos precisaria
+         *  ficar em torno de 3–5%.
+         *
+         *  E a razão de ela não baixar é estrutural, não de ajuste:
+         *  **não há limite de informação.** Todo lutador sabe onde todos estão
+         *  (`nearestEnemy` varre a lista inteira), o lock-on aponta, e a
+         *  investida cobre a distância. Num battle royale de verdade a partida
+         *  dura porque você NÃO SABE onde as pessoas estão. Aqui, todo mundo
+         *  sempre acha alguém, e quem sempre acha alguém sempre está lutando.
+         *
+         *  Alternativas que cabem no design (decisão do dono, não minha):
+         *    1. VIDAS/STOCKS — 3 vidas por lutador triplicam as eliminações
+         *       necessárias. Multiplica por ~3, não por 20.
+         *    2. LIMITE DE INFORMAÇÃO — alcance de detecção finito, sem saber
+         *       onde está quem está longe. É o que ataca a causa.
+         *    3. EQUIPES — 30 jogadores em 6 times de 5 reduz as brigas
+         *       simultâneas de 15 pra 3.
+         *    4. ACEITAR 5–8 MIN como a duração natural deste combate, e mirar
+         *       "várias partidas curtas" em vez de uma longa.
+         *
+         *  A 4 é a que menos briga com o que já existe: o ring-out é rápido por
+         *  natureza, e foi por isso que ele foi escolhido.                    */
+      },
+    },
   },
 
   /* ================================================================== */
@@ -1898,6 +2076,32 @@ export const TUNING = {
     blastChance: 0.30,
     chargeKiBelow: 28,          // carrega ki quando abaixo disto
     recoverChance: 0.6,         // chance de se recuperar após levar smash
+
+    /* ================================================================
+     *  RECUAR  —  a IA não tinha instinto de sobrevivência
+     * ================================================================
+     *  Ela lutava até morrer, sempre. Num duelo isso passa despercebido (os
+     *  dois vão até o fim de qualquer jeito). Numa partida de 30 pessoas é o
+     *  que decide a DURAÇÃO da partida inteira, e a medição foi direta:
+     *
+     *      regeneração  0/s  →  partida de 1,2 min
+     *      regeneração 40/s  →  partida de 5,2 min
+     *
+     *  Quarenta de vida por segundo é cura total em 3,5 s, e ainda assim a
+     *  partida durava cinco minutos. Porque o relógio da regeneração só corre
+     *  SEM TOMAR DANO, e quem nunca recua nunca para de tomar dano. O botão
+     *  não estava no número, estava no comportamento.
+     *
+     *  Num battle royale a maior parte do tempo não é briga: você luta,
+     *  percebe que está perdendo, sai, se recompõe e volta. Sem isso, 30
+     *  lutadores consomem a reserva de vida da arena inteira em 81 segundos.
+     *
+     *  E isto não é "IA mais burra pra durar mais": é o comportamento que um
+     *  humano tem naturalmente. A versão anterior é que era irreal. */
+    retreatBelowHealth: 0.55,   // fração da vida abaixo da qual tenta sair
+    retreatUntilHealth: 0.75,   // e volta a lutar quando chegar aqui
+    retreatChance: 0.8,         // nem sempre — um pouco de teimosia é humano
+    retreatSpeedMul: 1.0,
 
     decisionIntervalFrames: 12,
     // Consciência de borda: quanto a IA evita ser empurrada pra fora.

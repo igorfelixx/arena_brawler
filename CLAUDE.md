@@ -257,6 +257,23 @@ navegador: 7 golpes aparados esgotam a guarda; **1 smash abre na hora**.
 **Não validado por playtest:** a maior parte dos números de `src/tuning.js`.
 Ver seção 11 do documento de passagem antes de tratá-los como verdade.
 
+## Modos de partida (branch `modo-arena-partida-longa`)
+
+- `?modo=duelo` (padrão) — 1×1. **Não sobrescreve nenhum número.** É o MVP
+  validado e a única base de comparação do projeto.
+- `?modo=arena&n=30` — 20–30 jogadores, cronograma de fases (INÍCIO → MEIO →
+  CONFRONTO → FINAL → CLÍMAX), regeneração de vida fora de combate, IA que recua.
+- `PROTO.simular(1500, { ateSobrar: 1 })` — roda a simulação sem render. Uma
+  partida de 30 min leva segundos. É o que torna ajustar ritmo viável.
+
+⚠️ **A meta de 20–25 min NÃO foi atingida: a partida de 30 dura ~2–4 min, e
+nenhum número chega lá.** Com 30 lutadores há ~15 brigas em paralelo; para
+25 min cada briga precisaria passar 13 minutos sem matar ninguém. O que governa
+a duração é a fração do tempo em combate (medida em 43–60%; precisaria ser
+3–5%), e a causa é estrutural — **não há limite de informação**, todo mundo
+sempre sabe onde todo mundo está. Ver seção 10.8 do doc de passagem para os
+números e os quatro caminhos possíveis.
+
 ## Como trabalhar aqui
 
 - **Meça antes de opinar.** Este projeto tem um histórico de diagnósticos

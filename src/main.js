@@ -34,6 +34,7 @@ import { Input } from './core/input.js';
 import { Juice } from './core/juice.js';
 import { DebugPanel } from './core/debugPanel.js';
 import { prof } from './core/profiler.js';
+import { aplicar as aplicarModo, lerURL as lerModoURL, modoAtivo } from './core/matchMode.js';
 import { loadCharacter, loadArenaModel } from './assets/registry.js';
 import { Arena } from './world/arena.js';
 import { CombatCamera } from './world/camera.js';
@@ -287,16 +288,20 @@ const ctx = {
  * ========================================================================== */
 async function boot() {
   try {
-    /* Nº de lutadores pela URL: `?n=16` sobe 16 no total.
+    /* MODO e Nº DE LUTADORES pela URL:  ?modo=arena&n=30
      *
-     * Existe porque a escada de escala (2→4→8→16) precisa de RELOAD — os
-     * personagens são carregados no boot — e editar `tuning.js` entre cada
-     * medição é lento e dá margem a medir com o valor errado. Um parâmetro na
-     * URL torna cada degrau uma aba nova, reproduzível e comparável. */
-    const nURL = parseInt(new URLSearchParams(location.search).get('n') || '', 10);
-    const nInimigos = Number.isFinite(nURL) && nURL >= 2
-      ? nURL - 1
-      : Math.max(1, TUNING.match.opponents);
+     * Precisa ser URL porque os personagens são carregados no boot — trocar de
+     * modo exige reload de qualquer jeito. E porque cada configuração vira uma
+     * aba reproduzível, que é o que permite comparar duas medições sem
+     * depender de eu ter lembrado de ajustar o tuning igual das duas vezes.
+     *
+     * `aplicarModo` escreve as sobreposições DENTRO do TUNING (ver
+     * core/matchMode.js), então daqui pra frente o resto do jogo não sabe que
+     * modos existem. */
+    const { modo: modoId, n: nURL } = lerModoURL();
+    const modo = aplicarModo(modoId, nURL);
+    const nInimigos = Math.max(1, modo.fighters - 1);
+    console.info(`[arena-proto] modo ${modo.label} · ${modo.fighters} lutadores`);
     loadingMsg.textContent = `carregando ${nInimigos + 1} lutadores…`;
     const chars = await Promise.all([
       loadCharacter('fighter_default'),
@@ -1462,4 +1467,43 @@ window.PROTO = {
    * durante um teste de estresse e a medição vale N−1 lutadores, não N.
    * Com ele dá pra pôr uma IA no jogador e medir a arena cheia de verdade. */
   BotController,
+
+  get modo() { return modoAtivo(); },
+
+  /* ================================================================
+   *  FAST-FORWARD — medir uma partida de 25 min sem esperar 25 min
+   * ================================================================
+   *  Roda a SIMULAÇÃO em laço fechado, sem render e sem esperar frame. Uma
+   *  partida de 30 minutos são 108.000 passos, que levam poucos segundos.
+   *
+   *  Sem isto, ajustar a curva de eliminação seria inviável: cada tentativa
+   *  custaria meia hora de relógio, e o projeto tem histórico de conclusões
+   *  erradas por medir pouco.
+   *
+   *  O que NÃO é medido aqui: qualquer coisa de render. É simulação pura, que
+   *  é justamente o que decide quem morre e quando.
+   *
+   *      PROTO.simular(1500, { ateSobrar: 1 })   // 25 min ou até sobrar 1
+   */
+  simular(segundos, { ateSobrar = null, aCada = null } = {}) {
+    const dt = 1 / TUNING.sim.fps;
+    const total = Math.round(segundos * TUNING.sim.fps);
+    const t0 = arena.elapsed;
+    let i = 0;
+
+    for (; i < total; i++) {
+      step(dt);
+      if (aCada && i % aCada === 0) aCada.cb?.();
+      if (ateSobrar !== null && fighters.filter((f) => f.alive).length <= ateSobrar) break;
+      /* `roundOver` faz o step sair cedo e o cronômetro de reinício correr.
+       * Numa medição isso reiniciaria a partida no meio da coleta. */
+      if (roundOver) break;
+    }
+    return {
+      passos: i,
+      segundosSimulados: +(i * dt).toFixed(1),
+      relogioDaArena: +(arena.elapsed - t0).toFixed(1),
+      vivos: fighters.filter((f) => f.alive).length,
+    };
+  },
 };

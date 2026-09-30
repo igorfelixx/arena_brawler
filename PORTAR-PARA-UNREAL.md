@@ -1340,6 +1340,102 @@ Todo harness precisa de uma asserção que grite quando o resultado é impossív
 
 ---
 
+## 10.8 MODOS DE PARTIDA — e por que 20–25 min NÃO foi atingido
+
+Branch `modo-arena-partida-longa`. `?modo=duelo` (padrão) e `?modo=arena&n=30`.
+
+### O que entrou
+
+- **Modos** (`src/core/matchMode.js`): DUELO não sobrescreve NADA — é o MVP
+  validado e continua idêntico. ARENA sobrepõe HP, regeneração e arena.
+- **Cronograma de fases**: INÍCIO → MEIO → CONFRONTO → FINAL → CLÍMAX →
+  MORTE SÚBITA, com raio interpolado. Verificado: 110 m aos 0 min, 78 aos 5,
+  46 aos 12, 26 aos 18, 13 aos 25, 10 aos 30. Monotônico, sem saltos.
+- **Fast-forward** (`PROTO.simular`): roda a simulação sem render. Uma partida
+  de 30 min leva segundos. Sem isso cada tentativa de ajuste custaria meia hora.
+- **Regeneração de vida fora de combate** e **recuo da IA** — os dois
+  mecanismos que faltavam pra uma partida longa existir.
+- **A/D invertido**, corrigido (ver 8.34).
+- **Crash em `resolveTrade`**, corrigido (ver 8.35).
+
+### ⚠️ A meta de 20–25 min não foi atingida, e não é questão de ajuste
+
+Partida de 30 com a melhor configuração medida: **~2–4 minutos**. A meta era
+20–25. Varredura com o fast-forward:
+
+| configuração | duração |
+|---|---|
+| regeneração 0, sem recuo | 1,2 min |
+| regeneração 40 (cura total em 3,5 s), sem recuo | 5,2 min |
+| regeneração 28 + recuo abaixo de 55% de vida | 3,1 min |
+| agressividade 0,06 + distância preferida 45 m | 4,4 min |
+
+Nenhum número chega perto. A aritmética explica:
+
+```
+30 lutadores            →  ~15 brigas EM PARALELO
+29 eliminações / 25 min →  1 morte a cada 52 s
+logo, cada briga precisa passar ~13 MINUTOS sem matar ninguém
+```
+
+Não existe HP, dano ou raio que torne uma briga não-letal por treze minutos —
+e se existisse, não seria mais o combate validado no duelo.
+
+**O que governa a duração é a FRAÇÃO DO TEMPO EM COMBATE**, medida entre 43% e
+60%. Para 25 minutos precisaria ficar em 3–5%. E ela mal se move quando se mexe
+em agressividade ou distância preferida.
+
+### A causa é estrutural: não há limite de informação
+
+Todo lutador sabe onde todos estão — `nearestEnemy` varre a lista inteira, o
+lock-on aponta, a investida cobre a distância. Num battle royale a partida dura
+porque você **não sabe** onde as pessoas estão. Aqui todo mundo sempre acha
+alguém, e quem sempre acha alguém sempre está lutando.
+
+Sintoma mais claro disso: **a partida inteira acontece dentro da fase INÍCIO.**
+As outras quatro fases do cronograma estão implementadas, verificadas e nunca
+são exercitadas.
+
+### Quatro caminhos (decisão do dono)
+
+1. **Vidas/stocks** — 3 vidas triplicam as eliminações necessárias. Multiplica
+   por ~3, não por 20.
+2. **Limite de detecção** — você só enxerga quem está a N metros. Ataca a causa
+   diretamente, e muda `targeting.js` e a IA.
+3. **Equipes** — 30 jogadores em 6 times de 5 reduz brigas simultâneas de 15
+   pra 3.
+4. **Aceitar 5–8 min** como a duração natural deste combate e mirar várias
+   partidas curtas. É a que menos briga com o que existe: o ring-out é rápido
+   por natureza, e foi por isso que ele foi escolhido.
+
+### 8.34 ⚠️ Base de movimento invertida desde o primeiro commit
+
+`getMoveBasis` fazia `forward × up` (que já é a direita) e chamava `.negate()`.
+Resultado: **A andava pra direita e D pra esquerda.**
+
+Sobreviveu meses porque só o JOGADOR sofria. A IA calcula `moveX` com
+`worldDir.dot(basis.right)` e o Fighter aplica `basis.right * moveX` — os dois
+usam a mesma base invertida e o erro se cancela. Bot com controle invertido anda
+certo; humano não.
+
+Corrigir consertou três coisas de uma vez, porque as três leem essa base: o
+movimento lateral, a MIRA POR DIREÇÃO (escolhia alvo do lado errado) e a direção
+do ARREMESSO do grab.
+
+**Lição pro porte:** teste de movimento feito com IA não valida controle. A IA é
+imune a inversão de eixo por construção.
+
+### 8.35 ⚠️ Crash de `resolveTrade` que só existe com 3+ lutadores
+
+`resolveTrade` checava `a.move` no laço externo e lia `a.move.priority` no
+interno. Se `a` perdia uma troca contra um `b` anterior, ia pra HITSTUN,
+`_enter` zerava `a.move`, e a iteração seguinte lia `null.priority`.
+
+Impossível de reproduzir em 1×1 (só há um par). Apareceu na primeira simulação
+de 30 lutadores.
+
+---
+
 ## 11. O que ainda NÃO foi validado
 
 **Esta seção é a mais importante para não portar um erro.**

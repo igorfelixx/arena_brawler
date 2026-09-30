@@ -58,6 +58,8 @@ export class BotController {
     /* Compromisso de carregar ki até acender o Max Power. Ver a nota longa no
      * bloco 2 do update: sorteio por frame não segura botão. */
     this._maxPowerIntent = 0;
+    /* Compromisso de RECUAR, com histerese. Ver o bloco 1.35 no update. */
+    this._recuando = false;
 
     /* Quantos frames ainda vai SEGURAR a guarda.
      *
@@ -231,6 +233,49 @@ export class BotController {
       this._holdGuard = A.guardHoldFrames;
       c.guard = true;
       return c;
+    }
+
+    /* ================================================================
+     *  1.35  RECUAR  —  sair da briga que está perdendo
+     * ================================================================
+     *  Vem depois da defesa imediata (vanish/guarda já rodaram) e antes de
+     *  qualquer coisa ofensiva: quem decidiu sair não persegue, não agarra e
+     *  não procura troca.
+     *
+     *  O compromisso com HISTERESE (`retreatBelowHealth` pra entrar,
+     *  `retreatUntilHealth` pra sair) é o mesmo padrão de `guardHoldFrames`, e
+     *  pela mesma razão registrada na armadilha 8.15: decisão por frame não
+     *  produz comportamento sustentado. Com um limiar só, a IA sairia e
+     *  voltaria no mesmo frame em que a vida cruzasse a linha, e o recuo não
+     *  existiria na prática.
+     *
+     *  Recuar NÃO é fugir em linha reta do adversário: é ir pro espaço ABERTO.
+     *  Correr pro lado oposto do inimigo leva direto pra borda — e num jogo de
+     *  ring-out isso é pior que apanhar. */
+    const vidaFrac = f.health / TUNING.fighter.maxHealth;
+    if (A.retreatBelowHealth > 0) {
+      if (!this._recuando && vidaFrac < A.retreatBelowHealth && this._roll(A.retreatChance)) {
+        this._recuando = true;
+      } else if (this._recuando && vidaFrac >= A.retreatUntilHealth) {
+        this._recuando = false;
+      }
+
+      if (this._recuando) {
+        /* Direção: para LONGE do adversário, mas corrigida pro centro da
+         * arena. Sem a correção, recuar é um jeito elaborado de cometer
+         * ring-out. */
+        _v.copy(_toFoe).multiplyScalar(-1);
+        ctx.arena.towardCenter(f.position, _toFoe);      // reaproveita o temp
+        const perto = ctx.arena.edgeProximity(f.position);
+        _v.lerp(_toFoe, Math.min(1, perto * 1.4)).normalize();
+
+        this._setMoveToward(c, _v, ctx, A.retreatSpeedMul);
+        // Dash pra criar distância de verdade, se houver ki sobrando.
+        if (dist < 12 && f.ki > TUNING.dragonDash.kiCost * 2) c.dash = true;
+        // Guarda no caminho: sair não pode significar comer tudo de graça.
+        if (dist < 5) c.guard = true;
+        return c;
+      }
     }
 
     /* ---------- 1.4 RESPONDER À VANISH BATTLE ----------
@@ -538,6 +583,7 @@ export class BotController {
     this._blastHold = 0;
     this._smashHold = 0;
     this._maxPowerIntent = 0;
+    this._recuando = false;
     this._holdGuard = 0;
     this._punishCooldown = 0;
     resetCommand(this.cmd);

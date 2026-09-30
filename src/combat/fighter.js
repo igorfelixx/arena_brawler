@@ -492,6 +492,22 @@ export class Fighter {
     this.poise = Math.min(this.maxPoise,
       this.poise + TUNING.fighter.poiseRegenPerSec * dt);
 
+    /* VIDA fora de combate. Zero no duelo (ver a nota em `fighter`), é o que
+     * sustenta a partida longa do modo ARENA: sem isto o dano de 30 lutadores
+     * só acumula e a reserva de vida da arena inteira acaba em 81 segundos.
+     *
+     * O relógio reinicia a CADA dano tomado — é em `applyHit`. Quem está sob
+     * pressão contínua nunca regenera, então isto não protege quem está
+     * perdendo a briga; protege quem conseguiu SAIR dela. */
+    const RG = TUNING.fighter.healthRegenPerSec;
+    if (RG > 0 && this.health < TUNING.fighter.maxHealth) {
+      if (this._semDanoFrames === undefined) this._semDanoFrames = 0;
+      this._semDanoFrames++;
+      if (this._semDanoFrames > TUNING.fighter.healthRegenDelaySec * TUNING.sim.fps) {
+        this.health = Math.min(TUNING.fighter.maxHealth, this.health + RG * dt);
+      }
+    }
+
     /* ================================================================
      *  MAX POWER: o relógio e o escoamento  (§19)
      * ================================================================
@@ -2408,6 +2424,9 @@ export class Fighter {
     }
 
     this.health = Math.max(0, this.health - damage);
+    // Tomar dano reinicia o relógio da regeneração: quem está sob pressão
+    // contínua não se recompõe, e é isso que mantém a briga letal.
+    this._semDanoFrames = 0;
     // Boneco de treino não morre: a sessão precisa durar mais que dez segundos.
     if (this.immortal && this.health <= 0) this.health = 1;
     this.poise -= move.poiseDamage || 0;

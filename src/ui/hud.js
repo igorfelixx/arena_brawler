@@ -424,7 +424,23 @@ export class HUD {
     const t = arena.elapsed;
     this.timer.textContent = `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 
-    if (arena.warning) {
+    /* MODO ARENA: a FASE é a informação principal, não o raio.
+     *
+     * "CONFRONTO · 12 vivos · fecha em 1:40" conta onde você está na partida;
+     * "raio 38 m" é um número sem história. Numa partida de 25 minutos o
+     * jogador precisa saber se está no começo tranquilo ou no clímax — é isso
+     * que transforma o encolhimento de cronômetro em arco. */
+    if (arena.fase) {
+      const f = arena.fase;
+      const falta = f.proximaEm === Infinity ? null : Math.max(0, Math.round(f.proximaEm));
+      const mm = falta != null ? `${Math.floor(falta / 60)}:${String(falta % 60).padStart(2, '0')}` : null;
+      this.arenaState.textContent =
+        `${f.label}${f.sub ? ' · ' + f.sub : ''}`
+        + (mm ? `  ·  ${f.proximaLabel} em ${mm}` : '')
+        + `  ·  raio ${arena.radius.toFixed(0)}m`;
+      this.arenaState.className = 'arena-state'
+        + (arena.warning ? ' warn' : arena.shrinking ? ' shrink' : '');
+    } else if (arena.warning) {
       this.arenaState.textContent = 'A ARENA VAI ENCOLHER';
       this.arenaState.className = 'arena-state warn';
     } else if (arena.shrinking) {
