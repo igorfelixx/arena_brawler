@@ -1268,6 +1268,78 @@ falso.
 
 ---
 
+## 10.7 20–30 JOGADORES — é divertido?  (design, não performance)
+
+Performance foi deliberadamente ignorada aqui: three.js e Unreal são engines
+diferentes e o número não transfere. `tools/diversao.js` mede só DESIGN.
+
+### As duas fases de uma partida, e elas são jogos diferentes
+
+| | arena CHEIA (30 vivos) | partida inteira (30 → 1) |
+|---|---|---|
+| tempo ocioso | **0%** | **57,5%** |
+| combos seus interrompidos por terceiro | 36% | ~0% |
+| duelo limpo médio | 3,5 s | 29,7 s |
+| golpes recebidos pelas costas | **47%** | 0–13% |
+
+A fase densa e a fase final são experiências opostas, e a densa **dura pouco**:
+numa partida de 30, os 30 viram 3 em ~55 s. O jogo que o design exercita
+acontece nos primeiros 20–30 s; o resto é um endgame esparso.
+
+### ⚠️ A arena é o botão da identidade do jogo
+
+Mesma partida de 30, mudando SÓ a arena:
+
+| | raio 48 · encolhe aos 30 s | **raio 30 · encolhe desde 0 s** |
+|---|---|---|
+| **ring-out** | 41% | **79%** |
+| nocaute | 17 | 6 |
+| primeira morte | 20 s | 16 s |
+| arco | parado 20 s, depois despenca | funil contínuo 30→28→23→20→16→…→1 |
+| duração | 75 s | 53 s |
+
+O raio 48 foi escolhido pra que um smash do centro não mate — certo pra duelo,
+errado pra 30 pessoas (241 m² por cabeça; eles se espalham e o jogo vira
+disputa de HP com uma borda decorativa). Com raio 30 são 94 m², a borda está
+sempre perto, e o ring-out volta a ser o jeito de ganhar.
+
+Regra prática: **dimensione pela DENSIDADE, não pelo alcance do smash** —
+algo como `raio ≈ 17·√(jogadores/2)` — e ponha `shrinkStartSec` perto de zero
+quando houver muita gente. Com 30, o encolhimento não é pressão de fim de jogo:
+é o motor do ritmo da partida inteira.
+
+### O que NÃO é problema (e se temia que fosse)
+
+- **Não vira bagunça.** 36% de interrupção por terceiro na fase mais densa é
+  presença, não opressão. Nunca houve três em cima do jogador.
+- **Não fica ilegível.** Com a arena cheia, alvo a ~2 m e 705 px de altura.
+
+### O que É problema
+
+1. **Duelo limpo de 3,5 s.** É pouco pra jogar uma leitura — vanish, Z-Counter e
+   Perfect Smash precisam de mais tempo de interação pra existir. Esse é o risco
+   real do formato: a profundidade do 1×1 pode não caber na fase densa.
+2. **47% dos golpes vêm pelas costas** na arena cheia. Metade do dano que você
+   leva é de quem você não podia ver. Pede indicador direcional de dano.
+3. **Ring-out sub-entregue** com a arena atual (16–41%), num jogo cuja
+   identidade é o ring-out. A correção é a arena, não o knockback.
+
+### 8.33 Sétima mentira do harness — e a trava que sobrou
+
+`f.eliminate` foi envolvido SEM `.bind(f)`; `this` vinha `undefined`, o método
+lançava, ninguém era eliminado, e `checkRingOut` recontava a mesma morte todo
+frame. O relatório disse **"2484 mortes suas"** numa arena com 30 vivos no fim,
+com 189 exceções no console que eu não tinha olhado.
+
+Ficou uma trava: `MEDICAO_SUSPEITA` compara mortes com nº de lutadores e acusa o
+impossível. Ela pegou o erro seguinte sozinha (modo imortal contando mortes que
+não aconteciam).
+
+**A lição, sétima vez:** neste projeto o instrumento erra mais que o código.
+Todo harness precisa de uma asserção que grite quando o resultado é impossível.
+
+---
+
 ## 11. O que ainda NÃO foi validado
 
 **Esta seção é a mais importante para não portar um erro.**

@@ -1610,6 +1610,40 @@ export const TUNING = {
   /* ================================================================== */
   /*  Arena Tenkaichi é GRANDE. Precisa de espaço pro smash mandar longe.
    *  Ela encolhe como uma cúpula (raio E teto), não como um círculo.       */
+  /* ======================================================================
+   *  ⚠️  A ARENA É DIMENSIONADA PELO SMASH — E ISSO SÓ VALE PARA 1×1
+   * ======================================================================
+   *  O raio 48 abaixo foi escolhido pra que um smash acertado no CENTRO não
+   *  mate, e um acertado na metade externa mate. Para um duelo isso é certo.
+   *
+   *  Para 20–30 jogadores é a decisão errada, e a diferença é gritante. Mesma
+   *  partida de 30, mudando SÓ a arena (medido, `tools/diversao.js`):
+   *
+   *      raio 48, encolhe aos 30 s    →  41% ring-out · 17 nocautes
+   *                                      nada morre nos primeiros 20 s, e
+   *                                      depois todo mundo morre de uma vez
+   *
+   *      raio 30, encolhe desde 0 s   →  79% RING-OUT · 6 nocautes
+   *                                      primeira morte aos 16 s, funil suave
+   *                                      30→28→23→20→16→13→11→9→7→5→3→1
+   *
+   *  Com raio 48 e 30 pessoas, cada um tem 241 m² — eles se espalham, e o jogo
+   *  vira uma disputa de HP com uma borda decorativa. Com raio 30 são 94 m², a
+   *  borda está sempre por perto, e o RING-OUT volta a ser o jeito de ganhar.
+   *
+   *  A regra prática que sai disso: **a arena deve ser dimensionada pela
+   *  DENSIDADE, não pelo alcance do smash.** Algo como
+   *
+   *      raio ≈ 17 · √(jogadores / 2)      (48 para 2 · ~30 para 30)
+   *
+   *  e `shrinkStartSec` perto de zero quando há muita gente — com 30 jogadores
+   *  o encolhimento não é pressão de fim de jogo, é o MOTOR DO RITMO da partida
+   *  inteira. Os primeiros 30 s sem encolher são tempo morto.
+   *
+   *  NÃO alterei os valores: o 1×1 é o MVP validado, e mexer aqui mudaria o
+   *  jogo que já foi medido. Isto fica registrado como o botão a girar quando
+   *  o modo de 20–30 for pra valer.
+   * ====================================================================== */
   arena: {
     // Dimensionada pelo SMASH, não por gosto. Com knockback 46 m/s e drag 1.35,
     // um corpo lançado percorre ~34 m antes de parar. Raio 48 significa que um
