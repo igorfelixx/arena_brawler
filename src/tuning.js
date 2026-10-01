@@ -368,14 +368,21 @@ export const TUNING = {
      * ================================================================
      *      2 × (raio da ÚLTIMA fase)  <  loseTargetRange
      *
-     *  Se a arena final for maior que o alcance de visão, dois sobreviventes
+     *  Se a arena final for maior que o alcance de DETECÇÃO, dois sobreviventes
      *  podem se evitar INDEFINIDAMENTE: cada um de um lado, nenhum enxergando
      *  o outro, e nada os obrigando a se encontrar.
      *
      *  Medido, 30 lutadores, 5 partidas por configuração:
      *
-     *      arena final 17 m  (2×17 = 34 < 38)  →  mediana   6,2 min
-     *      arena final 25 m  (2×25 = 50 > 38)  →  mediana 149    min
+     *      arena final 17 m  (2×17 = 34 > 24)  →  TRAVA com 2 sobreviventes
+     *      arena final 10 m  (2×10 = 20 < 24)  →  termina
+     *
+     *  E o alcance certo é `detectionRange` (24), não `loseTargetRange` (38).
+     *  Errei isso na primeira tentativa: `loseTargetRange` é o quanto você
+     *  AGUENTA perseguir quem já é seu alvo; `detectionRange` é o quanto você
+     *  enxerga pra ACHAR um. Dois sobreviventes que nunca se viram precisam do
+     *  segundo — e com a restrição errada a partida travava com dois vivos a
+     *  30 m um do outro, cada um sem alvo, indefinidamente.
      *
      *  Cento e quarenta e nove minutos é o TETO DO MEDIDOR, não a duração: a
      *  partida simplesmente não termina. É o preço de dar a opção de fugir, e
@@ -568,20 +575,48 @@ export const TUNING = {
          *
          * Se o playtest alongar a partida (humanos recuam, bots não), estes
          * minutos sobem junto. É a primeira coisa a reajustar. */
+        /* ------------------------------------------------------------
+         *  O ARCO: POUCA BRIGA NO COMEÇO, MUITA NO FIM
+         * ------------------------------------------------------------
+         *  O cronograma não é um cronômetro — é a CURVA DE ENCONTRO. Com
+         *  alcance de detecção fixo (24 m), quantos vizinhos cada lutador tem
+         *  dentro do campo de visão depende só do raio:
+         *
+         *      vizinhos ≈ N × (detecção / raio)²
+         *
+         *      raio 300 m  →  0,19 vizinhos   quase sempre sozinho
+         *      raio 160 m  →  0,68            encontros intermitentes
+         *      raio  95 m  →  1,9             briga frequente
+         *      raio  50 m  →  6,9             tumulto
+         *      raio  17 m  →  todos           ninguém se evita
+         *
+         *  É a mesma ideia de um battlefield: o começo é calmo porque as
+         *  pessoas estão LONGE, e o fim é caótico porque não há mais pra onde
+         *  ir. A escalada não é uma regra extra — ela cai sozinha da geometria,
+         *  desde que a arena comece grande o bastante.
+         *
+         *  Começar em 110 m era o erro da versão anterior: 1,4 vizinhos já no
+         *  minuto zero, ou seja, briga constante desde o início e nenhum arco.
+         *
+         *  Os minutos estão esticados pra uma partida de 25–30 min. Se o
+         *  playtest mostrar que arrasta, a correção é ENCURTAR OS MINUTOS, não
+         *  diminuir os raios — os raios são o que produz o arco.               */
         phases: [
-          { min: 0,   raio: 110, teto: 70, label: 'INÍCIO',    sub: 'espaço de sobra' },
-          { min: 1.5, raio: 88,  teto: 60, label: 'MEIO',      sub: 'a arena fecha' },
-          { min: 3,   raio: 66,  teto: 50, label: 'CONFRONTO', sub: 'disputa por posição' },
-          { min: 4.5, raio: 44,  teto: 38, label: 'FINAL',     sub: 'pouco espaço' },
-          { min: 6,   raio: 25,  teto: 28, label: 'CLÍMAX',    sub: 'não caia' },
+          { min: 0,  raio: 300, teto: 120, label: 'INÍCIO',    sub: 'procure, ou se esconda' },
+          { min: 5,  raio: 230, teto: 100, label: 'MEIO',      sub: 'os primeiros encontros' },
+          { min: 10, raio: 160, teto: 80,  label: 'CONFRONTO', sub: 'não dá mais pra sumir' },
+          { min: 15, raio: 95,  teto: 58,  label: 'FINAL',     sub: 'disputa por posição' },
+          { min: 20, raio: 50,  teto: 38,  label: 'CLÍMAX',    sub: 'não caia' },
           /* 17 m e não mais: 2×17 = 34 < loseTargetRange (38). É a restrição
            * que impede a partida de nunca acabar — ver targeting. */
-          { min: 8,   raio: 17,  teto: 22, label: 'MORTE SÚBITA', sub: '' },
+          /* 10 m: 2×10 = 20 < detectionRange (24). Dois sobreviventes SEMPRE
+           * se acham. Ver a restrição em `targeting`. */
+          { min: 26, raio: 10,  teto: 20,  label: 'MORTE SÚBITA', sub: '' },
         ],
 
         /* Teto duro. Chegar aqui sem vencedor é um defeito de ritmo, não um
          * final legítimo — e é melhor o protótipo gritar do que arrastar. */
-        hardCapMin: 12,
+        hardCapMin: 34,
 
         /* ================================================================
          *  DURAÇÃO: ~6 MIN, e ela EMERGIU — não foi forçada

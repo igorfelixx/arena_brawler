@@ -223,11 +223,47 @@ function ciclarPerfilDosBots() {
  * nascer na borda. */
 function makeSpawns(n) {
   const out = [];
-  const r = TUNING.arena.startRadius * 0.34;
-  for (let i = 0; i < n; i++) {
-    const a = (i / n) * Math.PI * 2;
-    out.push(new THREE.Vector3(Math.cos(a) * r, 12 + (i % 3) * 3, Math.sin(a) * r));
+
+  /* O RAIO DE NASCIMENTO SEGUE A ARENA DE VERDADE — e isto era um bug.
+   *
+   * Usava `TUNING.arena.startRadius` (48, o número do DUELO) × 0,34 = um
+   * círculo de 16 metros. No modo arena, com o cronograma começando em 300 m,
+   * os 30 lutadores nasciam empilhados num pedacinho do centro.
+   *
+   * O efeito ficou visível só quando medi o ARCO em vez da média: os primeiros
+   * 4 minutos tinham 66% de todo mundo em briga e 18 das 28 mortes, e depois a
+   * partida morria — os sobreviventes se espalhavam por uma arena gigante e
+   * não se achavam mais. O arco saía EXATAMENTE INVERTIDO do pretendido.
+   *
+   * Agora o raio vem da primeira fase quando ela existe, e os lutadores são
+   * distribuídos em ANÉIS (não num círculo só): trinta pessoas num anel único
+   * ficam a 3 m uma da outra por mais largo que ele seja. */
+  const modo = modoAtivo();
+  const raioArena = modo?.phases ? modo.phases[0].raio : TUNING.arena.startRadius;
+  const rMax = raioArena * 0.82;          // perto da borda, mas não em cima dela
+
+  /* Nº de anéis pra que a distância ENTRE vizinhos seja parecida com a
+   * distância ENTRE anéis — senão eles nascem em fila indiana. */
+  const aneis = Math.max(1, Math.round(Math.sqrt(n / 3)));
+
+  let i = 0;
+  for (let k = 0; k < aneis && i < n; k++) {
+    // área igual por anel: o raio cresce com a raiz, não linearmente
+    const r = rMax * Math.sqrt((k + 1) / aneis);
+    const noAnel = Math.min(n - i, Math.ceil(n * ((k + 1) ** 2 - k ** 2) / aneis ** 2));
+    const giro = k * 0.618 * Math.PI * 2;   // desencontra os anéis
+    for (let j = 0; j < noAnel && i < n; j++, i++) {
+      const a = giro + (j / noAnel) * Math.PI * 2;
+      out.push(new THREE.Vector3(
+        Math.cos(a) * r,
+        12 + (i % 4) * 4,
+        Math.sin(a) * r,
+      ));
+    }
   }
+  // sobra por arredondamento: joga no meio
+  while (i < n) { out.push(new THREE.Vector3(0, 12 + (i % 4) * 4, 0)); i++; }
+
   return out;
 }
 
@@ -1226,7 +1262,22 @@ function step(dt) {
     return;
   }
 
-  if (!player || !opponent) return;
+  /* SÓ o jogador é obrigatório. `opponent` pode ser NULL legitimamente.
+   *
+   * Isto era `if (!player || !opponent) return;` e virou um bug grave no dia em
+   * que o limite de detecção passou a permitir ficar sem alvo: estar fora de
+   * combate congelava a SIMULAÇÃO INTEIRA. O jogo parava, os outros 29
+   * lutadores paravam, e o relógio da arena parava junto.
+   *
+   * Passou despercebido porque o sintoma não parece um congelamento: as
+   * medições mostravam "partidas de 149 e 199 minutos sem vencedor", e eu li
+   * isso como sobreviventes que não se encontram. Não era — era o jogo
+   * desligado esperando um alvo que não ia aparecer.
+   *
+   * Tudo abaixo já lida com `opponent` nulo (a câmera cai no modo livre, a HUD
+   * mostra a barra vazia, a mira procura alguém). O único que não lidava era
+   * esta linha. */
+  if (!player) return;
 
   /* Congelamento DA TELA. Só existe quando `hitstopScope` deixa — ver a nota
    * longa em `juice.hitstopScope`. Com escopo 'fighters' este `return` nunca

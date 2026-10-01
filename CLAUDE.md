@@ -305,6 +305,27 @@ Resultado com a restrição satisfeita: ~6 min, 35% ring-out, **10% do tempo for
 de combate** (era 0%). O trade-off é explícito — mais folga tática exige arena
 maior, e arena maior aproxima o risco de a partida não terminar.
 
+### Duração: ~25 min (medido 25,0 / 25,7 / 24,8)
+
+O cronograma de fases vai de **raio 300 m a 10 m em 26 minutos**. O arco não é
+uma regra extra — cai da geometria, porque o nº de vizinhos dentro do alcance de
+detecção é `N × (detecção/raio)²`:
+
+| raio | vizinhos no alcance | |
+|---|---|---|
+| 300 m | 0,19 | quase sempre sozinho |
+| 160 m | 0,68 | encontros intermitentes |
+| 95 m | 1,9 | briga frequente |
+| 10 m | todos | ninguém se evita |
+
+**Ring-out NÃO é meta.** Medido nas três partidas: 21%, 34% e 48% — varia
+sozinho, e isso é correto. É um recurso tático (ficar perto da borda com pouca
+vida pra empurrar quem vier), não uma cota a bater.
+
+⚠️ **Ainda não resolvido: o arco de ENGAJAMENTO é plano** (27/24/28/15/12% por
+faixa de 5 min) e as mortes são concentradas no início (7/15/3/2/2). A duração e
+a variância estão certas; "começa calmo e esquenta" ainda não.
+
 ### Barra de vida em camadas (`healthBar`)
 
 Resolve o custo registrado da vida 900: uma rota inteira tira 4% da barra e some.
