@@ -116,13 +116,51 @@ export function cycleTarget(self, fighters, current, basis) {
   return vivos[(i + 1) % vivos.length];
 }
 
-/** O inimigo vivo mais próximo. Usado pra reengatar quando o alvo morre. */
-export function nearestEnemy(self, fighters) {
+/**
+ * O inimigo vivo mais próximo DENTRO DO ALCANCE DE DETECÇÃO.
+ *
+ * ---------------------------------------------------------------------------
+ * Devolver `null` é o ponto desta função, não um caso de borda.
+ * ---------------------------------------------------------------------------
+ * Ela varria a lista inteira e sempre achava alguém — o lutador mais distante
+ * da arena ainda virava alvo. Era onisciência, e era a causa medida de os
+ * lutadores passarem 74–77% do tempo em combate INDEPENDENTE do tamanho da
+ * arena (testado de 513 a 6.286 m² por pessoa: o número não se move).
+ *
+ * Sem poder PERDER alguém de vista, não existe fugir de uma briga — só correr
+ * enquanto o outro persegue. E sem poder fugir não existe tática: o jogo vira
+ * porradaria contínua, que é o que cansa.
+ *
+ * Com alcance, afastar-se tem consequência dos dois lados.
+ *
+ * @param {number} [range]  alcance máximo. Sem ele, usa `detectionRange`.
+ *                          Passe `Infinity` pra forçar o comportamento antigo.
+ */
+export function nearestEnemy(self, fighters, range = null) {
+  const T = TUNING.targeting;
+  const limite = range !== null ? range
+    : (T.detectionEnabled ? T.detectionRange : Infinity);
+  const limite2 = limite === Infinity ? Infinity : limite * limite;
+
   let melhor = null, melhorD = Infinity;
   for (const f of fighters) {
     if (f === self || !f.alive) continue;
     const d = self.position.distanceToSquared(f.position);
+    if (d > limite2) continue;
     if (d < melhorD) { melhorD = d; melhor = f; }
   }
   return melhor;
+}
+
+/**
+ * Este alvo ainda está ao alcance, ou o perdi de vista?
+ *
+ * Usa `loseTargetRange`, maior que o de aquisição. A histerese é o que impede
+ * quem ronda na distância exata de entrar e sair de combate a cada frame.
+ */
+export function aindaVejo(self, alvo) {
+  if (!alvo || !alvo.alive) return false;
+  const T = TUNING.targeting;
+  if (!T.detectionEnabled) return true;
+  return self.position.distanceToSquared(alvo.position) <= T.loseTargetRange ** 2;
 }

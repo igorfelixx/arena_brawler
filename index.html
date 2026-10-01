@@ -53,6 +53,63 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   #loading-msg { font-size: 13px; color: var(--dim); text-align: center; line-height: 1.6; }
 
+  /* ================= menu =================
+     Mesma linguagem do resto da HUD: fundo escuro, maiúsculas espaçadas,
+     uma cor de destaque só. O menu não deve parecer outro programa. */
+  #menu {
+    position: fixed; inset: 0; z-index: 110;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px;
+    background: radial-gradient(ellipse at center, #141c2e 0%, #05070d 72%);
+  }
+  #menu.hidden { display: none; }
+  #menu h1 {
+    font-size: 15px; letter-spacing: .48em; font-weight: 600;
+    color: var(--ink); text-transform: uppercase;
+  }
+  .menu-sub {
+    font-size: 11px; letter-spacing: .20em; color: var(--dim);
+    text-transform: uppercase; margin-bottom: 26px;
+  }
+
+  .menu-opcoes { display: flex; gap: 18px; flex-wrap: wrap; justify-content: center; }
+
+  a.modo {
+    display: flex; flex-direction: column; gap: 5px;
+    width: 290px; padding: 22px 24px;
+    text-decoration: none; color: var(--ink);
+    background: rgba(10,15,26,.82);
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 4px;
+    transition: border-color .14s, transform .14s, background .14s;
+  }
+  a.modo:hover, a.modo:focus-visible {
+    border-color: var(--ki);
+    background: rgba(18,30,48,.9);
+    transform: translateY(-2px);
+    outline: none;
+  }
+  a.modo b {
+    font-size: 19px; letter-spacing: .20em; font-weight: 800;
+  }
+  a.modo .n {
+    font-size: 11px; letter-spacing: .18em; color: var(--ki);
+    text-transform: uppercase; font-weight: 700;
+  }
+  a.modo .desc {
+    font-size: 12px; line-height: 1.55; color: var(--dim); margin-top: 7px;
+  }
+
+  .menu-rodape {
+    margin-top: 30px; font-size: 11px; color: #5d6878; line-height: 1.7;
+    text-align: center;
+  }
+  .menu-rodape code, .menu-rodape kbd {
+    font-family: ui-monospace, monospace; font-size: 11px;
+    background: rgba(255,255,255,.07); padding: 1px 5px; border-radius: 3px;
+    color: #9fb0c6;
+  }
+
   /* ================= HUD ================= */
   .hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
 
@@ -87,7 +144,37 @@
   .bar-block.right .bar-fill,
   .bar-block.right .bar-ghost { left: auto; right: 0; }
 
+  /* A cor do preenchimento vem do JS (camada atual) — ver healthBar no
+     tuning. Aqui fica só o fallback e a transição. */
   .bar.hp .bar-fill  { background: linear-gradient(180deg, #ff7a86, var(--hp)); transition: width .06s linear; }
+
+  /* ---- camadas de vida (estilo Naruto Storm) ----
+     A barra mostra UMA camada por vez, CHEIA. Quando ela esvazia, enche de
+     novo com outra cor. Com vida 900 e 5 camadas, a largura total passa a
+     valer 180 em vez de 900 — o mesmo golpe move 5x mais barra. */
+
+  /* Pontinhos: quantas camadas ainda existem. É o que preserva a leitura do
+     TOTAL — sem eles, a primeira camada e a última pareceriam iguais. */
+  .layer-pips { display: flex; gap: 4px; margin-top: 5px; }
+  .bar-block.right .layer-pips { flex-direction: row-reverse; }
+  .layer-pips i {
+    width: 13px; height: 3px; border-radius: 2px;
+    background: rgba(255,255,255,.12);
+    transition: background .18s, box-shadow .18s;
+  }
+
+  /* Quebrar uma camada é um EVENTO. O clarão é longo e forte de propósito:
+     é o único instante em que o jogador vê que arrancou algo inteiro. */
+  @keyframes layerBreak {
+    0%   { filter: brightness(4) saturate(0); transform: scaleY(1.9); }
+    35%  { filter: brightness(2.2) saturate(.6); transform: scaleY(1.25); }
+    100% { filter: none; transform: scaleY(1); }
+  }
+  .bar.hp .bar-fill.layer-break { animation: layerBreak .42s cubic-bezier(.2,1.1,.4,1); }
+
+  /* A barra de vida respira um pouco mais alta que a de ki — ela é a
+     informação principal e agora tem mais o que mostrar. */
+  .bar.hp { height: 15px; }
   .bar.hp .bar-ghost { background: rgba(255,255,255,.34); }
   .bar.ki .bar-fill  { background: linear-gradient(180deg, #9ddfff, var(--ki)); transition: width .1s linear; }
   .bar.ki .bar-fill.full {
@@ -180,6 +267,26 @@
   .lock-reticle span:nth-child(2) { right: 0; top: 0;    border-left: none;  border-bottom: none; }
   .lock-reticle span:nth-child(3) { left: 0;  bottom: 0; border-right: none; border-top: none; }
   .lock-reticle span:nth-child(4) { right: 0; bottom: 0; border-left: none;  border-top: none; }
+
+  /* ---- seta de alvo FORA DA TELA ----
+     Nasceu da medição de escala: com 16 lutadores o alvo passa a maior parte do
+     tempo fora do enquadramento, e o retículo simplesmente sumia. Ver setLock()
+     em src/ui/hud.js. */
+  .lock-arrow {
+    position: fixed; left: 0; top: 0;
+    display: flex; align-items: center; gap: 4px;
+    color: rgba(120, 220, 255, .95);
+    filter: drop-shadow(0 0 6px rgba(80,200,255,.9));
+    opacity: 0; transition: opacity .12s linear;
+    will-change: transform;
+    pointer-events: none;
+  }
+  .lock-arrow b {
+    font: 600 12px/1 ui-monospace, monospace;
+    letter-spacing: .5px;
+    color: rgba(200, 240, 255, .95);
+    text-shadow: 0 1px 3px rgba(0,0,0,.9);
+  }
 
   .lock-state {
     position: fixed; left: 50%; bottom: 76px;
@@ -341,6 +448,39 @@
 
 <body>
   <div id="app"></div>
+
+  <!-- ===================================================================
+       MENU. Só aparece quando a URL NÃO traz `?modo=` — assim as URLs de
+       medição (`?modo=arena&n=30`) continuam entrando direto no jogo, e
+       abrir a raiz dá a escolha. Cada botão é um link de verdade: o modo
+       precisa de reload mesmo (os personagens são carregados no boot), e um
+       link dá URL copiável, botão do meio e voltar do navegador de graça.
+       =================================================================== -->
+  <div id="menu">
+    <h1>Arena Proto</h1>
+    <p class="menu-sub">protótipo de combate · escolha o modo</p>
+
+    <div class="menu-opcoes">
+      <a class="modo" href="?modo=arena&amp;n=30">
+        <b>ARENA</b>
+        <span class="n">30 jogadores</span>
+        <span class="desc">partida de ~25 min · a arena fecha em 5 fases ·
+          dá pra fugir de uma briga e escolher a próxima</span>
+      </a>
+
+      <a class="modo" href="?modo=duelo">
+        <b>DUELO</b>
+        <span class="n">1 × 1</span>
+        <span class="desc">o combate validado · ~2 min por luta ·
+          é contra ele que todo número do jogo foi medido</span>
+      </a>
+    </div>
+
+    <p class="menu-rodape">
+      também dá pra ir direto: <code>?modo=arena&amp;n=84</code> ·
+      <code>?modo=duelo</code> — e <kbd>H</kbd> liga a telemetria
+    </p>
+  </div>
 
   <div id="loading">
     <div class="spinner"></div>

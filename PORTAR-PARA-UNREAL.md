@@ -1162,6 +1162,382 @@ Sonic Sway ou um grab que a guarda para, sem tocar em código.
 
 ---
 
+## 10.6 ESCALA — a pendência nº 1, finalmente medida
+
+Branch `combate-bt3-like`. `?n=2|4|8|16` na URL escolhe o nº de lutadores;
+`tools/escala.js` é o harness; `src/core/profiler.js` mede.
+
+**Método:** simulação e render medidos SEPARADOS. Só a simulação é comparável
+entre máquinas e é a única que porta — o render aqui é rasterizado por software
+e o número não vale nem como estimativa. Todas as passadas de estresse rodam
+com os lutadores imortais, senão a luta acaba no meio e o custo medido é o de
+uma arena vazia (aconteceu: com 4 mortais, a simulação "custou" MENOS que com 2).
+
+### Custo de simulação (CPU) — arena cheia, 22–25 s por degrau
+
+| lutadores | média | p95 | max | % do orçamento de 16,7 ms (p95) |
+|---|---|---|---|---|
+| 2 | 0,36 ms | 1,5 | 2,9 | 9% |
+| 4 | 0,38 ms | 1,9 | 7,8 | 11% |
+| 8 | 0,95 ms | 3,4 | 4,5 | 20% |
+| **16** | **1,31 ms** | **4,5** | 20,2 | **27%** |
+
+**Escala LINEAR, não quadrática.** Os laços N² (`melee` 0,053 · `trades` 0,009 ·
+`overlap` 0,013 ms com 16) são irrelevantes — otimizá-los seria trabalho jogado
+fora. Os maiores custos de simulação são `eventos+ringout` (0,87 ms) e a IA
+(0,27 ms); o primeiro é VFX sendo instanciado por evento, não lógica.
+
+Extrapolando linearmente, 32 lutadores ≈ 2,6 ms de média e ~9 ms de p95 — cabe,
+apertado. **O gargalo de 20–30 não vai ser a CPU da simulação.**
+
+### 8.31 ⚠️ HITSTOP GLOBAL É UM BUG DE ESCALA DISFARÇADO DE PERFORMANCE
+
+O achado que importa, e que nenhum teste 1×1 encontraria.
+
+`juice.hitstopFrames` era um contador ÚNICO pro mundo inteiro. Com dois
+lutadores é perfeito: eles revezam, e o congelamento pontua cada troca. Medido,
+% do tempo com a simulação inteira parada:
+
+| lutadores | tela congelada | passos de simulação por frame |
+|---|---|---|
+| 2 | 20,6% | — |
+| 4 | 88,7% | 0,18 |
+| 16 | 77,0% | 0,20 |
+
+Com 16, o jogo rodava **0,2 passo de simulação por frame de render**. Não estava
+lento por falta de CPU — a simulação custa 1,3 ms. Estava **parado**, porque
+sempre havia alguém batendo em alguém e o congelamento global nunca soltava.
+
+A raiz é conceitual: **hitstop é propriedade de uma TROCA, não do mundo.** Não
+faz sentido o seu combo congelar porque dois desconhecidos se acertaram do outro
+lado da arena.
+
+Correção (`juice.hitstopScope`): os dois corpos envolvidos sempre congelam; a
+TELA só congela quando o jogador é um dos dois. Em 1×1 é idêntico ao antigo —
+toda troca é sua, então o feeling validado não mudou.
+
+| escopo | tela congelada (16) | passos/frame |
+|---|---|---|
+| `global` (antigo) | 67,7% | 0,38 |
+| **`player` (padrão)** | **13,4%** | **0,73** |
+| `fighters` | 0% | 0,69 |
+
+Achar todos os sítios importou: além do acerto, congelavam a tela o `groundSlam`,
+o `poiseBreak`, o `maxPowerStart`, o `counterVanish`, o rebate de blast e o KO —
+todos eventos DE UM corpo. Centralizar em `ctx.congelarTroca()` foi o que fechou
+a conta (a primeira tentativa só trocou 74,8% por 72,5%, porque eu tinha perdido
+esses seis).
+
+**No Unreal:** não use um `UGameplayStatics::SetGlobalTimeDilation` pra hitstop.
+Com mais de dois personagens ele produz exatamente este defeito. Pause os dois
+`ACharacter` envolvidos (custom time dilation por ator), e reserve a dilatação
+global pra momentos de partida (KO final, ultimate cinematográfico).
+
+### Legibilidade e balanceamento com 16 — arena cheia, 30 s
+
+| métrica | valor |
+|---|---|
+| distância ao alvo | mediana **1,9 m** (p10 1,1 · p90 17,4) |
+| tamanho do alvo na tela | mediana **705 px** · só 0,8% abaixo de 40 px |
+| outros lutadores a ≤ 30 m | média **2,4** · máx 10 |
+| tempo com 2+ atacantes em cima de você | **0,5%** · máx 2 |
+
+Ou seja: **não vira bagunça.** Os lutadores emparelham com o vizinho mais
+próximo e brigam a ~2 m; o medo de "três pessoas te combando ao mesmo tempo"
+(seção 11) não se materializou — 0,5% do tempo com dois, nunca três.
+
+Partida real de 40 s com 16: 12 eliminações, primeira aos 15,2 s, **4 por
+ring-out contra 8 por nocaute**.
+
+### 8.32 O harness mentiu mais duas vezes (agora são cinco)
+
+1. medir sem imortalidade fez a simulação com 4 lutadores parecer **mais barata**
+   que com 2, porque metade da janela mediu uma arena com um sobrevivente
+2. a mesma falta de imortalidade produziu "alvo a 66,5 m, 20 px na tela, jogo
+   ilegível" — era o fim de round, com quase todos mortos. Com a arena
+   comprovadamente cheia o número é 1,9 m e 705 px. **Cheguei a escrever a
+   conclusão errada antes de conferir.**
+
+A proteção que ficou no harness: `medicaoValida` compara os vivos DURANTE a
+medição com N e marca a passada como inválida se a arena esvaziou.
+
+E uma sexta, fora do navegador: `node --check` num arquivo ESM falha sempre, e
+`node --check "$f" | head && echo OK` imprime OK de qualquer jeito porque o
+`head` come o código de saída. Meu "todos parseiam" da passada anterior era
+falso.
+
+---
+
+## 10.7 20–30 JOGADORES — é divertido?  (design, não performance)
+
+Performance foi deliberadamente ignorada aqui: three.js e Unreal são engines
+diferentes e o número não transfere. `tools/diversao.js` mede só DESIGN.
+
+### As duas fases de uma partida, e elas são jogos diferentes
+
+| | arena CHEIA (30 vivos) | partida inteira (30 → 1) |
+|---|---|---|
+| tempo ocioso | **0%** | **57,5%** |
+| combos seus interrompidos por terceiro | 36% | ~0% |
+| duelo limpo médio | 3,5 s | 29,7 s |
+| golpes recebidos pelas costas | **47%** | 0–13% |
+
+A fase densa e a fase final são experiências opostas, e a densa **dura pouco**:
+numa partida de 30, os 30 viram 3 em ~55 s. O jogo que o design exercita
+acontece nos primeiros 20–30 s; o resto é um endgame esparso.
+
+### ⚠️ A arena é o botão da identidade do jogo
+
+Mesma partida de 30, mudando SÓ a arena:
+
+| | raio 48 · encolhe aos 30 s | **raio 30 · encolhe desde 0 s** |
+|---|---|---|
+| **ring-out** | 41% | **79%** |
+| nocaute | 17 | 6 |
+| primeira morte | 20 s | 16 s |
+| arco | parado 20 s, depois despenca | funil contínuo 30→28→23→20→16→…→1 |
+| duração | 75 s | 53 s |
+
+O raio 48 foi escolhido pra que um smash do centro não mate — certo pra duelo,
+errado pra 30 pessoas (241 m² por cabeça; eles se espalham e o jogo vira
+disputa de HP com uma borda decorativa). Com raio 30 são 94 m², a borda está
+sempre perto, e o ring-out volta a ser o jeito de ganhar.
+
+Regra prática: **dimensione pela DENSIDADE, não pelo alcance do smash** —
+algo como `raio ≈ 17·√(jogadores/2)` — e ponha `shrinkStartSec` perto de zero
+quando houver muita gente. Com 30, o encolhimento não é pressão de fim de jogo:
+é o motor do ritmo da partida inteira.
+
+### O que NÃO é problema (e se temia que fosse)
+
+- **Não vira bagunça.** 36% de interrupção por terceiro na fase mais densa é
+  presença, não opressão. Nunca houve três em cima do jogador.
+- **Não fica ilegível.** Com a arena cheia, alvo a ~2 m e 705 px de altura.
+
+### O que É problema
+
+1. **Duelo limpo de 3,5 s.** É pouco pra jogar uma leitura — vanish, Z-Counter e
+   Perfect Smash precisam de mais tempo de interação pra existir. Esse é o risco
+   real do formato: a profundidade do 1×1 pode não caber na fase densa.
+2. **47% dos golpes vêm pelas costas** na arena cheia. Metade do dano que você
+   leva é de quem você não podia ver. Pede indicador direcional de dano.
+3. **Ring-out sub-entregue** com a arena atual (16–41%), num jogo cuja
+   identidade é o ring-out. A correção é a arena, não o knockback.
+
+### 8.33 Sétima mentira do harness — e a trava que sobrou
+
+`f.eliminate` foi envolvido SEM `.bind(f)`; `this` vinha `undefined`, o método
+lançava, ninguém era eliminado, e `checkRingOut` recontava a mesma morte todo
+frame. O relatório disse **"2484 mortes suas"** numa arena com 30 vivos no fim,
+com 189 exceções no console que eu não tinha olhado.
+
+Ficou uma trava: `MEDICAO_SUSPEITA` compara mortes com nº de lutadores e acusa o
+impossível. Ela pegou o erro seguinte sozinha (modo imortal contando mortes que
+não aconteciam).
+
+**A lição, sétima vez:** neste projeto o instrumento erra mais que o código.
+Todo harness precisa de uma asserção que grite quando o resultado é impossível.
+
+---
+
+## 10.8 MODOS DE PARTIDA — e por que 20–25 min NÃO foi atingido
+
+Branch `modo-arena-partida-longa`. `?modo=duelo` (padrão) e `?modo=arena&n=30`.
+
+### O que entrou
+
+- **Modos** (`src/core/matchMode.js`): DUELO não sobrescreve NADA — é o MVP
+  validado e continua idêntico. ARENA sobrepõe HP, regeneração e arena.
+- **Cronograma de fases**: INÍCIO → MEIO → CONFRONTO → FINAL → CLÍMAX →
+  MORTE SÚBITA, com raio interpolado. Verificado: 110 m aos 0 min, 78 aos 5,
+  46 aos 12, 26 aos 18, 13 aos 25, 10 aos 30. Monotônico, sem saltos.
+- **Fast-forward** (`PROTO.simular`): roda a simulação sem render. Uma partida
+  de 30 min leva segundos. Sem isso cada tentativa de ajuste custaria meia hora.
+- **Regeneração de vida fora de combate** e **recuo da IA** — os dois
+  mecanismos que faltavam pra uma partida longa existir.
+- **A/D invertido**, corrigido (ver 8.34).
+- **Crash em `resolveTrade`**, corrigido (ver 8.35).
+
+### ⚠️ A meta de 20–25 min não foi atingida, e não é questão de ajuste
+
+Partida de 30 com a melhor configuração medida: **~2–4 minutos**. A meta era
+20–25. Varredura com o fast-forward:
+
+| configuração | duração |
+|---|---|
+| regeneração 0, sem recuo | 1,2 min |
+| regeneração 40 (cura total em 3,5 s), sem recuo | 5,2 min |
+| regeneração 28 + recuo abaixo de 55% de vida | 3,1 min |
+| agressividade 0,06 + distância preferida 45 m | 4,4 min |
+
+Nenhum número chega perto. A aritmética explica:
+
+```
+30 lutadores            →  ~15 brigas EM PARALELO
+29 eliminações / 25 min →  1 morte a cada 52 s
+logo, cada briga precisa passar ~13 MINUTOS sem matar ninguém
+```
+
+Não existe HP, dano ou raio que torne uma briga não-letal por treze minutos —
+e se existisse, não seria mais o combate validado no duelo.
+
+**O que governa a duração é a FRAÇÃO DO TEMPO EM COMBATE**, medida entre 43% e
+60%. Para 25 minutos precisaria ficar em 3–5%. E ela mal se move quando se mexe
+em agressividade ou distância preferida.
+
+### A causa é estrutural: não há limite de informação
+
+Todo lutador sabe onde todos estão — `nearestEnemy` varre a lista inteira, o
+lock-on aponta, a investida cobre a distância. Num battle royale a partida dura
+porque você **não sabe** onde as pessoas estão. Aqui todo mundo sempre acha
+alguém, e quem sempre acha alguém sempre está lutando.
+
+Sintoma mais claro disso: **a partida inteira acontece dentro da fase INÍCIO.**
+As outras quatro fases do cronograma estão implementadas, verificadas e nunca
+são exercitadas.
+
+### Quatro caminhos (decisão do dono)
+
+1. **Vidas/stocks** — 3 vidas triplicam as eliminações necessárias. Multiplica
+   por ~3, não por 20.
+2. **Limite de detecção** — você só enxerga quem está a N metros. Ataca a causa
+   diretamente, e muda `targeting.js` e a IA.
+3. **Equipes** — 30 jogadores em 6 times de 5 reduz brigas simultâneas de 15
+   pra 3.
+4. **Aceitar 5–8 min** como a duração natural deste combate e mirar várias
+   partidas curtas. É a que menos briga com o que existe: o ring-out é rápido
+   por natureza, e foi por isso que ele foi escolhido.
+
+### 8.34 ⚠️ Base de movimento invertida desde o primeiro commit
+
+`getMoveBasis` fazia `forward × up` (que já é a direita) e chamava `.negate()`.
+Resultado: **A andava pra direita e D pra esquerda.**
+
+Sobreviveu meses porque só o JOGADOR sofria. A IA calcula `moveX` com
+`worldDir.dot(basis.right)` e o Fighter aplica `basis.right * moveX` — os dois
+usam a mesma base invertida e o erro se cancela. Bot com controle invertido anda
+certo; humano não.
+
+Corrigir consertou três coisas de uma vez, porque as três leem essa base: o
+movimento lateral, a MIRA POR DIREÇÃO (escolhia alvo do lado errado) e a direção
+do ARREMESSO do grab.
+
+**Lição pro porte:** teste de movimento feito com IA não valida controle. A IA é
+imune a inversão de eixo por construção.
+
+### 8.35 ⚠️ Crash de `resolveTrade` que só existe com 3+ lutadores
+
+`resolveTrade` checava `a.move` no laço externo e lia `a.move.priority` no
+interno. Se `a` perdia uma troca contra um `b` anterior, ia pra HITSTUN,
+`_enter` zerava `a.move`, e a iteração seguinte lia `null.priority`.
+
+Impossível de reproduzir em 1×1 (só há um par). Apareceu na primeira simulação
+de 30 lutadores.
+
+---
+
+## 10.9 REBALANCEAMENTO DO COMBATE BASE — vida 100 → 900
+
+O passo que veio ANTES de mexer em duração de partida, e que mudou tudo.
+
+### O diagnóstico do dono estava certo
+
+Eu tinha alongado a partida de 30 jogadores com regeneração de vida e recuo da
+IA. Os dois foram vetados com a razão certa: **alongavam a partida mascarando um
+TTK baixo em vez de consertá-lo.** Estão desligados (em zero, como alavanca).
+
+Medido, 1×1 entre dois bots: **14,5 segundos.** Para uma luta de 2–4 minutos o
+TTK precisava subir ~10×.
+
+### Duas formas idênticas, e por que a escolhida importa
+
+Só a RAZÃO vida/dano importa:
+
+| | razão | medido |
+|---|---|---|
+| vida 500 · todo dano ×0,55 | 909 | 1,9 min |
+| **vida 900 · dano INTACTO** | 900 | **2,1 min** |
+
+Escolhida a segunda. Com o dano intacto, cada `damage` continua significando
+"HP removido" e a relação entre golpes fica legível (um smash vale 3,2 rushes).
+A primeira produziria dezoito decimais como 2,75 e 1,43, que não dizem nada a
+quem for montar a DataTable.
+
+### O que mais mudou, e por quê
+
+| | de | para | efeito medido |
+|---|---|---|---|
+| `fighter.maxHealth` | 100 | **900** | TTK ×10 |
+| `arena.outOfBoundsFrames` | 50 (0,8 s) | **240 (4 s)** | ring-out vira disputa, não sentença |
+| `defense.recover.kiCost` | 10 | **4** | 37 s → 74 s: o MAIOR salto isolado |
+| `ai.recoverChance` | 0,6 | **0,85** | a IA parava de se deixar cair |
+
+O ki era o gargalo da recuperação: quem levava um smash normalmente estava com
+ki baixo por ter gastado defendendo, e não tinha como se salvar. Baratear a
+recuperação sozinho dobrou a duração da luta.
+
+### O que foi PRESERVADO (verificado, não presumido)
+
+Frame data, knockback, poise, estamina de guarda — nada tocado:
+
+- poise quebra na mesma frequência (3× em 10 s de martelada)
+- guarda ainda esgota em **7 golpes**
+- smash ainda lança a **46,1 m/s**
+- rush startup 4, maxChain 4, janela perfeita 18–26
+
+### ⚠️ O custo: legibilidade do golpe
+
+Com vida 900, cada acerto move muito menos a barra:
+
+| golpe | % da barra |
+|---|---|
+| rush | 0,56% |
+| smash | 1,8% |
+| Perfect Smash | 2,8% |
+| **rota inteira (4 rushes + smash)** | **4,0%** |
+
+25 rotas completas para matar por HP. Quatro por cento por rota é o limite do
+que ainda é visível — foi por isso que a vida ficou em 900 e não em 1600: é a
+MENOR que alcança a faixa de 2 minutos.
+
+**Se o playtest disser que o golpe "não sente", o conserto NÃO é baixar a vida**
+(isso devolve a luta de 15 segundos). É a barra mostrar o dano recente — o
+rastro branco já faz metade disso.
+
+### Efeito colateral desejado: o ring-out virou caminho de igual peso
+
+| | ring-out | nocaute |
+|---|---|---|
+| vida 100 | 0/8 | 8/8 |
+| **vida 900** | **5/10** | 5/10 |
+
+Com vida alta, matar por HP demora e a borda passa a ser a via rápida — que é a
+identidade do jogo.
+
+### A duração de 30 jogadores EMERGIU, não foi forçada
+
+| | duração |
+|---|---|
+| combate original | 1,2 min |
+| com regeneração + recuo (mascarado, descartado) | 2–4 min |
+| **vida 900, sem curativo nenhum** | **~5 min** |
+
+E o cronograma de fases foi recalibrado pela duração REAL: espalhado por 30 min
+a partida inteira cabia na fase INÍCIO. Comprimido para 8 min:
+
+| cronograma | duração | ring-out | fases vividas |
+|---|---|---|---|
+| de 30 min | 5,6 min | 18% | 2 de 6 |
+| **comprimido** | 5,0 min | **47%** | **4 de 6** |
+
+Mesma duração, o dobro de ring-out e o dobro de arco. Um cronograma que não
+termina não é pressão, é decoração.
+
+**Ressalva:** bots não recuam nem evitam briga; humanos fazem as duas coisas.
+Cinco minutos é um PISO, não um teto.
+
+---
+
 ## 11. O que ainda NÃO foi validado
 
 **Esta seção é a mais importante para não portar um erro.**

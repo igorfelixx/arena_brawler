@@ -239,6 +239,13 @@ export class Fighter {
     this._armorAbsorbed = 0;
     this.tradeLostFrames = 0;
 
+    /* HITSTOP DESTE CORPO (§22). Ver TUNING.juice.hitstopScope.
+     *
+     * Era um contador global no Juice, e com 16 lutadores o jogo passava 77% do
+     * tempo parado porque sempre havia alguém batendo em alguém. Hitstop é
+     * propriedade de uma TROCA, não do mundo. */
+    this.hitstopFrames = 0;
+
     /* Tipo da perseguição em curso — a telemetria precisa mostrar QUAL saiu. */
     this.pursuitType = 'direct';
     this._pursuitSpec = null;
@@ -367,6 +374,22 @@ export class Fighter {
     if (!this.alive) return;
 
     this.events.length = 0;
+
+    /* ================================================================
+     *  CONGELADO NA TROCA  —  este corpo não anda
+     * ================================================================
+     *  Sai ANTES de tudo: nada de stateFrame, nada de timer, nada de física.
+     *  É o que faz o congelamento ser congelamento e não câmera lenta.
+     *
+     *  Só o próprio contador anda. Os DOIS lados de uma troca recebem isto no
+     *  mesmo frame, então o soco e quem levou param juntos — que é a imagem que
+     *  vende o peso. O resto da arena continua correndo, e é justamente essa
+     *  separação que destrava a escala (ver juice.hitstopScope). */
+    if (this.hitstopFrames > 0) {
+      this.hitstopFrames--;
+      return;
+    }
+
     this.stateFrame++;
 
     /* Janela de vanish: guardamos há quantos frames o botão foi apertado.
@@ -468,6 +491,22 @@ export class Fighter {
     // --- regeneração ---
     this.poise = Math.min(this.maxPoise,
       this.poise + TUNING.fighter.poiseRegenPerSec * dt);
+
+    /* VIDA fora de combate. Zero no duelo (ver a nota em `fighter`), é o que
+     * sustenta a partida longa do modo ARENA: sem isto o dano de 30 lutadores
+     * só acumula e a reserva de vida da arena inteira acaba em 81 segundos.
+     *
+     * O relógio reinicia a CADA dano tomado — é em `applyHit`. Quem está sob
+     * pressão contínua nunca regenera, então isto não protege quem está
+     * perdendo a briga; protege quem conseguiu SAIR dela. */
+    const RG = TUNING.fighter.healthRegenPerSec;
+    if (RG > 0 && this.health < TUNING.fighter.maxHealth) {
+      if (this._semDanoFrames === undefined) this._semDanoFrames = 0;
+      this._semDanoFrames++;
+      if (this._semDanoFrames > TUNING.fighter.healthRegenDelaySec * TUNING.sim.fps) {
+        this.health = Math.min(TUNING.fighter.maxHealth, this.health + RG * dt);
+      }
+    }
 
     /* ================================================================
      *  MAX POWER: o relógio e o escoamento  (§19)
@@ -1893,6 +1932,20 @@ export class Fighter {
   }
 
   /**
+   * Congela ESTE corpo por N frames (hitstop).
+   *
+   * Pega o MAIOR e não soma, pela mesma razão que o Juice global já fazia:
+   * somar faz combos rápidos travarem o lutador por meio segundo. Com vários
+   * adversários batendo no mesmo alvo isso deixaria de ser um detalhe e viraria
+   * uma prisão — exatamente o risco que a escala introduz.
+   */
+  applyHitstop(frames) {
+    if (!TUNING.juice.hitstopEnabled || !frames) return;
+    const f = Math.round(frames * TUNING.juice.hitstopScale);
+    if (f > this.hitstopFrames) this.hitstopFrames = f;
+  }
+
+  /**
    * Trava este lutador por N frames, interrompendo o que ele estava fazendo.
    * Usado pelo Z-Counter: o preço de ter o golpe lido é ficar exposto.
    */
@@ -2371,6 +2424,9 @@ export class Fighter {
     }
 
     this.health = Math.max(0, this.health - damage);
+    // Tomar dano reinicia o relógio da regeneração: quem está sob pressão
+    // contínua não se recompõe, e é isso que mantém a briga letal.
+    this._semDanoFrames = 0;
     // Boneco de treino não morre: a sessão precisa durar mais que dez segundos.
     if (this.immortal && this.health <= 0) this.health = 1;
     this.poise -= move.poiseDamage || 0;
@@ -2657,6 +2713,7 @@ export class Fighter {
     this.exhaustFrames = 0;
     this._armorAbsorbed = 0;
     this.tradeLostFrames = 0;
+    this.hitstopFrames = 0;
 
     this.hitThisMove.clear();
     this.hitConfirmThisMove = false;

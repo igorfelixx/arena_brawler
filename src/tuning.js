@@ -232,7 +232,43 @@ export const TUNING = {
   /*  LUTADOR                                                            */
   /* ================================================================== */
   fighter: {
-    maxHealth: 100,
+    /* ================================================================
+     *  VIDA  —  900, e o dano NÃO foi tocado
+     * ================================================================
+     *  Medido: com 100 de vida, um 1×1 entre dois bots dura 14,5 SEGUNDOS.
+     *  A meta é 2–4 minutos de luta engajada, então o TTK precisava subir ~10x.
+     *
+     *  Duas formas de fazer isso dão exatamente o mesmo resultado, porque só a
+     *  RAZÃO importa:
+     *      vida 500 e todo dano ×0,55   →  500/0,55 = 909
+     *      vida 900 e dano INTACTO      →  900/1,00 = 900
+     *  Medidos lado a lado: 1,9 min e 2,1 min. Indistinguíveis.
+     *
+     *  Escolhida a segunda, e a razão é este arquivo ser o produto: com o dano
+     *  intacto, cada número de `damage` continua significando "HP removido", e
+     *  a relação entre os golpes (um smash vale 3,2 rushes) fica legível. A
+     *  primeira forma produziria dezoito decimais como 2,75 e 1,43, que não
+     *  dizem nada a quem for montar a DataTable no Unreal.
+     *
+     *  O QUE ISSO CUSTA, e é o risco que precisa ficar registrado: cada golpe
+     *  passa a mover muito menos a barra.
+     *
+     *      rush         5/900  =  0,55% da barra
+     *      smash       16/900  =  1,8%
+     *      rota inteira 36/900 =  4,0%
+     *
+     *  Quatro por cento por rota completa é pouco, e é o limite de onde um
+     *  acerto ainda é VISÍVEL. Foi por isso que 900 foi escolhido e não 1600:
+     *  a vida é a MENOR que alcança a faixa de 2 minutos, o que maximiza o que
+     *  sobra de legibilidade. Se o playtest disser que o golpe "não sente",
+     *  o conserto NÃO é baixar a vida — é a barra de vida mostrar o dano
+     *  recente (o rastro branco já faz metade disso), porque baixar a vida
+     *  devolve a luta de 15 segundos.
+     *
+     *  Efeito colateral desejado: com a vida alta, matar por HP demora e o
+     *  RING-OUT vira caminho de vitória de igual peso. Medido em 10 lutas:
+     *  5 por ring-out, 5 por nocaute. Era 0 por ring-out com vida 100.        */
+    maxHealth: 900,
     radius: 0.55,               // raio de colisão
     height: 1.8,
     // (`pushForce` removido: nunca foi lido. A separação de corpos em
@@ -258,6 +294,32 @@ export const TUNING = {
      *
      * 18 m/s com arrasto 1.35 ≈ 13 m de separação: longe o bastante pra sair
      * do alcance do rush (2.6 m) e perto o bastante pra valer perseguir. */
+    /* ================================================================
+     *  REGENERAÇÃO DE VIDA  —  zero no duelo, é o motor do modo ARENA
+     * ================================================================
+     *  Medido: 30 lutadores produzem 52 de dano POR SEGUNDO na arena. A
+     *  reserva inteira de vida (30 × 140 = 4200) é consumida em 81 segundos.
+     *  Para uma partida de 25 minutos seria preciso derrubar isso pra ~2,8/s —
+     *  ou dar 2500 de vida a cada um, que é a "sessão de espancamento
+     *  administrativo" que o design veta explicitamente.
+     *
+     *  A causa não é o HP ser baixo. É que 30 lutadores ficam em combate
+     *  ININTERRUPTO, e o dano só ACUMULA. Num battle royale de 25 minutos a
+     *  maior parte do tempo não é briga: você luta, sobrevive, se afasta, se
+     *  recompõe. Sem recomposição, a soma dos danos mata todo mundo rápido
+     *  independentemente do tamanho da barra.
+     *
+     *  Daí a regeneração FORA DE COMBATE. Ela não deixa ninguém mais durão
+     *  numa troca — o dano por golpe é o mesmo, a leitura é a mesma, o combo
+     *  mata igual. O que ela muda é que PERDER UMA BRIGA deixa de ser uma
+     *  sentença acumulada: quem se afastou a tempo volta inteiro, e quem
+     *  insiste sob pressão contínua morre do mesmo jeito.
+     *
+     *  Zero no DUELO, e tem que continuar zero: num 1×1 de 90 segundos,
+     *  regeneração só faria a luta não acabar. */
+    healthRegenPerSec: 0,
+    healthRegenDelaySec: 0,
+
     maxPoise: 34,
     poiseRegenPerSec: 14,
     poiseBreakStunFrames: 30,
@@ -271,6 +333,67 @@ export const TUNING = {
   targeting: {
     acquireRange: 14.0,         // até onde um golpe procura alvo (lock solto)
     lockKeepRange: 60.0,        // acima disto o lock-on se rompe sozinho
+
+    /* ================================================================
+     *  LIMITE DE DETECÇÃO  —  a condição pra PODER FUGIR DE UMA BRIGA
+     * ================================================================
+     *  O problema, medido e teimoso: os lutadores passam 74–77% do tempo em
+     *  combate, e esse número NÃO SE MOVE. Testado com 30 e com 84 pessoas, em
+     *  arenas de raio 70 até 245 (doze vezes mais área por cabeça):
+     *
+     *      raio  70m ·   513 m²/pessoa  →  75% em briga
+     *      raio 245m · 6.286 m²/pessoa  →  73% em briga
+     *
+     *  Doze vezes mais espaço, mesmo tempo brigando. Aumentar a arena só
+     *  destruiu o ring-out (29% → 9%) e não comprou folga nenhuma.
+     *
+     *  A causa é que não havia limite de INFORMAÇÃO. `nearestEnemy` varria a
+     *  lista inteira de lutadores, então todo mundo sempre sabia onde estava
+     *  o mais próximo, por mais longe que fosse — e ia atrás. Espaço não
+     *  resolve isso: você pode correr, mas não pode SUMIR.
+     *
+     *  Com um alcance de detecção, afastar-se passa a ter consequência: quem
+     *  sai do seu raio deixa de ser seu alvo, e você deixa de ser alvo dele.
+     *  É o que permite a tática que o Torneio do Poder tem o tempo todo —
+     *  sair de uma briga que está ruim, recuperar, escolher a próxima.
+     *
+     *  Histerese de propósito: adquire a 24 m e só larga a 38 m. Com um
+     *  limiar só, quem ficasse rondando a distância exata entraria e sairia de
+     *  combate a cada frame, e a briga ficaria engasgando.                   */
+    detectionRange: 24.0,       // até aqui você ENCONTRA alguém pra lutar
+    loseTargetRange: 38.0,      // passou disto, você o PERDE de vista
+
+    /* ================================================================
+     *  ⚠️  A RESTRIÇÃO QUE IMPEDE A PARTIDA DE NUNCA ACABAR
+     * ================================================================
+     *      2 × (raio da ÚLTIMA fase)  <  loseTargetRange
+     *
+     *  Se a arena final for maior que o alcance de DETECÇÃO, dois sobreviventes
+     *  podem se evitar INDEFINIDAMENTE: cada um de um lado, nenhum enxergando
+     *  o outro, e nada os obrigando a se encontrar.
+     *
+     *  Medido, 30 lutadores, 5 partidas por configuração:
+     *
+     *      arena final 17 m  (2×17 = 34 > 24)  →  TRAVA com 2 sobreviventes
+     *      arena final 10 m  (2×10 = 20 < 24)  →  termina
+     *
+     *  E o alcance certo é `detectionRange` (24), não `loseTargetRange` (38).
+     *  Errei isso na primeira tentativa: `loseTargetRange` é o quanto você
+     *  AGUENTA perseguir quem já é seu alvo; `detectionRange` é o quanto você
+     *  enxerga pra ACHAR um. Dois sobreviventes que nunca se viram precisam do
+     *  segundo — e com a restrição errada a partida travava com dois vivos a
+     *  30 m um do outro, cada um sem alvo, indefinidamente.
+     *
+     *  Cento e quarenta e nove minutos é o TETO DO MEDIDOR, não a duração: a
+     *  partida simplesmente não termina. É o preço de dar a opção de fugir, e
+     *  quem paga é o encolhimento da arena — mas só se ele fechar o bastante.
+     *
+     *  `matchMode.aplicar()` confere isso no boot e avisa no console. */
+
+    /* Com 0 o limite é desligado e volta o comportamento antigo (onisciente).
+     * Fica como chave porque o duelo não precisa disto — num 1×1 perder o
+     * adversário de vista não é tática, é a luta deixar de existir. */
+    detectionEnabled: 1,
 
     /* Pesos da pontuação de escolha. O de ALINHAMENTO é o que dá controle ao
      * jogador: só distância faz o alvo pular sozinho entre inimigos sempre que
@@ -347,6 +470,181 @@ export const TUNING = {
      * estados e uma árvore de decisão por frame, e o teto real na sua máquina
      * ainda é desconhecido. */
     opponents: 1,
+
+    /* ================================================================
+     *  MODOS DE PARTIDA  —  DUELO e ARENA são jogos diferentes
+     * ================================================================
+     *  Medido: 30 jogadores com os números do duelo acabam em 53–75 SEGUNDOS.
+     *  Um brawler de eliminação com 30 pessoas resolvido em um minuto não é
+     *  uma partida curta — é um intervalo comercial com socos.
+     *
+     *  Mas a correção NÃO é inflar HP. 30 jogadores × uma barra gigante produz
+     *  uma sessão de espancamento administrativo: o mesmo jogo, mais devagar,
+     *  e chato. O que controla o ritmo de eliminação é outra coisa, e a
+     *  medição mostrou qual:
+     *
+     *      arena raio 48  →  41% de ring-out
+     *      arena raio 30  →  79% de ring-out
+     *
+     *  O ESPAÇO é o botão. Num jogo cuja identidade é o ring-out, quanto mais
+     *  perto a borda está, mais rápido as pessoas saem. Então a duração de uma
+     *  partida é, antes de tudo, o CRONOGRAMA DA ARENA.
+     *
+     *  Por isso os dois modos existem separados, e por isso o DUELO não muda
+     *  nem um número: ele é o MVP validado, e é contra ele que tudo foi medido.
+     *  Mexer nele pra acomodar o modo de 30 jogaria fora a única base de
+     *  comparação que o projeto tem.
+     *
+     *  Escolha na URL:  ?modo=duelo   (padrão)
+     *                   ?modo=arena&n=30
+     */
+    mode: 'duelo',
+
+    modes: {
+      /* DUELO — 1×1. NÃO SOBRESCREVE NADA de propósito: usa `arena`,
+       * `fighter` e `defense` exatamente como estão no resto deste arquivo.
+       * Se um dia este bloco ganhar um campo, a base de comparação morre. */
+      duelo: {
+        label: 'DUELO',
+        fighters: 2,
+      },
+
+      /* ================================================================
+       *  ARENA — 20 a 30 jogadores, 20–25 minutos
+       * ================================================================
+       *  A curva-alvo, em jogadores restantes:
+       *
+       *      0–5 min    INÍCIO      30 → 22   espaço amplo, primeiras quedas
+       *      5–12 min   MEIO        22 → 13   a arena começa a fechar
+       *      12–18 min  CONFRONTO   13 → 7    disputa por posição
+       *      18–25 min  FINAL        7 → 3    arena pequena
+       *      25–30 min  CLÍMAX       3 → 1    ring-out decide
+       *
+       *  O que a faz acontecer: a arena começa GRANDE o bastante pra que um
+       *  smash quase nunca mate (raio 110 contra os ~34 m que um corpo lançado
+       *  percorre), e termina PEQUENA o bastante pra que qualquer lançamento
+       *  seja fatal. A morte deixa de ser um evento e vira uma consequência do
+       *  relógio — que é exatamente o arco "começo tranquilo, final caótico".
+       *
+       *  HP sobe pouco (100 → 140) e só pra que a fase inicial não seja
+       *  decidida por nocaute. O aumento é deliberadamente modesto: o objetivo
+       *  é que as pessoas saiam pela BORDA, não que demorem mais pra morrer.  */
+      arena: {
+        label: 'ARENA',
+        fighters: 30,
+
+        /* Sobreposições. Tudo que não estiver aqui vem do bloco normal —
+         * mesmo contrato dos perfis de IA, e pelo mesmo motivo: um slider
+         * arrastado no painel continua valendo. */
+        /* SEM sobreposição de vida nem regeneração.
+         *
+         * Havia `maxHealth: 140` e `healthRegenPerSec: 28` aqui, e os dois
+         * saíram: eram curativo pra uma partida que acabava rápido demais
+         * porque o COMBATE BASE tinha o TTK baixo. Com a vida em 900 no bloco
+         * `fighter`, o modo arena herda o mesmo combate do duelo — que é como
+         * tem que ser, senão são dois jogos e só um está balanceado.
+         *
+         * A regeneração continua existindo (`fighter.healthRegenPerSec`) e em
+         * zero. É alavanca, não mecânica em uso. */
+
+
+        /* ------------------------------------------------------------
+         *  CRONOGRAMA DE FASES — o coração do modo
+         * ------------------------------------------------------------
+         *  `min` é o minuto em que a fase COMEÇA; `raio`/`teto` são os valores
+         *  no FIM dela. Entre duas fases o valor é interpolado, então a arena
+         *  nunca dá saltos.
+         *
+         *  Fases nomeadas em vez de uma curva só porque o jogador precisa
+         *  LER em que momento da partida está — "CONFRONTO" diz mais que
+         *  "raio 38 m", e é o que transforma o encolhimento de cronômetro em
+         *  narrativa.                                                        */
+        /* Cronograma CALIBRADO PELA DURAÇÃO REAL, não pela desejada.
+         *
+         * A primeira versão espalhava as fases por 30 minutos, porque a meta
+         * era uma partida de 20–25. Com o combate rebalanceado a partida dura
+         * ~6 min de verdade — e o cronograma de 30 min significava que ela
+         * inteira acontecia dentro da fase INÍCIO. Medido, 30 lutadores:
+         *
+         *     cronograma de 30 min   5,6 min · ring-out 18% · 2 de 6 fases
+         *     cronograma comprimido  5,4 min · ring-out 32% · 4 de 6 fases
+         *
+         * Mesma duração, o DOBRO de ring-out e o dobro de arco vivido. Um
+         * cronograma que não termina não é pressão, é decoração — a arena
+         * precisa fechar dentro do tempo que a partida de fato dura.
+         *
+         * Se o playtest alongar a partida (humanos recuam, bots não), estes
+         * minutos sobem junto. É a primeira coisa a reajustar. */
+        /* ------------------------------------------------------------
+         *  O ARCO: POUCA BRIGA NO COMEÇO, MUITA NO FIM
+         * ------------------------------------------------------------
+         *  O cronograma não é um cronômetro — é a CURVA DE ENCONTRO. Com
+         *  alcance de detecção fixo (24 m), quantos vizinhos cada lutador tem
+         *  dentro do campo de visão depende só do raio:
+         *
+         *      vizinhos ≈ N × (detecção / raio)²
+         *
+         *      raio 300 m  →  0,19 vizinhos   quase sempre sozinho
+         *      raio 160 m  →  0,68            encontros intermitentes
+         *      raio  95 m  →  1,9             briga frequente
+         *      raio  50 m  →  6,9             tumulto
+         *      raio  17 m  →  todos           ninguém se evita
+         *
+         *  É a mesma ideia de um battlefield: o começo é calmo porque as
+         *  pessoas estão LONGE, e o fim é caótico porque não há mais pra onde
+         *  ir. A escalada não é uma regra extra — ela cai sozinha da geometria,
+         *  desde que a arena comece grande o bastante.
+         *
+         *  Começar em 110 m era o erro da versão anterior: 1,4 vizinhos já no
+         *  minuto zero, ou seja, briga constante desde o início e nenhum arco.
+         *
+         *  Os minutos estão esticados pra uma partida de 25–30 min. Se o
+         *  playtest mostrar que arrasta, a correção é ENCURTAR OS MINUTOS, não
+         *  diminuir os raios — os raios são o que produz o arco.               */
+        phases: [
+          { min: 0,  raio: 300, teto: 120, label: 'INÍCIO',    sub: 'procure, ou se esconda' },
+          { min: 5,  raio: 230, teto: 100, label: 'MEIO',      sub: 'os primeiros encontros' },
+          { min: 10, raio: 160, teto: 80,  label: 'CONFRONTO', sub: 'não dá mais pra sumir' },
+          { min: 15, raio: 95,  teto: 58,  label: 'FINAL',     sub: 'disputa por posição' },
+          { min: 20, raio: 50,  teto: 38,  label: 'CLÍMAX',    sub: 'não caia' },
+          /* 17 m e não mais: 2×17 = 34 < loseTargetRange (38). É a restrição
+           * que impede a partida de nunca acabar — ver targeting. */
+          /* 10 m: 2×10 = 20 < detectionRange (24). Dois sobreviventes SEMPRE
+           * se acham. Ver a restrição em `targeting`. */
+          { min: 26, raio: 10,  teto: 20,  label: 'MORTE SÚBITA', sub: '' },
+        ],
+
+        /* Teto duro. Chegar aqui sem vencedor é um defeito de ritmo, não um
+         * final legítimo — e é melhor o protótipo gritar do que arrastar. */
+        hardCapMin: 34,
+
+        /* ================================================================
+         *  DURAÇÃO: ~6 MIN, e ela EMERGIU — não foi forçada
+         * ================================================================
+         *  A meta inicial era 20–25 min. O caminho que eu tinha tomado pra lá
+         *  estava errado, e o dono do projeto apontou: regeneração de vida e
+         *  recuo da IA alongavam a partida MASCARANDO um TTK baixo em vez de
+         *  consertá-lo. Os dois foram desligados (estão em zero, como alavanca).
+         *
+         *  O conserto certo foi o COMBATE BASE: vida 100 → 900 (ver a nota no
+         *  bloco `fighter`). Sozinho, ele levou a partida de 30 jogadores de
+         *  1,2 min para ~6 min — cinco vezes, sem nenhum curativo.
+         *
+         *      1,2 min   combate original
+         *      2–4 min   com regeneração + recuo (mascarado, descartado)
+         *      ~6 min    vida 900, sem curativo nenhum
+         *
+         *  SEIS MINUTOS É A DURAÇÃO NATURAL DESTE COMBATE com 30 bots, e está
+         *  registrada como resultado, não como meta atingida. Chegar aos 20–25
+         *  exigiria as mudanças estruturais da seção 10.8 do doc de passagem
+         *  (limite de detecção, vidas, equipes) — e a decisão de perseguir isso
+         *  ou aceitar partidas de 6–8 min é de gameplay, não de tuning.
+         *
+         *  Ressalva importante: bots não recuam e não evitam briga. Humanos
+         *  fazem as duas coisas, então a duração com jogadores de verdade
+         *  provavelmente é MAIOR. Este número é um piso, não um teto.          */
+      },
+    },
   },
 
   /* ================================================================== */
@@ -1485,7 +1783,12 @@ export const TUNING = {
 
     /* Recuperação no ar após levar smash — aperta no timing e para de voar. */
     recover: {
-      kiCost: 10,
+      /* 4 e não 10. O ki era o GARGALO da recuperação: medido, baratear este
+       * número sozinho levou a luta de 37 s pra 74 s — o maior salto isolado
+       * de toda a varredura de TTK. Quem acabou de levar um smash normalmente
+       * está com ki baixo justamente por ter gastado defendendo, e aí não
+       * tinha como se salvar. */
+      kiCost: 4,
       windowAfterFrames: 12,    // só pode recuperar após N frames voando
       frames: 18,
       iframes: [0, 12],
@@ -1610,6 +1913,40 @@ export const TUNING = {
   /* ================================================================== */
   /*  Arena Tenkaichi é GRANDE. Precisa de espaço pro smash mandar longe.
    *  Ela encolhe como uma cúpula (raio E teto), não como um círculo.       */
+  /* ======================================================================
+   *  ⚠️  A ARENA É DIMENSIONADA PELO SMASH — E ISSO SÓ VALE PARA 1×1
+   * ======================================================================
+   *  O raio 48 abaixo foi escolhido pra que um smash acertado no CENTRO não
+   *  mate, e um acertado na metade externa mate. Para um duelo isso é certo.
+   *
+   *  Para 20–30 jogadores é a decisão errada, e a diferença é gritante. Mesma
+   *  partida de 30, mudando SÓ a arena (medido, `tools/diversao.js`):
+   *
+   *      raio 48, encolhe aos 30 s    →  41% ring-out · 17 nocautes
+   *                                      nada morre nos primeiros 20 s, e
+   *                                      depois todo mundo morre de uma vez
+   *
+   *      raio 30, encolhe desde 0 s   →  79% RING-OUT · 6 nocautes
+   *                                      primeira morte aos 16 s, funil suave
+   *                                      30→28→23→20→16→13→11→9→7→5→3→1
+   *
+   *  Com raio 48 e 30 pessoas, cada um tem 241 m² — eles se espalham, e o jogo
+   *  vira uma disputa de HP com uma borda decorativa. Com raio 30 são 94 m², a
+   *  borda está sempre por perto, e o RING-OUT volta a ser o jeito de ganhar.
+   *
+   *  A regra prática que sai disso: **a arena deve ser dimensionada pela
+   *  DENSIDADE, não pelo alcance do smash.** Algo como
+   *
+   *      raio ≈ 17 · √(jogadores / 2)      (48 para 2 · ~30 para 30)
+   *
+   *  e `shrinkStartSec` perto de zero quando há muita gente — com 30 jogadores
+   *  o encolhimento não é pressão de fim de jogo, é o MOTOR DO RITMO da partida
+   *  inteira. Os primeiros 30 s sem encolher são tempo morto.
+   *
+   *  NÃO alterei os valores: o 1×1 é o MVP validado, e mexer aqui mudaria o
+   *  jogo que já foi medido. Isto fica registrado como o botão a girar quando
+   *  o modo de 20–30 for pra valer.
+   * ====================================================================== */
   arena: {
     // Dimensionada pelo SMASH, não por gosto. Com knockback 46 m/s e drag 1.35,
     // um corpo lançado percorre ~34 m antes de parar. Raio 48 significa que um
@@ -1628,8 +1965,80 @@ export const TUNING = {
     edgeDangerBand: 6.0,        // faixa da borda que pisca
     ringOutRadiusGrace: 2.0,    // margem antes de contar como fora
     ringOutY: -8.0,
-    outOfBoundsFrames: 50,      // frames fora antes de eliminar (dá tempo de voltar)
+    /* 240 frames = 4 s fora antes de eliminar.
+     *
+     * Era 50 (0,8 s), e 0,8 s não é tempo de voltar: um smash lança a 46 m/s e
+     * o corpo leva ~2,5 s só pra PARAR. Na prática, sair da arena era morte, e
+     * a luta acabava no primeiro smash bem colocado — medido, 8 de 8 lutas
+     * terminavam em ring-out em ~23 s.
+     *
+     * Com 4 s, ser lançado vira uma DISPUTA: você ainda morre se não reagir,
+     * mas recuperar no tempo certo e voar de volta salva. O ring-out continua
+     * pesado (5 de 10 mortes) — deixou de ser sentença e virou leitura, que é
+     * o que separa perícia de azar. */
+    outOfBoundsFrames: 240,
     floorY: 0,
+  },
+
+  /* ================================================================== */
+  /*  BARRA DE VIDA EM CAMADAS  —  a legibilidade do acerto              */
+  /* ================================================================== */
+  /*  O problema que isto resolve está medido e registrado: com vida 900,
+   *  uma ROTA INTEIRA (4 rushes + smash) tira 4,0% da barra, e um rush
+   *  tira 0,56%. O acerto some. Foi o custo aceito pra luta durar 2 minutos
+   *  em vez de 14 segundos, e o comentário em `fighter.maxHealth` já dizia
+   *  qual era o conserto certo: não baixar a vida, e sim a BARRA mostrar
+   *  melhor o dano.
+   *
+   *  A solução é a de Naruto Storm: a barra tem CAMADAS, cada uma com sua
+   *  cor. Você não lê "perdi 4% de 900" — lê "comi um quinto da camada
+   *  vermelha", e quando ela acaba o adversário vê a cor mudar.
+   *
+   *  Com 5 camadas de 180:
+   *      rush          0,56% do total  →   2,8% da camada
+   *      rota inteira  4,0%            →  20% da camada    ← visível
+   *      quebrar camada é um EVENTO, com cor nova e um baque na tela
+   *
+   *  É puramente apresentação: nenhum número de combate muda, e o total
+   *  continua sendo 900. O que muda é a escala contra a qual o olho compara.
+   *
+   *  Efeito colateral de design que vale manter: a troca de cor dá ao jogo
+   *  marcos de "fase da luta" que o HP sozinho não dava. Saber que o outro
+   *  está na última camada é informação tática — é quando o ring-out deixa
+   *  de ser a única via rápida.                                            */
+  healthBar: {
+    layers: 5,
+
+    /* Da camada CHEIA pra última. A última é vermelha de propósito: é o
+     * sinal universal de "acabando", e tem que destoar das outras. */
+    colors: ['#6fe8a0', '#9ee86f', '#e8d76f', '#e8a06f', '#ff5a6a'],
+
+    /* A barra mostra UMA camada por vez, CHEIA — não o total picotado.
+     *
+     * A primeira versão dividia a barra em cinco faixas com linhas. Funcionava
+     * como régua e era feia: a barra ficava quase parada, e o dano continuava
+     * parecendo pequeno porque o olho comparava com a largura TOTAL.
+     *
+     * Mostrando uma camada de cada vez, a largura inteira da barra passa a
+     * valer 180 de vida em vez de 900. O mesmo golpe que movia 0,56% agora
+     * move 2,8% — cinco vezes mais, sem nenhum número de combate mudar. E
+     * quando a camada acaba, a barra ENCHE DE NOVO com outra cor, que é o
+     * momento em que o jogador sente que arrancou alguma coisa.
+     *
+     * Os pontinhos abaixo da barra são o que preserva a leitura do TOTAL —
+     * sem eles, estar na última camada e na primeira pareceriam iguais. */
+    showPips: true,
+
+    /* Quebrar uma camada é um evento: clarão na barra + tremor curto.
+     * Sem isso a mudança de cor passa despercebida no meio da luta. */
+    flashOnBreak: true,
+    breakFlashMs: 420,
+    breakShake: 0.22,
+
+    /* Ao quebrar uma camada, o rastro branco é jogado no CHEIO pra drenar a
+     * barra nova inteira. É o que vende "arranquei uma camada" — sem isso a
+     * barra só troca de cor e o momento passa batido. */
+    ghostResetOnBreak: true,
   },
 
   /* ================================================================== */
@@ -1639,6 +2048,43 @@ export const TUNING = {
     hitstopEnabled: true,
     hitstopScale: 1.0,
     hitstopShakeAmp: 0.05,      // vibração DURANTE o congelamento
+
+    /* ================================================================
+     *  ALCANCE DO HITSTOP  —  o bloqueador da escala
+     * ================================================================
+     *  O hitstop era GLOBAL: um contador só, e `juice.hitstop()` pegando o
+     *  MAIOR entre o atual e o novo. Com dois lutadores isso é perfeito — eles
+     *  revezam, e o congelamento pontua cada troca.
+     *
+     *  Com muitos, vira outra coisa. Medido no navegador, % do tempo com a
+     *  simulação inteira parada:
+     *
+     *       2 lutadores   20,6%     ← o jogo validado. Isto é "gostoso".
+     *       4 lutadores   88,7%
+     *       8 lutadores   36,2%
+     *      16 lutadores   77,0%     ← 12 janelas de 2 s, nenhuma abaixo de 57%
+     *
+     *  Com 16, a simulação rodava 0,18 passo por frame de render. O jogo não
+     *  estava lento por falta de CPU (a simulação custa 0,3 ms) — estava PARADO,
+     *  porque sempre havia alguém batendo em alguém, e o congelamento global
+     *  nunca soltava. É um defeito de DESIGN que se disfarça de problema de
+     *  performance, e não apareceria nunca num teste 1×1.
+     *
+     *  A raiz é conceitual: hitstop é propriedade de uma TROCA, não do mundo.
+     *  Não faz sentido o seu combo congelar porque dois desconhecidos do outro
+     *  lado da arena se acertaram.
+     *
+     *    'player'    (padrão) os DOIS envolvidos congelam sempre; a TELA só
+     *                congela quando você é um dos dois. Em 1×1 é idêntico ao
+     *                comportamento antigo — toda troca é sua. Com 16, só as
+     *                suas trocas param a tela, e as dos outros congelam apenas
+     *                os corpos deles.
+     *    'fighters'  ninguém congela a tela. Mais correto pra espectador/rede,
+     *                menos impactante pra quem joga.
+     *    'global'    o comportamento antigo. Só pra comparar lado a lado —
+     *                não use acima de 2 lutadores.
+     */
+    hitstopScope: 'player',
 
     /* ================================================================
      *  HITSTOP POR CATEGORIA  (§22)
@@ -1826,7 +2272,47 @@ export const TUNING = {
     maxPowerChance: 0.5,
     blastChance: 0.30,
     chargeKiBelow: 28,          // carrega ki quando abaixo disto
-    recoverChance: 0.6,         // chance de se recuperar após levar smash
+    /* 0,85: um jogador competente quase sempre tenta recuperar. Com 0,6 a IA
+     * simplesmente se deixava cair em 40% dos lançamentos, e isso encurtava a
+     * luta por burrice, não por design. */
+    recoverChance: 0.85,        // chance de se recuperar após levar smash
+
+    /* ================================================================
+     *  RECUAR  —  a IA não tinha instinto de sobrevivência
+     * ================================================================
+     *  Ela lutava até morrer, sempre. Num duelo isso passa despercebido (os
+     *  dois vão até o fim de qualquer jeito). Numa partida de 30 pessoas é o
+     *  que decide a DURAÇÃO da partida inteira, e a medição foi direta:
+     *
+     *      regeneração  0/s  →  partida de 1,2 min
+     *      regeneração 40/s  →  partida de 5,2 min
+     *
+     *  Quarenta de vida por segundo é cura total em 3,5 s, e ainda assim a
+     *  partida durava cinco minutos. Porque o relógio da regeneração só corre
+     *  SEM TOMAR DANO, e quem nunca recua nunca para de tomar dano. O botão
+     *  não estava no número, estava no comportamento.
+     *
+     *  Num battle royale a maior parte do tempo não é briga: você luta,
+     *  percebe que está perdendo, sai, se recompõe e volta. Sem isso, 30
+     *  lutadores consomem a reserva de vida da arena inteira em 81 segundos.
+     *
+     *  E isto não é "IA mais burra pra durar mais": é o comportamento que um
+     *  humano tem naturalmente. A versão anterior é que era irreal. */
+    /* ================================================================
+     *  DESLIGADO (0). Existe como alavanca, não como mecânica em uso.
+     * ================================================================
+     *  Foi criado pra alongar a partida de 30 jogadores, e o dono do projeto
+     *  vetou o caminho com razão: alongar a partida com recuo artificial
+     *  MASCARA um TTK baixo em vez de consertá-lo. O conserto certo foi o
+     *  rebalanceamento de vida (100 → 900).
+     *
+     *  Fica implementado e em zero. Se um dia o modo arena precisar de bots
+     *  com instinto de sobrevivência — que é realista, um humano recua — basta
+     *  subir daqui. Mas não como substituto de balanceamento.                */
+    retreatBelowHealth: 0,      // fração da vida abaixo da qual tenta sair
+    retreatUntilHealth: 0.75,   // e volta a lutar quando chegar aqui
+    retreatChance: 0.8,         // nem sempre — um pouco de teimosia é humano
+    retreatSpeedMul: 1.0,
 
     decisionIntervalFrames: 12,
     // Consciência de borda: quanto a IA evita ser empurrada pra fora.

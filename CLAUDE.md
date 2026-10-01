@@ -179,10 +179,22 @@ navegador: 7 golpes aparados esgotam a guarda; **1 smash abre na hora**.
 
 ### Pendências conhecidas — pergunte ao dono antes de assumir
 
-1. **Escala.** `match.opponents` está em 2 (3 lutadores) porque foi o que deu pra
-   verificar: o navegador headless usado nos testes renderiza por software e
-   travou com 5. O teto real na máquina dele é **desconhecido** — é informação
-   valiosa, porque a escala de 20–30 é o maior risco do projeto.
+1. ~~**Escala.**~~ **MEDIDA.** `?n=2|4|8|16` na URL; harness em `tools/escala.js`,
+   medidor em `src/core/profiler.js` (separa SIMULAÇÃO de RENDER — só a primeira
+   é comparável entre máquinas). Resultado: a simulação escala **linear**, não
+   quadrática — 16 lutadores custam **1,31 ms** de média (p95 4,5 = 27% do
+   orçamento de um frame). Os laços N² são irrelevantes (`melee` 0,05 ms).
+   32 lutadores devem caber. **O gargalo não é a CPU da simulação.**
+
+   O que ERA o gargalo: o **hitstop global**. Com 16, o jogo passava 77% do tempo
+   congelado e rodava 0,2 passo de simulação por frame — parado, não lento.
+   Corrigido com `juice.hitstopScope` (padrão `player`): os dois corpos da troca
+   congelam sempre, a tela só congela se você for um deles. Em 1×1 é idêntico ao
+   comportamento validado. Ver armadilha 8.31 do doc de passagem.
+
+   **Ainda desconhecido:** o teto de RENDER na máquina dele. Aqui é rasterizado
+   por software e o número não vale. É a única medição de escala que falta, e só
+   ele pode fazer.
 2. **Martelar botão AINDA GANHA — e a causa medida não é a que se supunha.**
    `combo.cancelOnBlock: false` foi implementado e faz o que promete (o
    defensor sai +8 frames), mas medindo o saldo de martelar por 45 s contra
@@ -232,8 +244,106 @@ navegador: 7 golpes aparados esgotam a guarda; **1 smash abre na hora**.
    `blockstun` agora vivo) nunca foram jogados por humano. 7 golpes pra esgotar
    é um palpite coerente, não um valor validado.
 
+5. **Com 16 lutadores NÃO vira bagunça** (medido, arena cheia 30 s): alvo a
+   1,9 m de mediana, 705 px na tela, 2,4 outros lutadores num raio de 30 m, e
+   apenas **0,5% do tempo com dois atacantes em cima de você** (nunca três). O
+   medo registrado na seção 11 — "o que acontece quando três pessoas te combam
+   ao mesmo tempo" — não se materializou com a IA atual. Com humanos, aberto.
+
+   Sinal de balanceamento a olhar: numa partida de 16, **4 eliminações por
+   ring-out contra 8 por nocaute**. Pra um jogo cuja identidade é o ring-out,
+   a proporção está invertida.
+
 **Não validado por playtest:** a maior parte dos números de `src/tuning.js`.
 Ver seção 11 do documento de passagem antes de tratá-los como verdade.
+
+## Modos de partida (branch `modo-arena-partida-longa`)
+
+Abrir a raiz (`http://localhost:8123/`) mostra um **menu** com os dois modos.
+Com `?modo=` na URL o menu é pulado e o jogo entra direto — é isso que mantém
+`tools/escala.js` e `tools/diversao.js` funcionando sem saber que há menu.
+
+- `?modo=duelo` (padrão) — 1×1. **Não sobrescreve nenhum número.** É o MVP
+  validado e a única base de comparação do projeto.
+- `?modo=arena&n=30` — 20–30 jogadores, cronograma de fases (INÍCIO → MEIO →
+  CONFRONTO → FINAL → CLÍMAX). Regeneração e recuo da IA existem mas estão em ZERO.
+- `PROTO.simular(1500, { ateSobrar: 1 })` — roda a simulação sem render. Uma
+  partida de 30 min leva segundos. É o que torna ajustar ritmo viável.
+
+**Combate rebalanceado (vida 100 → 900).** O 1×1 durava 14,5 s; agora dura
+~2 min. O dano NÃO foi tocado — só a razão vida/dano importa, e manter o dano
+intacto preserva o significado de cada número. Junto vieram: 4 s fora da arena
+antes de eliminar (era 0,8 s) e recuperação aérea barata (ki 10 → 4), que foi o
+maior salto isolado de duração.
+
+Preservado e verificado: poise, guarda (7 golpes), knockback (46,1), frame data.
+Custo registrado: uma rota inteira tira só 4% da barra — se o golpe "não sentir"
+no playtest, o conserto é a BARRA mostrar melhor o dano, não baixar a vida.
+
+Efeito desejado: ring-out virou caminho de vitória de igual peso (era 0/8, agora
+~5/10). Com 30 jogadores a partida passou de 1,2 min para **~5 min**, e isso
+EMERGIU do combate — regeneração de vida e recuo da IA estão em ZERO (eram
+curativo que mascarava o TTK baixo, e foram vetados com razão).
+
+### Fugir da briga — limite de detecção (`targeting.detectionRange`)
+
+Medido: os lutadores passavam **74–77% do tempo em combate, e esse número não se
+movia** — testado com 30 e 84 pessoas, em arenas de raio 70 a 245 (12× mais área
+por cabeça). Aumentar a arena só destruía o ring-out (29% → 9%).
+
+A causa era não haver limite de INFORMAÇÃO: `nearestEnemy` varria a lista
+inteira, então todo mundo sempre sabia onde estava o mais próximo e ia atrás.
+Dava pra correr, não dava pra SUMIR.
+
+Com detecção (24 m pra achar, 38 m pra perder) + arena maior, afastar-se passa a
+encerrar a briga. `target` pode ser `null`, e isso é um estado legítimo: estar
+fora de combate. A IA tem comportamento próprio pra ele (`_foraDeCombate`:
+recompor ki, evitar a borda, derivar devagar).
+
+⚠️ **Restrição obrigatória:** `2 × raio da última fase < loseTargetRange`.
+Medido: com arena final de 25 m e visão de 38 m, dois sobreviventes se evitam
+pra sempre — **mediana de 149 minutos sem vencedor**. Com 17 m, 5,8 min.
+`matchMode.aplicar()` confere e avisa no console.
+
+Resultado com a restrição satisfeita: ~6 min, 35% ring-out, **10% do tempo fora
+de combate** (era 0%). O trade-off é explícito — mais folga tática exige arena
+maior, e arena maior aproxima o risco de a partida não terminar.
+
+### Duração: ~25 min (medido 25,0 / 25,7 / 24,8)
+
+O cronograma de fases vai de **raio 300 m a 10 m em 26 minutos**. O arco não é
+uma regra extra — cai da geometria, porque o nº de vizinhos dentro do alcance de
+detecção é `N × (detecção/raio)²`:
+
+| raio | vizinhos no alcance | |
+|---|---|---|
+| 300 m | 0,19 | quase sempre sozinho |
+| 160 m | 0,68 | encontros intermitentes |
+| 95 m | 1,9 | briga frequente |
+| 10 m | todos | ninguém se evita |
+
+**Ring-out NÃO é meta.** Medido nas três partidas: 21%, 34% e 48% — varia
+sozinho, e isso é correto. É um recurso tático (ficar perto da borda com pouca
+vida pra empurrar quem vier), não uma cota a bater.
+
+⚠️ **Ainda não resolvido: o arco de ENGAJAMENTO é plano** (27/24/28/15/12% por
+faixa de 5 min) e as mortes são concentradas no início (7/15/3/2/2). A duração e
+a variância estão certas; "começa calmo e esquenta" ainda não.
+
+### Barra de vida em camadas (`healthBar`)
+
+Resolve o custo registrado da vida 900: uma rota inteira tira 4% da barra e some.
+
+A barra mostra **uma camada por vez, cheia** (estilo Naruto Storm): a largura
+total vale 180 de vida em vez de 900, então o mesmo rush move **2,8% em vez de
+0,56%**. Quando a camada esvazia, a barra **enche de novo com outra cor** — é
+nesse instante que o jogador sente que arrancou algo inteiro.
+
+Os pontinhos abaixo da barra preservam a leitura do TOTAL; sem eles a primeira
+camada e a última pareceriam iguais. Verificado: 81% de vida → barra em 5%;
+80% → barra em 100% com cor nova e um pip a menos.
+
+Puramente visual — nenhum número de combate muda.
 
 ## Como trabalhar aqui
 

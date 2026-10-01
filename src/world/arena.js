@@ -14,6 +14,7 @@
 
 import * as THREE from 'three';
 import { TUNING } from '../tuning.js';
+import { faseEm } from '../core/matchMode.js';
 
 /* --- shader da cúpula: hexágonos de energia, mais forte perto da borda --- */
 const DOME_VERT = `
@@ -236,6 +237,22 @@ export class Arena {
   update(dt) {
     this.elapsed += dt;
     const A = TUNING.arena;
+
+    /* MODO ARENA: o encolhimento vem de um CRONOGRAMA DE FASES, não da rampa
+     * linear. São ritmos diferentes porque são partidas diferentes — o duelo
+     * usa 30 s de folga e 150 s de rampa; a arena de 30 pessoas precisa de 30
+     * MINUTOS distribuídos em cinco fases nomeadas. Ver core/matchMode.js. */
+    const f = faseEm(this.elapsed);
+    if (f) {
+      this.radius = f.radius;
+      this.ceiling = f.ceiling;
+      this.shrinking = f.shrinking;
+      // Avisa nos últimos segundos antes da fase seguinte apertar.
+      this.warning = f.proximaEm < A.warningSec;
+      this.fase = f;
+      return;
+    }
+    this.fase = null;
 
     // --- encolhimento ---
     const t0 = A.shrinkStartSec;
