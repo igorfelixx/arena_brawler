@@ -44,7 +44,7 @@ import { initMoves, hitstopFor, moveCharge } from './combat/moves.js';
 import {
   resolveMelee, resolveTrade, resolveDashImpact, resolveDashClash, resolveOverlap,
 } from './combat/resolve.js';
-import { pickAttackTarget, cycleTarget, nearestEnemy } from './combat/targeting.js';
+import { pickAttackTarget, cycleTarget, nearestEnemy, aindaVejo } from './combat/targeting.js';
 import { ProjectileSystem, BeamSystem } from './combat/projectiles.js';
 import { BotController } from './ai/bot.js';
 import { HUD } from './ui/hud.js';
@@ -1262,9 +1262,17 @@ function step(dt) {
       continue;
     }
 
-    // Cada IA persegue o inimigo vivo mais próximo — inclusive outras IAs.
-    // É isso que faz a arena parecer uma batalha campal e não N duelos.
-    if (!b.f.target || !b.f.target.alive) b.f.target = nearestEnemy(b.f, fighters);
+    /* Cada IA persegue o inimigo mais próximo QUE ELA ENXERGA.
+     *
+     * `aindaVejo` é o que permite FUGIR: quem se afasta além de
+     * `loseTargetRange` deixa de ser alvo, e o perseguidor volta ao neutro em
+     * vez de atravessar a arena atrás dele. Sem isso, afastar-se só adiava a
+     * briga — medido, os lutadores ficavam 74–77% do tempo em combate por mais
+     * espaço que houvesse.
+     *
+     * `target` pode ficar NULL agora, e isso é um estado legítimo: é estar
+     * fora de combate. O bot tem um comportamento próprio pra ele. */
+    if (!aindaVejo(b.f, b.f.target)) b.f.target = nearestEnemy(b.f, fighters);
     b.f.update(dt, b.update(dt, ctx), ctx);
   }
   prof.end('IA');
@@ -1300,12 +1308,18 @@ function step(dt) {
   }
   prof.end('eventos+ringout');
 
-  // O alvo do jogador morreu ou saiu: reengata no mais próximo sem pedir nada.
-  if (player.alive && (!player.target || !player.target.alive)) {
+  /* O alvo do jogador morreu, ou você o PERDEU DE VISTA.
+   *
+   * O segundo caso é novo e é a tática inteira: afastar-se o bastante encerra
+   * a briga. Sem alvo você fica FORA DE COMBATE — pode carregar ki, recuperar
+   * posição e escolher a próxima briga em vez de ser arrastado pra ela. */
+  if (player.alive && !aindaVejo(player, player.target)) {
     const novo = nearestEnemy(player, fighters);
+    const perdeu = player.target && player.target.alive && !novo;
     player.target = novo;
     opponent = novo;
     if (novo) hud.showBanner(`ALVO: ${novo.name}`, 600);
+    else if (perdeu) hud.showBanner('FORA DE COMBATE', 900);
   }
   opponent = player.target;
 

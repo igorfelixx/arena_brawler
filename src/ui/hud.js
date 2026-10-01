@@ -92,10 +92,77 @@ export class HUD {
     $('help').innerHTML = KEYMAP_HELP
       .map(([k, d]) => `<div><kbd>${k}</kbd><span>${d}</span></div>`).join('');
 
+    /* ================================================================
+     *  BARRA DE VIDA EM CAMADAS
+     * ================================================================
+     *  Resolve um problema MEDIDO: com vida 900, uma rota inteira (4 rushes +
+     *  smash) tira 4,0% da barra e um rush tira 0,56%. O acerto some.
+     *
+     *  Foi o preço de a luta durar 2 minutos em vez de 14 segundos, e o
+     *  conserto certo nunca foi baixar a vida (isso devolve a luta curta) — é
+     *  a barra mostrar o dano numa escala que o olho alcance.
+     *
+     *  Com 5 camadas, a mesma rota tira 20% DA CAMADA ATUAL. O jogador não lê
+     *  "perdi 4% de 900"; lê "comi um quinto da faixa" e vê a cor trocar
+     *  quando a camada quebra. Nenhum número de combate muda.
+     *
+     *  As divisórias são tão importantes quanto a cor: elas dão RÉGUA. Sem
+     *  elas a cor muda mas não há contra o que comparar o quanto caiu.        */
+    this._construirCamadas();
+
     this._ghost = { p1: 1, p2: 1 };
+    this._camada = { p1: 0, p2: 0 };
     this._comboCount = 0;
     this._comboTimer = 0;
     this._bannerTimer = 0;
+  }
+
+  /** Desenha as divisórias de camada dentro das duas barras de vida. */
+  _construirCamadas() {
+    const H = TUNING.healthBar;
+    if (!H || !H.showDividers || H.layers < 2) return;
+
+    for (const barra of this.el.querySelectorAll('.bar.hp')) {
+      const marcas = document.createElement('div');
+      marcas.className = 'bar-dividers';
+      for (let i = 1; i < H.layers; i++) {
+        const d = document.createElement('i');
+        d.style.left = `${(i / H.layers) * 100}%`;
+        d.style.background = H.dividerColor;
+        marcas.appendChild(d);
+      }
+      barra.appendChild(marcas);
+    }
+  }
+
+  /**
+   * Cor e quebra de camada.
+   *
+   * @returns {boolean} true se ACABOU DE QUEBRAR uma camada — o chamador usa
+   *                    isso pro clarão, porque uma troca de cor silenciosa no
+   *                    meio da luta passa despercebida.
+   */
+  _aplicarCamada(barra, frac, quem) {
+    const H = TUNING.healthBar;
+    if (!H) return false;
+
+    // frac 1.0 → camada 0 (a mais cheia). frac ~0 → última.
+    const idx = Math.max(0, Math.min(H.layers - 1,
+      Math.floor((1 - frac) * H.layers)));
+    const cor = H.colors[Math.min(idx, H.colors.length - 1)];
+
+    barra.style.background = `linear-gradient(180deg, ${cor}, ${cor}cc)`;
+
+    const quebrou = idx > this._camada[quem];
+    this._camada[quem] = idx;
+
+    if (quebrou && H.flashOnBreak) {
+      barra.classList.remove('layer-break');
+      void barra.offsetWidth;          // reinicia a animação
+      barra.classList.add('layer-break');
+      setTimeout(() => barra.classList.remove('layer-break'), H.breakFlashMs);
+    }
+    return quebrou;
   }
 
   /* ---------------------------------------------------------------- */
@@ -402,6 +469,11 @@ export class HUD {
 
     this.p1hp.style.width = (p1 * 100) + '%';
     this.p2hp.style.width = (p2 * 100) + '%';
+
+    /* Cor por camada + clarão ao quebrar. É o que devolve legibilidade ao
+     * acerto com vida 900 — ver a nota no construtor. */
+    this._aplicarCamada(this.p1hp, p1, 'p1');
+    this._aplicarCamada(this.p2hp, p2, 'p2');
     this.p1hpGhost.style.width = (this._ghost.p1 * 100) + '%';
     this.p2hpGhost.style.width = (this._ghost.p2 * 100) + '%';
 
@@ -479,6 +551,7 @@ export class HUD {
 
   reset() {
     this._ghost.p1 = this._ghost.p2 = 1;
+    this._camada.p1 = this._camada.p2 = 0;
     this.resetCombo();
     this.banner.className = 'banner';
     this._bannerTimer = 0;

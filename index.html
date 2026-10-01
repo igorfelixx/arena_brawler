@@ -87,7 +87,26 @@
   .bar-block.right .bar-fill,
   .bar-block.right .bar-ghost { left: auto; right: 0; }
 
+  /* A cor do preenchimento vem do JS (camada atual) — ver healthBar no
+     tuning. Aqui fica só o fallback e a transição. */
   .bar.hp .bar-fill  { background: linear-gradient(180deg, #ff7a86, var(--hp)); transition: width .06s linear; }
+
+  /* ---- camadas de vida (estilo Naruto Storm) ----
+     As divisórias dão RÉGUA: com vida 900 uma rota inteira tira 4% do total,
+     e sem referência visual isso é invisível. Contra as marcas, a mesma rota
+     é um quinto de uma faixa. */
+  .bar-dividers { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
+  .bar-dividers i {
+    position: absolute; top: 0; bottom: 0; width: 1px;
+    transform: translateX(-.5px);
+  }
+  /* Quebrar uma camada é um EVENTO: sem o clarão a troca de cor passa
+     despercebida no meio da luta. */
+  @keyframes layerBreak {
+    0%   { filter: brightness(3.2) saturate(.4); }
+    100% { filter: none; }
+  }
+  .bar.hp .bar-fill.layer-break { animation: layerBreak .26s ease-out; }
   .bar.hp .bar-ghost { background: rgba(255,255,255,.34); }
   .bar.ki .bar-fill  { background: linear-gradient(180deg, #9ddfff, var(--ki)); transition: width .1s linear; }
   .bar.ki .bar-fill.full {

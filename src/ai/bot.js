@@ -95,10 +95,26 @@ export class BotController {
 
     const f = this.f;
     const foe = f.target;
-    if (!f.alive || !foe || !foe.alive) return c;
+    if (!f.alive) return c;
 
     const A = this._cfg();
     if (!A.enabled) return c;
+
+    /* ================================================================
+     *  SEM ALVO = FORA DE COMBATE. E isso é um ESTADO, não um vazio.
+     * ================================================================
+     *  Antes, `target` nulo fazia o bot devolver comando vazio e ficar
+     *  boiando. Com o limite de detecção isso passou a acontecer o tempo todo
+     *  — e é justamente o momento mais interessante taticamente.
+     *
+     *  O que um lutador faz quando não há ninguém por perto é o que dá RITMO à
+     *  partida: ele se recompõe. Carrega ki, se afasta da aglomeração, escolhe
+     *  de onde vai entrar na próxima briga. É o respiro que separa um jogo de
+     *  decisões de uma porradaria contínua.
+     *
+     *  Sem isto, dar ao jogador a opção de fugir não adiantaria: ele fugiria
+     *  pra um vazio em que nada acontece, e voltaria por tédio.               */
+    if (!foe || !foe.alive) return this._foraDeCombate(c, ctx, A);
 
     const diff = A.difficulty;
     const dist = f.position.distanceTo(foe.position);
@@ -527,6 +543,60 @@ export class BotController {
     // acerta a janela; na fácil solta cedo ou tarde e sai um smash comum.
     const erro = (this._rand() - 0.5) * 2 * (1 - A.difficulty) * (fim - ini) * 1.8;
     return Math.max(1, Math.round(meio + erro));
+  }
+
+  /**
+   * FORA DE COMBATE — ninguém ao alcance de detecção.
+   *
+   * Três coisas, em ordem de prioridade, e cada uma existe por uma razão:
+   *
+   *   1. RECOMPOR  ki baixo é o motivo nº 1 de perder a próxima briga, e este
+   *      é o único momento seguro pra carregar. É o que transforma "fugi" em
+   *      "fugi E voltei melhor" — sem isso, fugir seria só adiar.
+   *
+   *   2. NÃO IR PRA BORDA  estar fora de combate não ajuda se você se mata
+   *      sozinho. Num jogo de ring-out, vagar sem rumo é perigoso.
+   *
+   *   3. NÃO VOLTAR CEDO DEMAIS  um compromisso de alguns segundos antes de
+   *      procurar briga de novo. Sem ele o bot sai do alcance de detecção e
+   *      volta no frame seguinte, e o "fora de combate" não dura nada —
+   *      mesmo problema de `guardHoldFrames` (armadilha 8.15).
+   */
+  _foraDeCombate(c, ctx, A) {
+    const f = this.f;
+
+    if (this._respiro === undefined) this._respiro = 0;
+    if (this._respiro > 0) this._respiro--;
+
+    const kiBaixo = f.ki < TUNING.ki.max * 0.7;
+    const naBorda = ctx.arena.edgeProximity(f.position) > 0.5;
+
+    if (naBorda) {
+      ctx.arena.towardCenter(f.position, _v);
+      this._setMoveToward(c, _v, ctx);
+      if (f.position.y > ctx.arena.ceiling * 0.85) c.vertical = -1;
+      return c;
+    }
+
+    if (kiBaixo && !f.exhausted) {
+      c.charge = true;
+      return c;
+    }
+
+    /* Nada urgente: deriva devagar pelo espaço aberto. Devagar de propósito —
+     * voar rápido sem alvo só encurta o tempo até esbarrar em alguém, que é o
+     * contrário do que este estado existe pra produzir. */
+    this._strafeTimer--;
+    if (this._strafeTimer <= 0) {
+      this._strafeTimer = 90 + Math.floor(this._rand() * 90);
+      this._strafeDir *= -1;
+    }
+    ctx.arena.towardCenter(f.position, _v);
+    _v.multiplyScalar(-0.25);                       // afasta um pouco do centro
+    _v.x += this._strafeDir * 0.6;
+    _v.normalize();
+    this._setMoveToward(c, _v, ctx, 0.35);
+    return c;
   }
 
   /* ---------------------------------------------------------------- */

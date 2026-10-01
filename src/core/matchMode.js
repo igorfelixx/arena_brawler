@@ -75,6 +75,25 @@ export function aplicar(id, n = null) {
     }
   }
 
+  /* Confere a restrição que impede a partida de nunca terminar.
+   * Ver a nota longa em `TUNING.targeting`: se a arena final for maior que o
+   * alcance de visão, dois sobreviventes se evitam pra sempre. Medido: 149
+   * minutos sem vencedor. Avisar é barato; descobrir isso num playtest de uma
+   * hora não é. */
+  if (modo.phases && TUNING.targeting.detectionEnabled) {
+    const raioFinal = modo.phases[modo.phases.length - 1].raio;
+    const vista = TUNING.targeting.loseTargetRange;
+    if (raioFinal * 2 >= vista) {
+      console.warn(
+        `[matchMode] ARENA FINAL GRANDE DEMAIS: raio ${raioFinal} m (diâmetro ` +
+        `${raioFinal * 2}) >= alcance de visão ${vista} m.\n` +
+        '            Dois sobreviventes podem se evitar indefinidamente e a ' +
+        'partida pode não terminar.\n' +
+        `            Baixe o raio da última fase pra menos de ${(vista / 2).toFixed(0)} m, ` +
+        'ou suba targeting.loseTargetRange.');
+    }
+  }
+
   _ativo = {
     id,
     label: modo.label || id.toUpperCase(),

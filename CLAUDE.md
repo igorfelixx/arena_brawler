@@ -281,6 +281,37 @@ Efeito desejado: ring-out virou caminho de vitória de igual peso (era 0/8, agor
 EMERGIU do combate — regeneração de vida e recuo da IA estão em ZERO (eram
 curativo que mascarava o TTK baixo, e foram vetados com razão).
 
+### Fugir da briga — limite de detecção (`targeting.detectionRange`)
+
+Medido: os lutadores passavam **74–77% do tempo em combate, e esse número não se
+movia** — testado com 30 e 84 pessoas, em arenas de raio 70 a 245 (12× mais área
+por cabeça). Aumentar a arena só destruía o ring-out (29% → 9%).
+
+A causa era não haver limite de INFORMAÇÃO: `nearestEnemy` varria a lista
+inteira, então todo mundo sempre sabia onde estava o mais próximo e ia atrás.
+Dava pra correr, não dava pra SUMIR.
+
+Com detecção (24 m pra achar, 38 m pra perder) + arena maior, afastar-se passa a
+encerrar a briga. `target` pode ser `null`, e isso é um estado legítimo: estar
+fora de combate. A IA tem comportamento próprio pra ele (`_foraDeCombate`:
+recompor ki, evitar a borda, derivar devagar).
+
+⚠️ **Restrição obrigatória:** `2 × raio da última fase < loseTargetRange`.
+Medido: com arena final de 25 m e visão de 38 m, dois sobreviventes se evitam
+pra sempre — **mediana de 149 minutos sem vencedor**. Com 17 m, 5,8 min.
+`matchMode.aplicar()` confere e avisa no console.
+
+Resultado com a restrição satisfeita: ~6 min, 35% ring-out, **10% do tempo fora
+de combate** (era 0%). O trade-off é explícito — mais folga tática exige arena
+maior, e arena maior aproxima o risco de a partida não terminar.
+
+### Barra de vida em camadas (`healthBar`)
+
+Resolve o custo registrado da vida 900: uma rota inteira tira 4% da barra e some.
+Com 5 camadas coloridas + divisórias, a mesma rota tira **20% da camada atual**,
+e quebrar camada é um evento com clarão. Puramente visual — nenhum número de
+combate muda.
+
 ## Como trabalhar aqui
 
 - **Meça antes de opinar.** Este projeto tem um histórico de diagnósticos

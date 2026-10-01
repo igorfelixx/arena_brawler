@@ -334,6 +334,60 @@ export const TUNING = {
     acquireRange: 14.0,         // até onde um golpe procura alvo (lock solto)
     lockKeepRange: 60.0,        // acima disto o lock-on se rompe sozinho
 
+    /* ================================================================
+     *  LIMITE DE DETECÇÃO  —  a condição pra PODER FUGIR DE UMA BRIGA
+     * ================================================================
+     *  O problema, medido e teimoso: os lutadores passam 74–77% do tempo em
+     *  combate, e esse número NÃO SE MOVE. Testado com 30 e com 84 pessoas, em
+     *  arenas de raio 70 até 245 (doze vezes mais área por cabeça):
+     *
+     *      raio  70m ·   513 m²/pessoa  →  75% em briga
+     *      raio 245m · 6.286 m²/pessoa  →  73% em briga
+     *
+     *  Doze vezes mais espaço, mesmo tempo brigando. Aumentar a arena só
+     *  destruiu o ring-out (29% → 9%) e não comprou folga nenhuma.
+     *
+     *  A causa é que não havia limite de INFORMAÇÃO. `nearestEnemy` varria a
+     *  lista inteira de lutadores, então todo mundo sempre sabia onde estava
+     *  o mais próximo, por mais longe que fosse — e ia atrás. Espaço não
+     *  resolve isso: você pode correr, mas não pode SUMIR.
+     *
+     *  Com um alcance de detecção, afastar-se passa a ter consequência: quem
+     *  sai do seu raio deixa de ser seu alvo, e você deixa de ser alvo dele.
+     *  É o que permite a tática que o Torneio do Poder tem o tempo todo —
+     *  sair de uma briga que está ruim, recuperar, escolher a próxima.
+     *
+     *  Histerese de propósito: adquire a 24 m e só larga a 38 m. Com um
+     *  limiar só, quem ficasse rondando a distância exata entraria e sairia de
+     *  combate a cada frame, e a briga ficaria engasgando.                   */
+    detectionRange: 24.0,       // até aqui você ENCONTRA alguém pra lutar
+    loseTargetRange: 38.0,      // passou disto, você o PERDE de vista
+
+    /* ================================================================
+     *  ⚠️  A RESTRIÇÃO QUE IMPEDE A PARTIDA DE NUNCA ACABAR
+     * ================================================================
+     *      2 × (raio da ÚLTIMA fase)  <  loseTargetRange
+     *
+     *  Se a arena final for maior que o alcance de visão, dois sobreviventes
+     *  podem se evitar INDEFINIDAMENTE: cada um de um lado, nenhum enxergando
+     *  o outro, e nada os obrigando a se encontrar.
+     *
+     *  Medido, 30 lutadores, 5 partidas por configuração:
+     *
+     *      arena final 17 m  (2×17 = 34 < 38)  →  mediana   6,2 min
+     *      arena final 25 m  (2×25 = 50 > 38)  →  mediana 149    min
+     *
+     *  Cento e quarenta e nove minutos é o TETO DO MEDIDOR, não a duração: a
+     *  partida simplesmente não termina. É o preço de dar a opção de fugir, e
+     *  quem paga é o encolhimento da arena — mas só se ele fechar o bastante.
+     *
+     *  `matchMode.aplicar()` confere isso no boot e avisa no console. */
+
+    /* Com 0 o limite é desligado e volta o comportamento antigo (onisciente).
+     * Fica como chave porque o duelo não precisa disto — num 1×1 perder o
+     * adversário de vista não é tática, é a luta deixar de existir. */
+    detectionEnabled: 1,
+
     /* Pesos da pontuação de escolha. O de ALINHAMENTO é o que dá controle ao
      * jogador: só distância faz o alvo pular sozinho entre inimigos sempre que
      * um chega meio metro mais perto, e você perde a noção de quem está batendo. */
@@ -515,12 +569,14 @@ export const TUNING = {
          * Se o playtest alongar a partida (humanos recuam, bots não), estes
          * minutos sobem junto. É a primeira coisa a reajustar. */
         phases: [
-          { min: 0,   raio: 70, teto: 52, label: 'INÍCIO',    sub: 'espaço de sobra' },
-          { min: 1.5, raio: 56, teto: 46, label: 'MEIO',      sub: 'a arena fecha' },
-          { min: 3,   raio: 42, teto: 40, label: 'CONFRONTO', sub: 'disputa por posição' },
-          { min: 4.5, raio: 28, teto: 32, label: 'FINAL',     sub: 'pouco espaço' },
-          { min: 6,   raio: 16, teto: 24, label: 'CLÍMAX',    sub: 'não caia' },
-          { min: 8,   raio: 11, teto: 20, label: 'MORTE SÚBITA', sub: '' },
+          { min: 0,   raio: 110, teto: 70, label: 'INÍCIO',    sub: 'espaço de sobra' },
+          { min: 1.5, raio: 88,  teto: 60, label: 'MEIO',      sub: 'a arena fecha' },
+          { min: 3,   raio: 66,  teto: 50, label: 'CONFRONTO', sub: 'disputa por posição' },
+          { min: 4.5, raio: 44,  teto: 38, label: 'FINAL',     sub: 'pouco espaço' },
+          { min: 6,   raio: 25,  teto: 28, label: 'CLÍMAX',    sub: 'não caia' },
+          /* 17 m e não mais: 2×17 = 34 < loseTargetRange (38). É a restrição
+           * que impede a partida de nunca acabar — ver targeting. */
+          { min: 8,   raio: 17,  teto: 22, label: 'MORTE SÚBITA', sub: '' },
         ],
 
         /* Teto duro. Chegar aqui sem vencedor é um defeito de ritmo, não um
@@ -1887,6 +1943,51 @@ export const TUNING = {
      * o que separa perícia de azar. */
     outOfBoundsFrames: 240,
     floorY: 0,
+  },
+
+  /* ================================================================== */
+  /*  BARRA DE VIDA EM CAMADAS  —  a legibilidade do acerto              */
+  /* ================================================================== */
+  /*  O problema que isto resolve está medido e registrado: com vida 900,
+   *  uma ROTA INTEIRA (4 rushes + smash) tira 4,0% da barra, e um rush
+   *  tira 0,56%. O acerto some. Foi o custo aceito pra luta durar 2 minutos
+   *  em vez de 14 segundos, e o comentário em `fighter.maxHealth` já dizia
+   *  qual era o conserto certo: não baixar a vida, e sim a BARRA mostrar
+   *  melhor o dano.
+   *
+   *  A solução é a de Naruto Storm: a barra tem CAMADAS, cada uma com sua
+   *  cor. Você não lê "perdi 4% de 900" — lê "comi um quinto da camada
+   *  vermelha", e quando ela acaba o adversário vê a cor mudar.
+   *
+   *  Com 5 camadas de 180:
+   *      rush          0,56% do total  →   2,8% da camada
+   *      rota inteira  4,0%            →  20% da camada    ← visível
+   *      quebrar camada é um EVENTO, com cor nova e um baque na tela
+   *
+   *  É puramente apresentação: nenhum número de combate muda, e o total
+   *  continua sendo 900. O que muda é a escala contra a qual o olho compara.
+   *
+   *  Efeito colateral de design que vale manter: a troca de cor dá ao jogo
+   *  marcos de "fase da luta" que o HP sozinho não dava. Saber que o outro
+   *  está na última camada é informação tática — é quando o ring-out deixa
+   *  de ser a única via rápida.                                            */
+  healthBar: {
+    layers: 5,
+
+    /* Da camada CHEIA pra última. A última é vermelha de propósito: é o
+     * sinal universal de "acabando", e tem que destoar das outras. */
+    colors: ['#6fe8a0', '#9ee86f', '#e8d76f', '#e8a06f', '#ff5a6a'],
+
+    // Linhas divisórias entre camadas: é o que dá RÉGUA ao olho. Sem elas a
+    // troca de cor acontece mas não há contra o que comparar o quanto caiu.
+    showDividers: true,
+    dividerColor: 'rgba(0,0,0,.55)',
+
+    /* Quebrar uma camada é um evento: clarão na barra + tremor curto.
+     * Sem isso a mudança de cor passa despercebida no meio da luta. */
+    flashOnBreak: true,
+    breakFlashMs: 260,
+    breakShake: 0.22,
   },
 
   /* ================================================================== */
