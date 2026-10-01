@@ -117,44 +117,68 @@ export class HUD {
     this._bannerTimer = 0;
   }
 
-  /** Desenha as divisórias de camada dentro das duas barras de vida. */
+  /** Os pontinhos que dizem QUANTAS camadas ainda existem. */
   _construirCamadas() {
     const H = TUNING.healthBar;
-    if (!H || !H.showDividers || H.layers < 2) return;
+    if (!H || !H.showPips || H.layers < 2) return;
 
-    for (const barra of this.el.querySelectorAll('.bar.hp')) {
-      const marcas = document.createElement('div');
-      marcas.className = 'bar-dividers';
-      for (let i = 1; i < H.layers; i++) {
-        const d = document.createElement('i');
-        d.style.left = `${(i / H.layers) * 100}%`;
-        d.style.background = H.dividerColor;
-        marcas.appendChild(d);
-      }
-      barra.appendChild(marcas);
+    this._pips = {};
+    for (const bloco of this.el.querySelectorAll('.bar-block')) {
+      const barra = bloco.querySelector('.bar.hp');
+      if (!barra) continue;
+      const fila = document.createElement('div');
+      fila.className = 'layer-pips';
+      for (let i = 0; i < H.layers; i++) fila.appendChild(document.createElement('i'));
+      barra.insertAdjacentElement('afterend', fila);
+      this._pips[bloco.classList.contains('left') ? 'p1' : 'p2'] = fila;
     }
   }
 
   /**
-   * Cor e quebra de camada.
+   * UMA CAMADA POR VEZ, CHEIA — e não o total picotado.
    *
-   * @returns {boolean} true se ACABOU DE QUEBRAR uma camada — o chamador usa
-   *                    isso pro clarão, porque uma troca de cor silenciosa no
-   *                    meio da luta passa despercebida.
+   * ---------------------------------------------------------------------
+   * Por que isto faz o golpe parecer maior sem mudar número nenhum
+   * ---------------------------------------------------------------------
+   * A barra inteira passa a valer 180 de vida em vez de 900. O mesmo rush que
+   * movia 0,56% da barra move 2,8% — cinco vezes mais. E quando a camada
+   * acaba, a barra ENCHE DE NOVO com outra cor: é nesse instante que o jogador
+   * sente que arrancou alguma coisa, que é o que a versão picotada não dava.
+   *
+   * A conta, com vida h, L camadas e camada de tamanho s = max/L:
+   *     camadas restantes = ceil(h / s)
+   *     índice da cor     = L − restantes
+   *     preenchimento     = (h − (restantes−1)·s) / s
+   *
+   * @returns {{fill:number, quebrou:boolean}} `fill` é a largura 0..1 da
+   *          barra — quem chama usa isso em vez da fração do total.
    */
   _aplicarCamada(barra, frac, quem) {
     const H = TUNING.healthBar;
-    if (!H) return false;
+    if (!H || H.layers < 2) return { fill: frac, quebrou: false };
 
-    // frac 1.0 → camada 0 (a mais cheia). frac ~0 → última.
-    const idx = Math.max(0, Math.min(H.layers - 1,
-      Math.floor((1 - frac) * H.layers)));
+    const L = H.layers;
+    const s = 1 / L;                                   // tamanho da camada (0..1)
+    const restantes = Math.max(0, Math.min(L, Math.ceil(frac / s - 1e-9)));
+    const idx = Math.max(0, Math.min(L - 1, L - restantes));
+    const fill = restantes > 0 ? (frac - (restantes - 1) * s) / s : 0;
+
     const cor = H.colors[Math.min(idx, H.colors.length - 1)];
-
-    barra.style.background = `linear-gradient(180deg, ${cor}, ${cor}cc)`;
+    barra.style.background = `linear-gradient(180deg, ${cor}, ${cor}bb)`;
+    barra.style.boxShadow = `0 0 10px ${cor}66`;
 
     const quebrou = idx > this._camada[quem];
     this._camada[quem] = idx;
+
+    // pontinhos: acesos = camadas que ainda existem
+    const pips = this._pips?.[quem];
+    if (pips) {
+      for (let i = 0; i < pips.children.length; i++) {
+        const vivo = i < restantes;
+        pips.children[i].style.background = vivo ? cor : 'rgba(255,255,255,.12)';
+        pips.children[i].style.boxShadow = vivo ? `0 0 5px ${cor}aa` : 'none';
+      }
+    }
 
     if (quebrou && H.flashOnBreak) {
       barra.classList.remove('layer-break');
@@ -162,7 +186,7 @@ export class HUD {
       barra.classList.add('layer-break');
       setTimeout(() => barra.classList.remove('layer-break'), H.breakFlashMs);
     }
-    return quebrou;
+    return { fill, quebrou };
   }
 
   /* ---------------------------------------------------------------- */
@@ -461,19 +485,29 @@ export class HUD {
     const p1 = Math.max(0, player.health / max);
     const p2 = opponent ? Math.max(0, opponent.health / max) : 0;
 
-    // rastro branco perseguindo com atraso
-    this._ghost.p1 += (p1 - this._ghost.p1) * (1 - Math.exp(-3.5 * dt));
-    this._ghost.p2 += (p2 - this._ghost.p2) * (1 - Math.exp(-3.5 * dt));
-    if (this._ghost.p1 < p1) this._ghost.p1 = p1;
-    if (this._ghost.p2 < p2) this._ghost.p2 = p2;
+    /* A LARGURA É A DA CAMADA ATUAL, não a do total.
+     *
+     * É o que faz o golpe parecer grande: a barra inteira passa a valer 180 de
+     * vida em vez de 900, então o mesmo rush move cinco vezes mais. Ver
+     * `_aplicarCamada`. */
+    const c1 = this._aplicarCamada(this.p1hp, p1, 'p1');
+    const c2 = this._aplicarCamada(this.p2hp, p2, 'p2');
 
-    this.p1hp.style.width = (p1 * 100) + '%';
-    this.p2hp.style.width = (p2 * 100) + '%';
+    this.p1hp.style.width = (c1.fill * 100) + '%';
+    this.p2hp.style.width = (c2.fill * 100) + '%';
 
-    /* Cor por camada + clarão ao quebrar. É o que devolve legibilidade ao
-     * acerto com vida 900 — ver a nota no construtor. */
-    this._aplicarCamada(this.p1hp, p1, 'p1');
-    this._aplicarCamada(this.p2hp, p2, 'p2');
+    /* O rastro branco agora persegue a camada, e ao QUEBRAR uma ele é jogado
+     * no cheio pra drenar a barra nova inteira. Sem isso a barra só trocaria de
+     * cor e o momento de "arranquei uma camada" passaria batido. */
+    const reset = TUNING.healthBar?.ghostResetOnBreak;
+    if (c1.quebrou && reset) this._ghost.p1 = 1;
+    if (c2.quebrou && reset) this._ghost.p2 = 1;
+
+    this._ghost.p1 += (c1.fill - this._ghost.p1) * (1 - Math.exp(-3.5 * dt));
+    this._ghost.p2 += (c2.fill - this._ghost.p2) * (1 - Math.exp(-3.5 * dt));
+    if (this._ghost.p1 < c1.fill) this._ghost.p1 = c1.fill;
+    if (this._ghost.p2 < c2.fill) this._ghost.p2 = c2.fill;
+
     this.p1hpGhost.style.width = (this._ghost.p1 * 100) + '%';
     this.p2hpGhost.style.width = (this._ghost.p2 * 100) + '%';
 

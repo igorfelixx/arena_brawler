@@ -333,9 +333,17 @@ a variância estão certas; "começa calmo e esquenta" ainda não.
 ### Barra de vida em camadas (`healthBar`)
 
 Resolve o custo registrado da vida 900: uma rota inteira tira 4% da barra e some.
-Com 5 camadas coloridas + divisórias, a mesma rota tira **20% da camada atual**,
-e quebrar camada é um evento com clarão. Puramente visual — nenhum número de
-combate muda.
+
+A barra mostra **uma camada por vez, cheia** (estilo Naruto Storm): a largura
+total vale 180 de vida em vez de 900, então o mesmo rush move **2,8% em vez de
+0,56%**. Quando a camada esvazia, a barra **enche de novo com outra cor** — é
+nesse instante que o jogador sente que arrancou algo inteiro.
+
+Os pontinhos abaixo da barra preservam a leitura do TOTAL; sem eles a primeira
+camada e a última pareceriam iguais. Verificado: 81% de vida → barra em 5%;
+80% → barra em 100% com cor nova e um pip a menos.
+
+Puramente visual — nenhum número de combate muda.
 
 ## Como trabalhar aqui
 

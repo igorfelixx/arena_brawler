@@ -2013,16 +2013,32 @@ export const TUNING = {
      * sinal universal de "acabando", e tem que destoar das outras. */
     colors: ['#6fe8a0', '#9ee86f', '#e8d76f', '#e8a06f', '#ff5a6a'],
 
-    // Linhas divisórias entre camadas: é o que dá RÉGUA ao olho. Sem elas a
-    // troca de cor acontece mas não há contra o que comparar o quanto caiu.
-    showDividers: true,
-    dividerColor: 'rgba(0,0,0,.55)',
+    /* A barra mostra UMA camada por vez, CHEIA — não o total picotado.
+     *
+     * A primeira versão dividia a barra em cinco faixas com linhas. Funcionava
+     * como régua e era feia: a barra ficava quase parada, e o dano continuava
+     * parecendo pequeno porque o olho comparava com a largura TOTAL.
+     *
+     * Mostrando uma camada de cada vez, a largura inteira da barra passa a
+     * valer 180 de vida em vez de 900. O mesmo golpe que movia 0,56% agora
+     * move 2,8% — cinco vezes mais, sem nenhum número de combate mudar. E
+     * quando a camada acaba, a barra ENCHE DE NOVO com outra cor, que é o
+     * momento em que o jogador sente que arrancou alguma coisa.
+     *
+     * Os pontinhos abaixo da barra são o que preserva a leitura do TOTAL —
+     * sem eles, estar na última camada e na primeira pareceriam iguais. */
+    showPips: true,
 
     /* Quebrar uma camada é um evento: clarão na barra + tremor curto.
      * Sem isso a mudança de cor passa despercebida no meio da luta. */
     flashOnBreak: true,
-    breakFlashMs: 260,
+    breakFlashMs: 420,
     breakShake: 0.22,
+
+    /* Ao quebrar uma camada, o rastro branco é jogado no CHEIO pra drenar a
+     * barra nova inteira. É o que vende "arranquei uma camada" — sem isso a
+     * barra só troca de cor e o momento passa batido. */
+    ghostResetOnBreak: true,
   },
 
   /* ================================================================== */
