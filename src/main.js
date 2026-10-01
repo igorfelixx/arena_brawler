@@ -109,6 +109,24 @@ function makeSky(scene) {
 const app = document.getElementById('app');
 const loadingEl = document.getElementById('loading');
 const loadingMsg = document.getElementById('loading-msg');
+const menuEl = document.getElementById('menu');
+
+/* ==========================================================================
+ *  MENU ou BOOT DIRETO
+ * ==========================================================================
+ *  Sem `?modo=` na URL, mostra o menu e NÃO carrega nada. Com modo, entra
+ *  direto no jogo.
+ *
+ *  Essa separação é o que mantém as URLs de medição funcionando:
+ *  `?modo=arena&n=30` continua abrindo a partida sem um clique no caminho, e
+ *  `tools/escala.js` e `tools/diversao.js` não precisam saber que existe menu.
+ *  Um menu que obrigasse a clicar quebraria todo harness do projeto.
+ *
+ *  Os botões são LINKS porque trocar de modo exige reload de verdade — os
+ *  personagens são carregados no boot, e o nº deles vem do modo.             */
+const temModoNaURL = new URLSearchParams(location.search).has('modo')
+                  || new URLSearchParams(location.search).has('mode')
+                  || new URLSearchParams(location.search).has('n');
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -1490,7 +1508,14 @@ addEventListener('resize', () => {
   bloom.resolution.set(innerWidth, innerHeight);
 });
 
-boot();
+/* Sem modo na URL: o menu fica, o jogo não carrega. Com modo: some o menu e
+ * boota. */
+if (temModoNaURL) {
+  menuEl?.classList.add('hidden');
+  boot();
+} else {
+  loadingEl.classList.add('hidden');
+}
 
 /* Atalho de console pra inspecionar/ajustar sem recarregar. Exemplos:
  *     PROTO.TUNING.moves.smash_forward.knockback = 70

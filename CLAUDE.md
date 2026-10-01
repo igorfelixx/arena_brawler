@@ -259,6 +259,10 @@ Ver seção 11 do documento de passagem antes de tratá-los como verdade.
 
 ## Modos de partida (branch `modo-arena-partida-longa`)
 
+Abrir a raiz (`http://localhost:8123/`) mostra um **menu** com os dois modos.
+Com `?modo=` na URL o menu é pulado e o jogo entra direto — é isso que mantém
+`tools/escala.js` e `tools/diversao.js` funcionando sem saber que há menu.
+
 - `?modo=duelo` (padrão) — 1×1. **Não sobrescreve nenhum número.** É o MVP
   validado e a única base de comparação do projeto.
 - `?modo=arena&n=30` — 20–30 jogadores, cronograma de fases (INÍCIO → MEIO →
