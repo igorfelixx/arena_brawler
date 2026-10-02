@@ -91,7 +91,7 @@ doc de passagem):
 - **hitstop por categoria** (guarda < normal < counter < pesado < lançamento <
   perfect), em vez de número solto por golpe
 
-Não implementado: **áudio**, **rede**, troca de alvo por gamepad no ciclo,
+Não implementado: **rede**, troca de alvo por gamepad no ciclo,
 **personagens/movesets múltiplos** (cortado do MVP de propósito — um lutador só).
 
 ### O loop de combate (reconstruído — leia antes de mexer no J)
@@ -354,6 +354,23 @@ Puramente visual — nenhum número de combate muda.
   ninguém no alcance. Antes a câmera ficava presa. Armadilha 8.37.
 - **Detecção só no modo arena** (`targeting.detectionEnabled` 0 na base): o
   duelo herdava e começava com os dois sem se enxergar (nascem a 72 m).
+
+### Som sintetizado (branch `audio-procedural`)
+
+`src/core/audio.js` — Web Audio, nenhum arquivo de som. Os timbres são
+placeholder; o que vale é a mixagem (armadilha 8.38):
+
+- tudo em que **você** está envolvido toca cheio; a briga dos outros cai com a
+  distância e **some além de 60 m** (`TUNING.audio`). Medido com 30: 255 sons
+  distantes cortados contra 145 tocados em 10 s, pico de 11 vozes
+- hierarquia de peso igual à do hitstop; o **Perfect Smash tem um sino** que
+  nenhum outro golpe tem; o rush sobe de tom a cada elo
+- sinais só do jogador: janela do Perfect, perseguir, vanish battle, alarme de
+  borda (acelera), quebra de camada de vida, gongo de fase
+- `M` liga/desliga. `PROTO.simular()` roda mudo
+
+Junto: a barra do rival não "quebra" mais ao trocar de alvo (antes, mirar num
+lutador mais machucado piscava a barra como se você tivesse arrancado a camada).
 
 ## Como trabalhar aqui
 

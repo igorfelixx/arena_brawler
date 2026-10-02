@@ -32,6 +32,7 @@ import { TUNING } from './tuning.js';
 import { FixedLoop } from './core/loop.js';
 import { Input } from './core/input.js';
 import { Juice } from './core/juice.js';
+import { Audio as Som } from './core/audio.js';
 import { DebugPanel } from './core/debugPanel.js';
 import { prof } from './core/profiler.js';
 import { aplicar as aplicarModo, lerURL as lerModoURL, modoAtivo } from './core/matchMode.js';
@@ -181,6 +182,10 @@ composer.addPass(new OutputPass());
  *  Mundo
  * ========================================================================== */
 const juice = new Juice();
+/* Som sintetizado. Mesma regra do hitstop: o que envolve VOCÊ toca cheio, o
+ * resto cai com a distância — ver o cabeçalho de core/audio.js. */
+const sfx = new Som();
+const meu = (...fs) => fs.includes(player);
 const arena = new Arena(scene);
 const vfx = new VFX(scene, camera);
 const projectiles = new ProjectileSystem(scene, vfx);
@@ -188,6 +193,7 @@ const beam = new BeamSystem(scene, vfx);
 const combatCam = new CombatCamera(camera);
 const input = new Input(renderer.domElement);
 const hud = new HUD(app);
+hud.onCamada = (quem) => sfx.sinal(quem === 'rival' ? 'camadaRival' : 'camadaMinha');
 const debugPanel = new DebugPanel(app, input);
 
 // Lock-on. Começa ligado — é o padrão do Tenkaichi e o modo de combate.
@@ -511,7 +517,10 @@ function onHit({ attacker, victim, move, result, point, projectile }) {
 
   // O banner fica no evento `guardShattered` (drainEvents), porque a guarda
   // também arrebenta por TEMPO — e aí não há acerto nenhum pra passar por aqui.
+  const ouvir = { pos: point, meu: meu(attacker, victim) };
+
   if (result === 'guardexhaust') {
+    sfx.quebraGuarda(ouvir);
     congelarTroca(attacker, victim, 12);
     juice.impact({ shake: 0.5, zoom: 0.6 });
     vfx.burst(point, { count: 34, color: 0x9fd0ff, speed: 11, life: 0.45 });
@@ -524,6 +533,7 @@ function onHit({ attacker, victim, move, result, point, projectile }) {
    * um som visual PRÓPRIO — se parecesse um acerto normal, o atacante acharia
    * que tinha ganhado o turno e comeria o golpe que vem. */
   if (result === 'armor') {
+    sfx.guarda(ouvir);
     congelarTroca(attacker, victim, 8);
     juice.impact({ shake: 0.3 });
     vfx.burst(point, { count: 14, color: 0xffc98a, speed: 6, life: 0.3 });
@@ -532,6 +542,7 @@ function onHit({ attacker, victim, move, result, point, projectile }) {
   }
 
   if (result === 'guard') {
+    sfx.guarda(ouvir);
     congelarTroca(attacker, victim, hitstopFor(move, { guarded: true }));
     juice.impact({ shake: move.shake * 0.4 });
     vfx.burst(point, { count: 10, color: 0x9fd0ff, speed: 5, life: 0.25 });
@@ -546,6 +557,13 @@ function onHit({ attacker, victim, move, result, point, projectile }) {
    * se percebe não ensina nada. O congelamento longo e a câmera lenta são o
    * recibo. */
   const perfect = !!move.isPerfect;
+
+  /* Blast acertando é explosão, não soco. O resto segue a escala de peso:
+   * blowaway soa pesado mesmo vindo do rush (quebra de poise), porque o que
+   * o ouvido precisa ler é "ele saiu voando". */
+  if (projectile) sfx.explosao({ ...ouvir, tamanho: move.causesBlowaway ? 0.7 : 0.3 });
+  else sfx.acerto({ ...ouvir, atacante: attacker,
+    peso: perfect ? 'perfect' : (move.causesBlowaway ? 'pesado' : 'leve') });
 
   congelarTroca(attacker, victim, hitstopFor(move, { perfect }));
   juice.impact({
@@ -576,6 +594,7 @@ function onHit({ attacker, victim, move, result, point, projectile }) {
   });
 
   if (result === 'guardbreak') {
+    sfx.quebraGuarda(ouvir);
     hud.showBanner('GUARDA QUEBRADA', 1100, 'warn');
     vfx.burst(point, { count: 40, color: 0xffd080, speed: 12, life: 0.5 });
   }
@@ -585,6 +604,7 @@ function onHit({ attacker, victim, move, result, point, projectile }) {
 }
 
 function onVanish(victim, attacker, point) {
+  sfx.vanish({ pos: point, meu: meu(victim, attacker) });
   vfx.burst(point, { count: 26, color: 0xffffff, speed: 12, life: 0.35 });
   for (let i = 0; i < TUNING.defense.vanish.afterimageCount; i++) vfx.afterimage(victim.char, 0xaad8ff);
   if (victim === player) hud.showBanner('VANISH', 900, '');
@@ -594,6 +614,7 @@ function onVanish(victim, attacker, point) {
 /* Z-COUNTER — o momento de maior reviravolta do kit. Precisa de leitura forte:
  * quem estava atacando virou alvo, e a janela de punição é curta. */
 function onZCounter(victim, attacker, point) {
+  sfx.contra({ pos: point, meu: meu(victim, attacker) });
   vfx.burst(point, { count: 40, color: 0xffe9a0, speed: 15, life: 0.5 });
   vfx.ring(point, { billboard: true, color: 0xffd36e, from: 0.5, to: 10, life: 0.5 });
   for (let i = 0; i < 4; i++) vfx.afterimage(attacker.char, 0xffd36e);
@@ -605,6 +626,7 @@ function onZCounter(victim, attacker, point) {
  * Z-Counter: é uma esquiva grátis, não uma reviravolta. Se gritasse igual, o
  * jogador leria os dois como a mesma coisa. */
 function onSway(victim, attacker, point) {
+  sfx.whoosh({ pos: point, meu: meu(victim, attacker), forte: 0.2, sobe: false });
   for (let i = 0; i < 3; i++) vfx.afterimage(victim.char, victim.auraColor);
   vfx.burst(point, { count: 12, color: 0xcfe8ff, speed: 6, life: 0.3 });
   if (victim === player) hud.showBanner('SONIC SWAY', 800);
@@ -612,6 +634,7 @@ function onSway(victim, attacker, point) {
 }
 
 function onClash(point) {
+  sfx.choque({ pos: point, meu: false });
   hud.showBanner('CLASH!', 1000, 'big');
 }
 
@@ -619,6 +642,7 @@ function onClash(point) {
  * "ele te agarrou" e "você tem um instante pra sair". Sem a segunda, o jogador
  * não descobre que o escape existe e o grab parece injusto. */
 function onGrab(attacker, victim, point) {
+  sfx.agarrao({ pos: point, meu: meu(attacker, victim) });
   vfx.burst(point, { count: 20, color: 0xffd2a0, speed: 7, life: 0.35 });
   vfx.ring(point, { billboard: true, color: 0xffb877, from: 0.4, to: 4.5, life: 0.35 });
   if (victim === player) hud.showBanner('AGARRADO  ·  F pra escapar!', 800, 'warn');
@@ -629,6 +653,7 @@ function onGrab(attacker, victim, point) {
  * merece leitura forte porque é o momento em que ninguém ganhou: sem marcação, o
  * jogador lê como "meu golpe não saiu". */
 function onTradeClash(a, b, point) {
+  sfx.choque({ pos: point, meu: meu(a, b) });
   vfx.burst(point, { count: 54, color: 0xffffff, speed: 17, life: 0.55 });
   vfx.ring(point, { billboard: true, color: 0xcfefff, from: 0.5, to: 13, life: 0.55 });
   if (a === player || b === player) hud.showBanner('CHOQUE!', 900, 'big');
@@ -648,6 +673,7 @@ function onTradeWin(vencedor, perdedor, point) {
 function onDashImpact(dasher, victim) {
   const p = dasher.position.clone().lerp(victim.position, 0.5);
   p.y += 0.9;
+  sfx.acerto({ pos: p, meu: meu(dasher, victim), peso: 'leve' });
   vfx.burst(p, { count: 20, color: 0xdff2ff, speed: 9, life: 0.32 });
   vfx.ring(p, { billboard: true, color: 0xaee6ff, from: 0.4, to: 5.5, life: 0.34 });
   if (dasher === player) hud.addCombo();
@@ -655,6 +681,7 @@ function onDashImpact(dasher, victim) {
 
 /** Eventos que o próprio Fighter emitiu neste frame. */
 function drainEvents(f) {
+  const ouvir = { pos: f.position, meu: f === player };
   for (const e of f.events) {
     switch (e.type) {
       case 'afterimage':
@@ -672,6 +699,7 @@ function drainEvents(f) {
       case 'fireBlast': {
         const spec = e.charged ? TUNING.blasts.charged_blast : TUNING.blasts.ki_blast;
         projectiles.fire(f, spec, e.chargeT);
+        sfx.disparo({ ...ouvir, carregado: e.charged });
         juice.shake(e.charged ? 0.3 : 0.06);
         if (e.charged) juice.zoom(0.5);
         break;
@@ -684,11 +712,13 @@ function drainEvents(f) {
 
       case 'ultimateStart':
         hud.showBanner(f === player ? 'ULTIMATE!' : 'CUIDADO!', 1400, 'big');
+        sfx.ultimateAviso({ pos: f.position, meu: meu(f, f.target) });
         juice.slowMo(TUNING.blasts.ultimate.cinematicFrames, 0.45);
         break;
 
       case 'ultimateFire':
         beam.start(f);
+        sfx.ultimateFeixe({ pos: f.position, meu: meu(f, f.target) });
         juice.impact({ shake: TUNING.blasts.ultimate.shake, zoom: 1.4 });
         vfx.ring(f.position, { billboard: true, color: 0xcfefff, from: 1, to: 22, life: 0.7 });
         break;
@@ -697,6 +727,7 @@ function drainEvents(f) {
         const p = f.position.clone();
         p.y = TUNING.arena.floorY;
         const power = Math.min(1, e.speed / 30);
+        sfx.explosao({ ...ouvir, tamanho: 0.3 + power * 0.7 });
         vfx.dust(p, { count: 30, speed: 7 * (0.5 + power), radius: 1.4, life: 1.2 });
         vfx.ring(p, { color: 0xd8c8a0, from: 1, to: 16 * (0.4 + power), life: 0.6 });
         vfx.burst(p, { count: 24, color: 0xffd9a0, speed: 10, life: 0.5 });
@@ -712,6 +743,7 @@ function drainEvents(f) {
        * defensor deixa de estar defendendo e vira alvo aberto, e quem está
        * atacando tem uma janela curta pra aproveitar. */
       case 'guardShattered': {
+        sfx.quebraGuarda({ pos: f.position, meu: meu(f, e.attacker) });
         const p = f.position.clone();
         p.y += 1.0;
         vfx.burst(p, { count: 40, color: 0xbfe4ff, speed: 13, life: 0.5 });
@@ -744,16 +776,18 @@ function drainEvents(f) {
        * pro jogador: ele lança o adversário, não sabe que pode ir atrás, e o
        * lançamento volta a ser um beco sem saída. */
       case 'pursuitOpen':
-        if (f === player) hud.showBanner('PERSEGUIR  ·  Shift', 700);
+        if (f === player) { hud.showBanner('PERSEGUIR  ·  Shift', 700); sfx.sinal('perseguir'); }
         break;
 
       case 'pursuitStart':
+        sfx.whoosh({ ...ouvir, forte: 1 });
         vfx.burst(f.position, { count: 18, color: f.auraColor, speed: 11, life: 0.3 });
         juice.shake(0.2);
         break;
 
       // Leu o lançamento e chegou: rota nova, e isso merece leitura na tela.
       case 'pursuitHit':
+        sfx.acerto({ ...ouvir, peso: 'pesado' });
         if (f === player) hud.showBanner('ALCANÇOU!', 700, 'big');
         juice.impact({ shake: 0.3, zoom: 0.4 });
         vfx.ring(f.position, { billboard: true, color: f.auraColor, from: 0.5, to: 6, life: 0.35 });
@@ -770,6 +804,7 @@ function drainEvents(f) {
         break;
 
       case 'airRecover':
+        sfx.whoosh({ ...ouvir, forte: 0.4 });
         vfx.burst(f.position, { count: 14, color: f.auraColor, speed: 7, life: 0.3 });
         vfx.ring(f.position, { billboard: true, color: f.auraColor, from: 0.4, to: 4, life: 0.35 });
         break;
@@ -786,6 +821,7 @@ function drainEvents(f) {
        *  smash está olhando o adversário, não o canto da tela.                  */
       case 'smashPerfectWindow': {
         if (f !== player) break;
+        sfx.sinal('perfect');
         const punho = f.char.socket(f.move?.socket || 'hand_r')
           .getWorldPosition(new THREE.Vector3());
         vfx.burst(punho, { count: 16, color: 0xffe07a, speed: 5, life: 0.28 });
@@ -815,6 +851,7 @@ function drainEvents(f) {
         break;
 
       case 'maxPowerStart': {
+        sfx.maxPower(ouvir);
         const p = f.position.clone(); p.y += 0.9;
         vfx.burst(p, { count: 80, color: 0xfff0b0, speed: 20, life: 0.8 });
         vfx.ring(p, { billboard: true, color: 0xffe08a, from: 0.6, to: 20, life: 0.8 });
@@ -835,6 +872,7 @@ function drainEvents(f) {
         break;
 
       case 'exhaustStart':
+        sfx.exaustao(ouvir);
         vfx.ring(f.position, { billboard: true, color: 0x8899aa, from: 0.4, to: 5, life: 0.5 });
         if (f === player) hud.showBanner('SEM KI  ·  nem vanish nem dash', 1100, 'warn');
         else if (f === opponent) hud.showBanner(`${f.name} SEM KI`, 900);
@@ -852,13 +890,15 @@ function drainEvents(f) {
        *  fica só no tuning. É o mesmo problema que `pursuitOpen` resolveu pra
        *  perseguição, e a mesma solução. */
       case 'vanishBattleOpen':
-        if (f === player) hud.showBanner(`RESPONDA  ·  V  (troca ${e.exchange})`, 500, 'warn');
+        if (f === player) { hud.showBanner(`RESPONDA  ·  V  (troca ${e.exchange})`, 500, 'warn'); sfx.sinal('responda'); }
         juice.slowMo(TUNING.defense.vanishBattle.slowMoFrames,
                      TUNING.defense.vanishBattle.slowMoScale);
         break;
 
       case 'counterVanish': {
         const VB = TUNING.defense.vanishBattle;
+        sfx.vanish({ pos: f.position, meu: meu(f, e.foe) });
+        sfx.contra({ pos: f.position, meu: meu(f, e.foe) });
         for (let i = 0; i < 5; i++) vfx.afterimage(f.char, f.auraColor);
         vfx.burst(f.position, { count: 30, color: 0xffffff, speed: 14, life: 0.4 });
         congelarTroca(f, e.foe, VB.hitstop);
@@ -877,6 +917,7 @@ function drainEvents(f) {
        *  GRAB  (§17)
        * ================================================================ */
       case 'grabEscape': {
+        sfx.contra({ pos: f.position, meu: meu(f, e.attacker) });
         const p = f.position.clone(); p.y += 0.9;
         vfx.burst(p, { count: 30, color: 0xbfe4ff, speed: 11, life: 0.4 });
         vfx.ring(p, { billboard: true, color: 0x9fd0ff, from: 0.4, to: 6, life: 0.4 });
@@ -888,6 +929,7 @@ function drainEvents(f) {
       }
 
       case 'throw':
+        sfx.whoosh({ ...ouvir, forte: 0.9, sobe: false });
         vfx.burst(f.position, { count: 26, color: 0xffd9a0, speed: 12, life: 0.45 });
         if (f === player) hud.addCombo();
         break;
@@ -899,6 +941,7 @@ function drainEvents(f) {
        *  souber qual saiu. Sem isso ele aperta Shift+algo e não aprende a
        *  relação entre o modificador e o resultado. */
       case 'pursuitSpike':
+        sfx.acerto({ ...ouvir, peso: 'pesado' });
         juice.impact({ shake: 0.6, zoom: 0.8 });
         vfx.ring(f.position, { billboard: true, color: 0xffd45c, from: 0.5, to: 10, life: 0.45 });
         if (f === player) hud.showBanner('SPIKE!', 700, 'big');
@@ -908,6 +951,7 @@ function drainEvents(f) {
        * aqui — mais que o smash frente — e o jogador precisa entender que foi a
        * ESCOLHA do tipo que custou isso, não azar. */
       case 'pursuitWhiff':
+        sfx.whoosh({ ...ouvir, forte: 0.3, sobe: false });
         vfx.burst(f.position, { count: 10, color: 0x8899aa, speed: 4, life: 0.3 });
         if (f === player && e.style === 'highSpeed') {
           hud.showBanner('PASSOU RETO  ·  exposto', 900, 'warn');
@@ -920,8 +964,44 @@ function drainEvents(f) {
 
       case 'vanish':
         break;
+
+      case 'step':
+        sfx.whoosh({ ...ouvir, forte: 0.15 });
+        break;
     }
   }
+}
+
+/* ==========================================================================
+ *  Som por ESTADO (não por evento)
+ * ==========================================================================
+ *  Dragon Dash não emite evento — é um estado. E carregar ki / segurar smash
+ *  são sons que duram enquanto o estado dura. Tudo isso se lê aqui, uma vez
+ *  por frame, comparando com o estado do frame anterior. */
+let _faseSom = null;
+function ouvirFrame() {
+  if (!player) return;
+  sfx.listener = player.position;
+  if (!sfx.ativo) return;
+
+  for (const f of fighters) {
+    if (f.alive && f.state === S.DASH && f._estadoSom !== S.DASH) {
+      sfx.whoosh({ pos: f.position, meu: f === player, forte: 0.7 });
+    }
+    f._estadoSom = f.state;
+  }
+
+  sfx.atualizarLoops({
+    carregandoKi: player.alive && player.state === S.CHARGE,
+    ki01: player.ki / TUNING.ki.max,
+    segurandoSmash: player.alive && player.state === S.ATTACK && player.smashChargeFrames > 0,
+    carga01: Math.min(1, player.smashChargeFrames / TUNING.smashCharge.maxHoldFrames),
+  });
+
+  // A arena apertou de fase: gongo. A primeira leitura só registra.
+  const fase = arena.fase?.label ?? null;
+  if (_faseSom !== null && fase !== _faseSom) sfx.sinal('fase');
+  _faseSom = fase;
 }
 
 /* ==========================================================================
@@ -1127,6 +1207,11 @@ function checkRingOut(f) {
   if (out) {
     f.outOfBoundsFrames++;
     if (f.outOfBoundsFrames === 1 && f === player) hud.showBanner('VOLTE PRA ARENA!', 1200, 'warn');
+    // Bipe que acelera conforme o relógio de eliminação corre.
+    if (f === player) {
+      const resta = 1 - f.outOfBoundsFrames / TUNING.arena.outOfBoundsFrames;
+      if (f.outOfBoundsFrames % Math.max(8, Math.round(36 * resta)) === 1) sfx.sinal('borda');
+    }
     if (f.outOfBoundsFrames > TUNING.arena.outOfBoundsFrames) {
       f.eliminate('fora');
       announceKO(f, 'RING OUT');
@@ -1152,6 +1237,7 @@ function announceKO(loser, reason) {
    * for VOCE. */
   congelarTroca(loser, null, 12);
   juice.impact({ shake: 0.7, zoom: 0.8 });
+  sfx.explosao({ pos: loser.position, meu: loser === player, tamanho: 1.3 });
 
   loser.char.root.visible = false;
   vfx.burst(loser.position, { count: 70, color: 0xffffff, speed: 18, life: 0.9 });
@@ -1227,6 +1313,7 @@ function step(dt) {
   if (input.pressed('trainReset') && emTreino()) recolocarBonecos();
 
   if (input.pressed('debugHud')) hud.toggleDebug();
+  if (input.pressed('mute')) hud.showBanner(sfx.alternarMudo() ? 'SOM LIGADO' : 'SOM DESLIGADO', 700);
 
   if (input.pressed('botProfile') && bots.length) {
     const nome = ciclarPerfilDosBots();
@@ -1387,6 +1474,8 @@ function step(dt) {
   }
   prof.end('eventos+ringout');
 
+  ouvirFrame();
+
   /* O alvo do jogador morreu, ou você o PERDEU DE VISTA.
    *
    * O segundo caso é novo e é a tática inteira: afastar-se o bastante encerra
@@ -1425,6 +1514,7 @@ function step(dt) {
     hud.showBanner(venceu ? 'VOCÊ VENCEU' : 'VOCÊ PERDEU', 60000, venceu ? 'big' : 'warn');
     juice.impact({ hitstop: 20, shake: 1.0, zoom: 1.2 });
     juice.slowMo(90, 0.3);
+    sfx.sinal(venceu ? 'vitoria' : 'derrota');
   }
 }
 
@@ -1553,7 +1643,7 @@ window.PROTO = {
   get bots() { return bots; },
   get lockedOn() { return lockedOn; },
   get modoTreino() { return treino().nome; },
-  arena, vfx, juice, loop, camera, combatCam,
+  arena, vfx, juice, sfx, loop, camera, combatCam,
   projectiles, beam,
   resetRound,
   ctx,
@@ -1602,6 +1692,7 @@ window.PROTO = {
     const total = Math.round(segundos * TUNING.sim.fps);
     const t0 = arena.elapsed;
     let i = 0;
+    sfx.mudo = true;      // 25 min de golpes em segundos travariam o navegador
 
     for (; i < total; i++) {
       step(dt);
@@ -1611,6 +1702,7 @@ window.PROTO = {
        * Numa medição isso reiniciaria a partida no meio da coleta. */
       if (roundOver) break;
     }
+    sfx.mudo = false;
     return {
       passos: i,
       segundosSimulados: +(i * dt).toFixed(1),

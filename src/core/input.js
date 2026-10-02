@@ -41,6 +41,7 @@ const BINDINGS = {
   trainReset: { keys: ['KeyG'] },                   // recoloca os bonecos
   botProfile: { keys: ['KeyB'] },                   // cicla o estilo da IA
   debugHud:   { keys: ['KeyH'] },                   // telemetria de frame data
+  mute:       { keys: ['KeyM'] },                   // liga/desliga o som
   debugPanel: { keys: ['KeyP'] },
   reset:      { keys: ['Backspace'] },
 };

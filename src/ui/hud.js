@@ -490,8 +490,20 @@ export class HUD {
      * É o que faz o golpe parecer grande: a barra inteira passa a valer 180 de
      * vida em vez de 900, então o mesmo rush move cinco vezes mais. Ver
      * `_aplicarCamada`. */
+    /* Trocou de ALVO: a barra da direita passa a ser de outra pessoa. A
+     * diferença de camada entre os dois não é quebra — sem isto, mirar num
+     * lutador mais machucado piscava a barra e tocava o som de "arrancou". */
+    if (opponent !== this._donoP2) {
+      this._donoP2 = opponent;
+      this._camada.p2 = Infinity;
+    }
+
     const c1 = this._aplicarCamada(this.p1hp, p1, 'p1');
     const c2 = this._aplicarCamada(this.p2hp, p2, 'p2');
+
+    // O som da quebra mora em main.js (onde está o áudio); aqui só avisa.
+    if (c1.quebrou) this.onCamada?.('minha');
+    if (c2.quebrou) this.onCamada?.('rival');
 
     this.p1hp.style.width = (c1.fill * 100) + '%';
     this.p2hp.style.width = (c2.fill * 100) + '%';

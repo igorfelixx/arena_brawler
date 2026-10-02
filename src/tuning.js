@@ -2053,6 +2053,27 @@ export const TUNING = {
   /* ================================================================== */
   /*  JUICE  —  no Tenkaichi isto não é enfeite, é METADE do jogo         */
   /* ================================================================== */
+  /* ==========================================================================
+   *  ÁUDIO  —  sintetizado (src/core/audio.js)
+   * ==========================================================================
+   *  Os timbres são placeholder e morrem no porte. O que porta é a REGRA DE
+   *  MIXAGEM abaixo — a mesma lição do hitstop global (8.31): com 30
+   *  lutadores, som que não cai com a distância vira chiado e afoga o seu.
+   *  `M` liga/desliga.                                                      */
+  audio: {
+    enabled: true,
+    volume: 0.7,
+
+    /* Eventos em que VOCÊ está envolvido tocam sempre cheios. Os dos outros
+     * passam por isto: */
+    othersGain: 0.55,       // teto pra briga alheia, mesmo colada em você
+    refDistance: 12,        // m — até aqui, sem queda
+    maxDistance: 60,        // m — além disto, silêncio (≈ 2,5× a detecção)
+
+    maxVoices: 24,          // sons simultâneos, teto duro
+    minIntervalSec: 0.035,  // mesmo tipo de som não repete mais rápido que isto
+  },
+
   juice: {
     hitstopEnabled: true,
     hitstopScale: 1.0,

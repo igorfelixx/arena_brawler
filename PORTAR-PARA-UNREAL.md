@@ -1565,6 +1565,33 @@ Dois defeitos que nasceram juntos com o limite de detecção (10.8):
    24 m de detecção. Agora é 0 na base e o modo arena liga. Partida de 30
    remedida depois da mudança: 25,2 min (inalterada).
 
+### 8.38 Áudio: o que porta é a MIXAGEM, não o som
+
+`src/core/audio.js` sintetiza tudo com Web Audio (zero arquivos). Os timbres
+são placeholder e morrem no porte — no Unreal vira MetaSounds ou pacote do
+Marketplace. O que porta:
+
+1. **A hierarquia de peso** espelha a do hitstop (§22): guarda < rush <
+   counter < smash < lançamento < perfect. O Perfect tem um timbre que nenhum
+   outro golpe tem (sino), porque é o recibo de ter acertado a janela.
+2. **Regra de distância** (`TUNING.audio`): evento em que VOCÊ está envolvido
+   toca cheio; o dos outros cai com a distância (`refDistance` 12 m) sob um
+   teto (`othersGain` 0,55) e some além de `maxDistance` (60 m). Medido com 12
+   bots brigando colados e 17 longe, em 10 s: 145 sons tocaram, 255 foram
+   cortados pela distância, pico de 11 vozes (teto 24). Sem isso, 30
+   lutadores viram chiado — mesma lição do hitstop global (8.31). No Unreal:
+   Sound Attenuation + Sound Concurrency fazem exatamente isto.
+3. **Sinais de janela só do jogador**: perfect, perseguir, vanish battle,
+   alarme de borda (acelera com o relógio de eliminação), quebra de camada.
+   Sinal de janela de outro lutador é informação que não serve.
+4. **Rush sobe de tom** a cada elo seguido do mesmo atacante — a rota "sobe"
+   pelo ouvido.
+5. `PROTO.simular()` roda mudo. O navegador exige um gesto antes de tocar
+   som; até lá tudo é no-op, e os harnesses de `tools/` não são afetados.
+
+**Não validado por ouvido humano**: volumes, timbres e se o som do Perfect
+realmente se destaca no meio da briga.
+
 ---
 
 ## 11. O que ainda NÃO foi validado
