@@ -345,6 +345,16 @@ camada e a última pareceriam iguais. Verificado: 81% de vida → barra em 5%;
 
 Puramente visual — nenhum número de combate muda.
 
+### Sem câmera lenta · lock-on que solta sozinho
+
+- **Câmera lenta desligada** (`juice.slowMoEnabled: false`): ela desacelera o
+  MUNDO, então em multiplayer a briga dos outros travava a sua. Não existe em
+  rede. Armadilha 8.36.
+- **Lock-on sem alvo solta sozinho** (como apertar E), e E não religa sem
+  ninguém no alcance. Antes a câmera ficava presa. Armadilha 8.37.
+- **Detecção só no modo arena** (`targeting.detectionEnabled` 0 na base): o
+  duelo herdava e começava com os dois sem se enxergar (nascem a 72 m).
+
 ## Como trabalhar aqui
 
 - **Meça antes de opinar.** Este projeto tem um histórico de diagnósticos

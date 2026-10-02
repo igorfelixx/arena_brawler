@@ -1250,11 +1250,21 @@ function step(dt) {
     }
 
     // E — solta/retoma o lock sem mudar de alvo.
+    // Retomar sem ninguém no alcance não liga: lock sem alvo trava a câmera
+    // (o mouse vai pro desvio do lock, que não tem em torno de quem girar).
     if (input.pressed('lockToggle')) {
-      lockedOn = !lockedOn;
-      player.lockOn = lockedOn;
-      combatCam.setLocked(lockedOn, player, player.target);
-      hud.showBanner(lockedOn ? 'LOCK-ON' : 'LOCK SOLTO', 700);
+      if (!lockedOn && !player.target) {
+        player.target = nearestEnemy(player, fighters);
+        opponent = player.target;
+      }
+      if (!lockedOn && !player.target) {
+        hud.showBanner('NINGUÉM NO ALCANCE', 700);
+      } else {
+        lockedOn = !lockedOn;
+        player.lockOn = lockedOn;
+        combatCam.setLocked(lockedOn, player, player.target);
+        hud.showBanner(lockedOn ? 'LOCK-ON' : 'LOCK SOLTO', 700);
+      }
     }
   }
 
@@ -1389,6 +1399,18 @@ function step(dt) {
     opponent = novo;
     if (novo) hud.showBanner(`ALVO: ${novo.name}`, 600);
     else if (perdeu) hud.showBanner('FORA DE COMBATE', 900);
+
+    /* Sem alvo nenhum, o lock SOLTA sozinho — igual apertar E.
+     * Antes ficava ligado apontando pro nada: a câmera parava de seguir
+     * alguém, mas o mouse continuava indo pro desvio do lock (que relaxa
+     * de volta a zero), então a câmera ficava presa até apertar E/Tab.
+     * Passa `null` como alvo pra câmera livre nascer olhando pra onde a
+     * travada já olhava, sem giro brusco. */
+    if (!novo && lockedOn) {
+      lockedOn = false;
+      player.lockOn = false;
+      combatCam.setLocked(false, player, null);
+    }
   }
   opponent = player.target;
 

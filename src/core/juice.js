@@ -17,8 +17,9 @@
  *
  *  PUNCH ZOOM é um empurrão rápido de FOV no impacto. Vende peso quase de graça.
  *
- *  CÂMERA LENTA entra no vanish e no ultimate: são os momentos de leitura, e
- *  desacelerar o tempo é como o Tenkaichi diz "olha o que acabou de acontecer".
+ *  CÂMERA LENTA entrava no vanish e no ultimate. DESLIGADA
+ *  (`juice.slowMoEnabled`): ela desacelera o mundo inteiro, e com 30 lutadores
+ *  a briga dos outros travava a sua.
  * ========================================================================== */
 
 import { TUNING } from '../tuning.js';
@@ -66,6 +67,7 @@ export class Juice {
 
   /** Câmera lenta por N frames, com escala de tempo (0.25 = 4x mais lento). */
   slowMo(frames, scale) {
+    if (!TUNING.juice.slowMoEnabled) return;   // ver tuning: quebra multiplayer
     if (frames > this.slowMoFrames) {
       this.slowMoFrames = frames;
       this.slowMoScale = scale;

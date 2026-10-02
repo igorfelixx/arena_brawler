@@ -1536,6 +1536,35 @@ termina não é pressão, é decoração.
 **Ressalva:** bots não recuam nem evitam briga; humanos fazem as duas coisas.
 Cinco minutos é um PISO, não um teto.
 
+### 8.36 ⚠️ Câmera lenta é GLOBAL — não existe em multiplayer
+
+`juice.slowMo` mexe no relógio do mundo (`loop.timeScale`). Era disparada por
+vanish, Z-Counter, Sonic Sway, trade, Perfect Smash, ultimate e fim de rodada
+— **de qualquer lutador**. Com 30 na arena, a briga de dois desconhecidos do
+outro lado desacelerava a sua. Mesmo erro conceitual do hitstop global (8.31),
+mas sem saída por lutador: não dá pra desacelerar só um corpo sem quebrar o
+frame data. Desligada inteira (`juice.slowMoEnabled: false`), duelo incluso.
+
+**No Unreal:** nunca `SetGlobalTimeDilation` por evento de combate. Se o
+"olha o que aconteceu" voltar, volta como efeito LOCAL (câmera, VFX, áudio) de
+quem está envolvido.
+
+### 8.37 ⚠️ Lock-on sem alvo trava a câmera / o duelo herdava a detecção
+
+Dois defeitos que nasceram juntos com o limite de detecção (10.8):
+
+1. **Lock ligado apontando pro nada.** Ao perder o alvo de vista, `target`
+   virava `null` mas o lock continuava ligado. A câmera caía no enquadramento
+   livre, só que o mouse ainda ia pro desvio do LOCK (que relaxa a zero) —
+   câmera presa até apertar E/Tab. Agora o lock solta sozinho ao ficar sem
+   alvo, como se E tivesse sido apertado; e E não religa sem ninguém no
+   alcance. Regra pro porte: **lock-on é um estado que exige alvo válido**;
+   a máquina de estados da câmera não pode ter "travado em ninguém".
+2. **O duelo começava sem ninguém se enxergar.** `detectionEnabled` estava 1
+   na base e o duelo não sobrescreve nada; os dois nascem a ~72 m, além dos
+   24 m de detecção. Agora é 0 na base e o modo arena liga. Partida de 30
+   remedida depois da mudança: 25,2 min (inalterada).
+
 ---
 
 ## 11. O que ainda NÃO foi validado

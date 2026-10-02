@@ -392,8 +392,14 @@ export const TUNING = {
 
     /* Com 0 o limite é desligado e volta o comportamento antigo (onisciente).
      * Fica como chave porque o duelo não precisa disto — num 1×1 perder o
-     * adversário de vista não é tática, é a luta deixar de existir. */
-    detectionEnabled: 1,
+     * adversário de vista não é tática, é a luta deixar de existir.
+     *
+     * ZERO NA BASE, ligado só pelo modo arena (`match.modes.arena.targeting`).
+     * Estava em 1 aqui e o duelo herdava: os dois nascem a ~72 m, bem além dos
+     * 24 m de detecção, então o 1×1 começava com ninguém enxergando ninguém —
+     * sem lock, e a IA derivando em `_foraDeCombate`. O duelo não sobrescreve
+     * nada, então a base TEM que ser o comportamento do duelo. */
+    detectionEnabled: 0,
 
     /* Pesos da pontuação de escolha. O de ALINHAMENTO é o que dá controle ao
      * jogador: só distância faz o alvo pular sozinho entre inimigos sempre que
@@ -546,6 +552,9 @@ export const TUNING = {
          *
          * A regeneração continua existindo (`fighter.healthRegenPerSec`) e em
          * zero. É alavanca, não mecânica em uso. */
+
+        /* Limite de detecção: só existe aqui. Ver `TUNING.targeting`. */
+        targeting: { detectionEnabled: 1 },
 
 
         /* ------------------------------------------------------------
@@ -2085,6 +2094,24 @@ export const TUNING = {
      *                não use acima de 2 lutadores.
      */
     hitstopScope: 'player',
+
+    /* ================================================================
+     *  CÂMERA LENTA  —  DESLIGADA
+     * ================================================================
+     *  A câmera lenta mexe no RELÓGIO DO MUNDO (`loop.timeScale`). No 1×1
+     *  é leitura dramática; com 30 lutadores é defeito: qualquer vanish, Z-
+     *  Counter ou Perfect Smash de dois desconhecidos do outro lado da arena
+     *  deixava TODO MUNDO lento — inclusive a sua briga. Em rede nem existe:
+     *  um cliente não pode desacelerar o tempo dos outros.
+     *
+     *  É o mesmo erro conceitual do hitstop global (ver acima), sem a saída
+     *  do escopo por lutador — não dá pra desacelerar só um corpo sem quebrar
+     *  o frame data. Então sai inteira. Os `slowMo*` espalhados pelos golpes
+     *  ficam nos dados só como registro; com isto em false, nada os lê.
+     *
+     *  No Unreal: se voltar, volta como efeito LOCAL de câmera/VFX do
+     *  envolvido, nunca como `SetGlobalTimeDilation`.                      */
+    slowMoEnabled: false,
 
     /* ================================================================
      *  HITSTOP POR CATEGORIA  (§22)
