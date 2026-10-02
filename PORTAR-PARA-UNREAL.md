@@ -1594,6 +1594,218 @@ realmente se destaca no meio da briga.
 
 ---
 
+## 10.10 MAX POWER v2 — design (antes de implementar)
+
+Branch `max-power-v2`. Pedido do dono: o Max Power atual "funciona como MVP" mas
+é fraco e chato; quer algo que se SINTA na mão, que crie decisões e viradas, com
+counterplay claro, gostoso de lutar com e contra.
+
+### O que foi medido ANTES de propor qualquer coisa
+
+40 duelos bot × bot (`?modo=duelo`, IA no jogador, sementes 1–40):
+
+| | v1 (atual) |
+|---|---|
+| duração média do duelo | **148 s** (mediana 152, 16–255) |
+| ring-out / nocaute | 29 / 11 |
+| **Max Power acesos** | **0 em 40 lutas** (~99 min de luta) |
+
+Ou seja, a pendência 3d ("a IA quase não acende") é mais forte do que o
+registrado: **nunca**. E lendo o código apareceu mais um caso da 8.19:
+`maxPower.speedMul` e `maxPower.poiseMul` estão no tuning, comentados, e
+**ninguém os lê**. O estado prometia "poise mais duro" e "mais rápido" e
+entregava só ×1,20 de dano, ki ×0,65 e hitstun ×0,82.
+
+Diagnóstico do porquê é chato, além do número:
+
+1. **não muda o que os golpes FAZEM**, só quanto tiram. +20% em cima de vida 900
+   é invisível (um rush passa de 5 para 6).
+2. **a entrada é a mesma ação de carregar ki**, só que mais longa: é uma pausa,
+   não um evento. Ninguém do outro lado "vê acontecer".
+3. **o preço é pago no fim** (exaustão) por um benefício que não se sente —
+   a conta não fecha, e a IA (que só acende a >10 m com ki ≥ 62) nem chega lá.
+4. **não tem gasto final**: não existe o momento de "agora eu gasto TUDO".
+
+### O que cada referência ensina — e o que se pega dela
+
+| referência | o que funciona | o que se pega | o que NÃO se pega |
+|---|---|---|---|
+| **Tekken 8 — Heat** | ativação é um GOLPE (Heat Burst: power crush ~16f, freeze curto, sempre deixa em vantagem) ou um engajador acertado; 1× por round; o timer **para enquanto o adversário está em hitstun/no chão**; Heat Smash gasta o resto e encerra | burst com armadura e empurrão; rota alternativa por golpe-engajador; timer que pausa no combo; golpe de gasto final que encerra o modo | o freeze de tela (aqui seria global — 8.31/8.36); burst fatal (o patch 1.05 tirou) |
+| **SF6 — Drive Gauge** | Drive Impact: 26f, 2 hits de armadura, **perde pro arremesso**; Burnout é um estado PUNÍVEL que se vê | armadura que perde pra grab (a matriz já tem isso); fim do modo por desperdício vira estado punível curto | o medidor de 6 barras (o ki já é esse recurso, e o kit defensivo já tem cinco papéis — ver CLAUDE.md) |
+| **Naruto Storm 4 — Awakening** | gatilho por vida baixa (~40%); comeback que **dá pra prever** (todo mundo vê a vida) | o gatilho ligado à barra de vida — e a barra em CAMADAS já existe e é legível | canal longo e interrompível de transformação; despertar que não bloqueia (quebraria o eixo guarda/grab) |
+| **BT3 — Max Power / Sparking** | o estado libera golpes que só existem nele; usar o Blast 2 / Ultimate **encerra o modo** — é uma escolha entre "durar" e "gastar" | golpe exclusivo que encerra o modo; ferramentas de ki mais baratas durante | o degenerado: Blast 1 que acende Max Power sem carregar (zero vulnerabilidade), Ultimate só no modo = botão de matar, e carregar até o fim como stall |
+| **GG Strive — Roman Cancel** | UM recurso, significados diferentes por CONTEXTO (vermelho no hit, amarelo bloqueando, azul no neutro) | a mesma entrada faz coisas diferentes conforme o estado: no neutro acende, bloqueando vira "sai de cima de mim", dentro do modo vira o gasto final | a lentidão do oponente (é dilatação de tempo por corpo — quebra o frame data, mesma família da 8.36) |
+
+Detalhes de jogos comerciais acima são de documentação pública (Bandai Namco,
+Hotspawn, SuperCombo, Dustloop) e de memória — **frame data comercial citado
+aqui é aproximado**, e nenhum número deste protótipo foi copiado de lá.
+
+### Proposta A — ESTOURO  (Heat + Drive Impact + Awakening)  ← escolhida
+
+**Ativa:** `R+K` (carregar + smash, juntos). Exige **1 carga de Max Power**.
+A carga se ganha pela BARRA DE VIDA em camadas (gatilho a decidir pelos números,
+três candidatos — ver abaixo). Duas rotas de entrada:
+
+- **Estouro** (o Heat Burst): do neutro, carregando, ou **de dentro da guarda,
+  inclusive em blockstun** (o "amarelo" do GG / Drive Reversal). Nunca de
+  hitstun: escapar de combo já em andamento é trabalho do vanish (8.25).
+- **Engajador** (o Heat Engager): acertar um **Perfect Smash** tendo carga
+  acende o modo sozinho, sem estouro. Recompensa por perícia, não por botão.
+
+**O estouro em si** é um golpe (estado ATTACK, dados em `TUNING.moves.max_burst`):
+
+| | frames |
+|---|---|
+| startup | 12 — armadura total (só grab passa) |
+| active | 4 — onda centrada no CORPO, raio 6 m, atinge todo mundo |
+| recovery | 16 |
+| na vítima | 8 de dano, empurrão 24 m/s + 4 pra cima, hitstun 24 (tipo `hitstun`: **não abre perseguição**) |
+| defesas | vanish, step/sway. **Guarda não segura o empurrão** (é a onda que tira você de cima) |
+
+Na conta: a onda pega no f12, a vítima fica presa até ~f36 e o ativador está
+livre no f32 → **sai ~+4 e a ~5 m**. É neutro com iniciativa, não combo
+garantido — o mesmo papel do "+1/+2" do Heat Burst.
+
+**O que muda QUALITATIVAMENTE no kit (durante o modo):**
+
+1. **Rota de 6 elos** (4 → 6): o combo dura mais — mas só se você acertar.
+2. **Smash com armadura** (14 de poise ≈ dois rushes): não dá mais pra
+   "jabbar" o smash dele. Vale só no smash TOCADO — o carregado não tem
+   armadura (senão seriam 56 frames de golpe blindado; ver degenerados).
+3. **Voo e dash 12% mais rápidos**, ferramentas de ki ×0,65 (vanish, dash,
+   perseguição, blast). É o "high speed" do BT3.
+4. **MAX SMASH** (`R+K` de novo, dentro do modo — do neutro ou como ender de
+   rota): o gasto final. Encerra o modo **sem exaustão**.
+
+| MAX SMASH | |
+|---|---|
+| startup / active / recovery | 16 / 4 / 28 |
+| armadura | total no startup (só grab passa) |
+| dano | 30 + 20 × fração do modo que sobrou (30–50) |
+| lançamento | blowaway 50 m/s + 6, quebra guarda, abre perseguição |
+| defesas | vanish (janela 14), Z-Counter, sway, step — **guarda não** |
+| errar | 28 frames de recovery: o maior do kit |
+
+O dano escala com o que SOBROU do modo: gastar cedo dói mais, cavalgar o modo
+e gastar no fim rende menos. É a escolha "durar ou gastar" do BT3, em número.
+
+**Duração:** relógio de **600f** (10 s) que **pausa enquanto o SEU alvo está em
+hitstun / voando / no chão / agarrado** (Tekken). Teto de parede 1080f (18 s)
+pra o relógio pausado não virar modo infinito.
+
+**Como termina:**
+- gastou no Max Smash → acaba limpo
+- o relógio zerou → **exaustão curta, 60f** (o Burnout do SF6): quem desperdiçou
+  o modo paga, e quem aguentou ganha a janela de punir.
+
+**Custo:** a carga (que vem de ter apanhado), a vulnerabilidade de 12f do
+estouro a grab, e o risco do Max Smash errado. **Zero ki** — o v1 cobrava 22 de
+ki *e* ficar parado *e* exaustão, por um benefício invisível.
+
+**Counterplay, ponto a ponto:**
+
+| contra | resposta |
+|---|---|
+| o estouro | **grab** (a armadura não segura pegada — Drive Impact × throw), step/sway, vanish, ou estar a >6 m. Guarda NÃO adianta: quem pressiona alguém com carga precisa misturar grab |
+| o modo | **defender bem faz o relógio correr** (ele só pausa quando você apanha). Vanish e guarda passam a comprar tempo de verdade |
+| o smash blindado | grab, vanish, Z-Counter, ou o seu próprio smash (poise 40 fura 14) |
+| o Max Smash | 16f de startup é REAGÍVEL (a mesma propriedade do smash, §3.6): vanish, Z-Counter, sway. Errou → 28f de punição |
+| o fim | se acabar pelo relógio, 60f sem ki: puna |
+
+**Interação com cada sistema existente:**
+
+| sistema | interação |
+|---|---|
+| rota + `maxChain` | teto vira 6 no modo; o estouro e o Max Smash não contam elo; o Max Smash é ender (zera a rota como qualquer smash) |
+| perseguição (3 tipos) | ×0,65 de ki no modo; o estouro NÃO abre perseguição (é `hitstun`); o Max Smash abre, como qualquer lançamento |
+| vanish / vanish battle | ki ×0,65 deixa o modo favorecido numa vanish battle — que é o "high speed" do gênero; o teto de 4 trocas continua |
+| guarda / Z-Counter / Sonic Sway | estouro de dentro da guarda é a 6ª ferramenta defensiva, mas GASTA A CARGA (não é repetível); Z-Counter funciona contra o Max Smash, não contra a onda |
+| grab | a resposta universal à armadura — ganha do estouro e do smash blindado. É o que o §17 queria do grab |
+| ring-out | a onda empurra ~5 m: na borda incomoda, não mata sozinha (4 s pra voltar). O Max Smash lança a 50 (smash 46, perfect 67) |
+| Perfect Smash | é a rota de ENGAJADOR; no modo, Perfect e armadura NÃO se somam (carregado não tem armadura) e o Max Smash não é carregável |
+| barra em camadas | a carga se ganha pela camada (gatilho); a HUD mostra a carga dos DOIS — o comeback é previsível |
+| ki / exaustão | o modo não drena ki (o v1 drenava 11/s); fim por relógio = 60f de exaustão; estouro custa zero ki, então sai até exausto |
+
+**Na arena de 30:**
+- a onda pega TODO MUNDO num raio de 6 m: é a ferramenta "sai de cima de mim"
+  que o pedido sugere, e custa a carga — não é repetível.
+- quem é atacado por terceiros perde camadas mais rápido → ganha carga mais
+  rápido. O modo protege quem está sendo cercado, não quem está cercando.
+- o relógio só pausa com **o seu alvo** em hitstun: bater em três ao mesmo
+  tempo não estica nada além do que bater em um.
+- a armadura do smash aguenta ~2 rushes, e cada atacante a mais furou ela: com
+  dois em cima de você o smash blindado não salva — o estouro sim.
+- a IA estoura quando 2+ inimigos estão a ≤6 m.
+
+### Proposta B — DESPERTAR  (Naruto Storm 4)
+
+| | |
+|---|---|
+| ativa | segurar R por 45f (canal interrompível) com vida ≤ 2 camadas (40%) |
+| muda | rush com armadura de 1 golpe, rota 6, smash vira "Smash Despertado" (blowaway 56); **não bloqueia** |
+| dura | até perder mais 1 camada ou 900f |
+| termina | sem penalidade (já está perdendo) |
+| custo | 45f parado + abrir mão da guarda |
+| counterplay | interromper o canal; keep-away com blast (ele não bloqueia, mas tem armadura) |
+| frame data | canal 45f · armadura de rush 6 de poise · Smash Despertado 14/4/26 |
+
+Descartada: (1) o canal de 45f é o MESMO problema do v1 — uma pausa, não um
+evento — e na arena de 30 é morte certa; (2) "não bloqueia" desliga o eixo
+guarda ↔ grab que a passada BT3-like construiu: contra o despertado o grab
+some; (3) só quem está perdendo tem — o comeback vira roteiro, e a medição já
+mostra lutas que se decidem por ring-out sem ninguém passar de 40%.
+
+### Proposta C — CANCEL DE KI  (GG Roman Cancel / SF6 Drive)
+
+| | |
+|---|---|
+| ativa | `R+K` com 50 de ki, em qualquer estado não-hitstun |
+| muda | no acerto/bloqueio: cancela o recovery + onda de empurrão; na guarda: onda (sai de cima); no neutro: dash instantâneo |
+| dura | instantâneo (não há modo) |
+| termina | — |
+| custo | 50 de ki |
+| counterplay | ler o ki dele; grab na onda |
+| frame data | onda 8f startup / 3 active / 14 recovery, raio 4 m |
+
+Descartada: é ajuste de recurso, não um MOMENTO — não há "estado" pra lutar
+com e contra. E sobrepõe o kit que já existe: cancelar recovery já é a
+perseguição, a reversão da guarda já é o Z-Counter, o escape de pressão já é o
+vanish. O CLAUDE.md é explícito: "se uma parecer redundante, é sinal de que
+algum número saiu do lugar". O que o RC tem de único (a lentidão do oponente)
+é dilatação de tempo — vetada pela 8.36.
+
+### Por que A
+
+É a única das três que cria um **evento** (o estouro, que os dois veem e os dois
+podem responder), um **estado** que muda o que os golpes fazem (armadura, rota
+longa), e um **gasto final** com decisão dentro dele (durar × gastar). E todo
+counterplay dela usa ferramentas que já existem e estavam sub-usadas: o grab
+ganha um segundo motivo de existir, a guarda e o vanish passam a fazer o
+relógio do modo correr.
+
+### O gatilho da carga — a decidir pelos NÚMEROS, não por gosto
+
+Três candidatos implementados atrás de `maxPower.gatilho`:
+
+| gatilho | regra | referência |
+|---|---|---|
+| `camada` | ganha 1 carga a cada camada de vida perdida (teto 1) | Rage/medidor por dano |
+| `vida` | ganha 1 carga ao cair abaixo de 2 camadas (40%), uma vez | Naruto |
+| `rodada` | 1 carga no começo, sem reposição | Tekken (1× por round) |
+
+Critério de escolha, nesta ordem: (1) a IA usa em quase toda luta, (2) a taxa de
+virada de quem ativa PERDENDO fica entre ~30% e ~55% (abaixo é decoração, acima
+é "quem apanha primeiro ganha"), (3) o TTK do duelo não sai da faixa de 2–3 min,
+(4) a partida de 30 continua em 20–30 min.
+
+### Chave de comparação
+
+`TUNING.maxPower.versao`: `'v2'` (padrão) ou `'v1'` — o v1 continua inteiro,
+com a entrada antiga (segurar R acima de 78 de ki) e a exaustão no fim, pra
+jogar os dois lado a lado. `'off'` desliga a mecânica (é a base do "sem").
+
+---
+
 ## 11. O que ainda NÃO foi validado
 
 **Esta seção é a mais importante para não portar um erro.**
