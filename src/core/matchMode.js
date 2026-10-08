@@ -80,17 +80,33 @@ export function aplicar(id, n = null) {
    * alcance de visão, dois sobreviventes se evitam pra sempre. Medido: 149
    * minutos sem vencedor. Avisar é barato; descobrir isso num playtest de uma
    * hora não é. */
+  /* O alcance certo é `detectionRange`, NÃO `loseTargetRange` — e este
+   * código checava o segundo até a passada dos obstáculos, embora o commit
+   * que o escreveu dissesse o contrário. Dois sobreviventes que NUNCA se
+   * viram precisam do alcance de ACHAR (24 m); o de perder (38 m) só vale pra
+   * quem já é alvo. Com o errado, uma arena final de 18 m passaria sem aviso
+   * e a partida travaria com dois vivos a 30 m um do outro. */
   if (modo.phases && TUNING.targeting.detectionEnabled) {
-    const raioFinal = modo.phases[modo.phases.length - 1].raio;
-    const vista = TUNING.targeting.loseTargetRange;
+    const ult = modo.phases[modo.phases.length - 1];
+    const raioFinal = ult.raio;
+    const vista = TUNING.targeting.detectionRange;
     if (raioFinal * 2 >= vista) {
       console.warn(
         `[matchMode] ARENA FINAL GRANDE DEMAIS: raio ${raioFinal} m (diâmetro ` +
-        `${raioFinal * 2}) >= alcance de visão ${vista} m.\n` +
+        `${raioFinal * 2}) >= alcance de detecção ${vista} m.\n` +
         '            Dois sobreviventes podem se evitar indefinidamente e a ' +
         'partida pode não terminar.\n' +
         `            Baixe o raio da última fase pra menos de ${(vista / 2).toFixed(0)} m, ` +
-        'ou suba targeting.loseTargetRange.');
+        'ou suba targeting.detectionRange.');
+    }
+
+    /* Mesma restrição, pelo outro lado: com obstáculo de pé na arena final,
+     * a visão pode estar bloqueada mesmo a 5 m. Fase final tem que ser
+     * ABERTA. */
+    if (TUNING.obstacles?.enabled && (ult.obst ?? 0) > 0) {
+      console.warn(
+        `[matchMode] OBSTÁCULOS NA FASE FINAL (obst ${ult.obst}): atrás de uma ` +
+        'coluna dois sobreviventes podem não se ver nunca. Zere `obst` da última fase.');
     }
   }
 
@@ -144,7 +160,7 @@ export function faseEm(elapsedSec) {
   // Antes da primeira fase (não deveria acontecer: a primeira começa em 0).
   if (min <= F[0].min) {
     return {
-      radius: F[0].raio, ceiling: F[0].teto,
+      radius: F[0].raio, ceiling: F[0].teto, obst: F[0].obst ?? 1,
       label: F[0].label, sub: F[0].sub, fase: 0,
       proximaEm: (F[0].min - min) * 60, shrinking: false,
     };
@@ -159,6 +175,8 @@ export function faseEm(elapsedSec) {
     return {
       radius: a.raio + (b.raio - a.raio) * e,
       ceiling: a.teto + (b.teto - a.teto) * e,
+      // fração de obstáculos de pé — mesma interpolação do raio
+      obst: (a.obst ?? 1) + ((b.obst ?? 1) - (a.obst ?? 1)) * e,
       label: a.label, sub: a.sub, fase: i,
       proximaEm: (b.min - min) * 60,
       proximaLabel: b.label,
@@ -168,7 +186,7 @@ export function faseEm(elapsedSec) {
 
   const ult = F[F.length - 1];
   return {
-    radius: ult.raio, ceiling: ult.teto,
+    radius: ult.raio, ceiling: ult.teto, obst: ult.obst ?? 1,
     label: ult.label, sub: ult.sub, fase: F.length - 1,
     proximaEm: Infinity, shrinking: false,
   };

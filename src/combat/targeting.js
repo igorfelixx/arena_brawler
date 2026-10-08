@@ -30,6 +30,37 @@ import { TUNING } from '../tuning.js';
 
 const _toFoe = new THREE.Vector3();
 const _aim = new THREE.Vector3();
+const _olhoA = new THREE.Vector3();
+const _olhoB = new THREE.Vector3();
+
+/* ==========================================================================
+ *  LINHA DE VISÃO  —  obstáculos (só no modo arena)
+ * ==========================================================================
+ *  O módulo de obstáculos é registrado UMA vez no boot. Sem registro (ou com
+ *  a lista vazia, como no duelo) `enxerga()` devolve true no primeiro teste e
+ *  nada abaixo muda de comportamento.
+ *
+ *  Duas regras, que são a mesma histerese de detectionRange/loseTargetRange
+ *  aplicada ao TEMPO em vez da distância:
+ *
+ *    ADQUIRIR  exige ver AGORA. Não se acha ninguém através de uma coluna.
+ *    PERDER    exige ficar SEM VER por `obstacles.losLoseFrames` seguidos.
+ *              Sem o atraso, o lock PISCA toda vez que a briga contorna uma
+ *              coluna — o alvo some, volta, some — e a câmera pula junto.
+ * ========================================================================== */
+let _obst = null;
+
+/** Registra o módulo de obstáculos (main.js, no boot). */
+export function definirObstaculos(o) { _obst = o; }
+
+/** `a` enxerga `b`? Olho a `eyeHeight` acima dos pés dos dois. */
+export function enxerga(a, b) {
+  if (!_obst || _obst.lista.length === 0) return true;
+  const h = TUNING.obstacles.eyeHeight;
+  _olhoA.copy(a.position); _olhoA.y += h;
+  _olhoB.copy(b.position); _olhoB.y += h;
+  return _obst.visaoLivre(_olhoA, _olhoB);
+}
 
 /**
  * Escolhe o melhor alvo para ESTE golpe.
@@ -69,6 +100,9 @@ export function pickAttackTarget(self, fighters, cmd, basis, locked) {
     _toFoe.subVectors(f.position, self.position);
     const d = _toFoe.length();
     if (d > T.acquireRange || d < 1e-4) continue;
+    // Não se mira em quem está atrás de uma coluna (exceto o alvo atual, que
+    // tem a sua própria regra de perder de vista em `aindaVejo`).
+    if (f !== locked && !enxerga(self, f)) continue;
 
     _toFoe.divideScalar(d);
     const alinhamento = _toFoe.dot(_aim);              // -1..1
@@ -142,25 +176,60 @@ export function nearestEnemy(self, fighters, range = null) {
     : (T.detectionEnabled ? T.detectionRange : Infinity);
   const limite2 = limite === Infinity ? Infinity : limite * limite;
 
-  let melhor = null, melhorD = Infinity;
+  /* Primeiro o mais próximo por distância; a linha de visão só é testada
+   * pra quem já passou no alcance — é a conta cara, e com 30 lutadores a
+   * maioria está longe demais pra precisar dela. Testa em ordem de distância
+   * pra que o escolhido seja o mais próximo VISÍVEL, não o mais próximo. */
+  const cand = _cand;
+  cand.length = 0;
   for (const f of fighters) {
     if (f === self || !f.alive) continue;
     const d = self.position.distanceToSquared(f.position);
     if (d > limite2) continue;
-    if (d < melhorD) { melhorD = d; melhor = f; }
+    cand.push(d, f);
   }
-  return melhor;
+  let melhor = null, melhorD = Infinity;
+  if (!_obst || _obst.lista.length === 0) {
+    for (let i = 0; i < cand.length; i += 2) {
+      if (cand[i] < melhorD) { melhorD = cand[i]; melhor = cand[i + 1]; }
+    }
+    return melhor;
+  }
+  // Com obstáculos: o mais próximo QUE SE VÊ.
+  const usados = _usados; usados.length = 0;
+  for (;;) {
+    let k = -1; melhorD = Infinity;
+    for (let i = 0; i < cand.length; i += 2) {
+      if (cand[i] < melhorD && !usados.includes(i)) { melhorD = cand[i]; k = i; }
+    }
+    if (k < 0) return null;
+    if (enxerga(self, cand[k + 1])) return cand[k + 1];
+    usados.push(k);
+  }
 }
+const _cand = [];
+const _usados = [];
 
 /**
  * Este alvo ainda está ao alcance, ou o perdi de vista?
  *
  * Usa `loseTargetRange`, maior que o de aquisição. A histerese é o que impede
  * quem ronda na distância exata de entrar e sair de combate a cada frame.
+ * Com obstáculos, também perde quem ficou atrás de uma coluna por mais de
+ * `obstacles.losLoseFrames` seguidos.
  */
 export function aindaVejo(self, alvo) {
   if (!alvo || !alvo.alive) return false;
   const T = TUNING.targeting;
   if (!T.detectionEnabled) return true;
-  return self.position.distanceToSquared(alvo.position) <= T.loseTargetRange ** 2;
+  if (self.position.distanceToSquared(alvo.position) > T.loseTargetRange ** 2) return false;
+
+  /* Linha de visão, com ATRASO pra perder (ver o bloco no topo). O contador
+   * mora no próprio lutador e é por ALVO: trocar de alvo zera. Chamada uma
+   * vez por frame por lutador (main.js), então o contador é em frames. */
+  if (!_obst || _obst.lista.length === 0) return true;
+  if (self._semVisaoDe !== alvo) { self._semVisaoDe = alvo; self._semVisaoFrames = 0; }
+  if (enxerga(self, alvo)) { self._semVisaoFrames = 0; return true; }
+  self._semVisaoFrames++;
+  return self._semVisaoFrames <= TUNING.obstacles.losLoseFrames;
 }

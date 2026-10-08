@@ -39,13 +39,14 @@ import { aplicar as aplicarModo, lerURL as lerModoURL, modoAtivo } from './core/
 import { loadCharacter, loadArenaModel } from './assets/registry.js';
 import { Arena } from './world/arena.js';
 import { CombatCamera } from './world/camera.js';
+import { Obstaculos } from './world/obstacles.js';
 import { VFX } from './world/vfx.js';
 import { Fighter, emptyCommand, S } from './combat/fighter.js';
 import { initMoves, hitstopFor, moveCharge } from './combat/moves.js';
 import {
   resolveMelee, resolveTrade, resolveDashImpact, resolveDashClash, resolveOverlap,
 } from './combat/resolve.js';
-import { pickAttackTarget, cycleTarget, nearestEnemy, aindaVejo } from './combat/targeting.js';
+import { pickAttackTarget, cycleTarget, nearestEnemy, aindaVejo, definirObstaculos } from './combat/targeting.js';
 import { ProjectileSystem, BeamSystem } from './combat/projectiles.js';
 import { BotController } from './ai/bot.js';
 import { HUD } from './ui/hud.js';
@@ -187,10 +188,16 @@ const juice = new Juice();
 const sfx = new Som();
 const meu = (...fs) => fs.includes(player);
 const arena = new Arena(scene);
+/* Colunas que bloqueiam visão e corpo. Só existem no modo ARENA
+ * (`TUNING.obstacles.enabled`, ligado pelo modo); no duelo a lista fica vazia
+ * e toda consulta devolve "livre". Ver world/obstacles.js. */
+const obstaculos = new Obstaculos(scene);
+definirObstaculos(obstaculos);
 const vfx = new VFX(scene, camera);
 const projectiles = new ProjectileSystem(scene, vfx);
 const beam = new BeamSystem(scene, vfx);
 const combatCam = new CombatCamera(camera);
+combatCam.obstaculos = obstaculos;
 const input = new Input(renderer.domElement);
 const hud = new HUD(app);
 hud.onCamada = (quem) => sfx.sinal(quem === 'rival' ? 'camadaRival' : 'camadaMinha');
@@ -334,7 +341,7 @@ function congelarTroca(a, b, frames) {
 }
 
 const ctx = {
-  arena, vfx, juice, projectiles, beam, moveBasis,
+  arena, obstaculos, vfx, juice, projectiles, beam, moveBasis,
   onHit, onVanish, onClash, onDashImpact, onZCounter, onSway,
   onGrab, onTradeClash, onTradeWin,
   congelarTroca,
@@ -368,6 +375,12 @@ async function boot() {
       ...Array.from({ length: nInimigos }, () => loadCharacter('fighter_opponent')),
     ]);
     SPAWNS = makeSpawns(chars.length);
+
+    /* Obstáculos DEPOIS dos spawns: precisam deles pra ninguém nascer dentro
+     * de uma coluna. Espalhados no raio da PRIMEIRA fase — é onde a partida
+     * começa, e é onde esconder importa. */
+    obstaculos.gerar(modo.phases ? modo.phases[0].raio : TUNING.arena.startRadius, SPAWNS);
+    if (obstaculos.lista.length) console.info(`[arena-proto] ${obstaculos.lista.length} colunas`);
 
     loadingMsg.textContent = 'montando a arena…';
     const arenaModel = await loadArenaModel(TUNING.arena.startRadius);
@@ -722,6 +735,31 @@ function drainEvents(f) {
         juice.impact({ shake: TUNING.blasts.ultimate.shake, zoom: 1.4 });
         vfx.ring(f.position, { billboard: true, color: 0xcfefff, from: 1, to: 22, life: 0.7 });
         break;
+
+      /* Bateu numa coluna voando (blowaway). Com o wall-slam DESLIGADO é só
+       * poeira e um baque: a coluna parou o corpo, e isso tem que ser lido
+       * ("ele não saiu porque bateu ali"). Ver `TUNING.obstacles`. */
+      case 'wallBounce': {
+        const power = Math.min(1, e.speed / 40);
+        vfx.dust(f.position, { count: 14, speed: 5 * (0.5 + power), radius: 1.0, life: 0.8 });
+        sfx.explosao({ ...ouvir, tamanho: 0.2 + power * 0.4 });
+        juice.impact({ shake: 0.25 * power, zoom: 0.3 });
+        break;
+      }
+
+      /* WALL-SLAM (alavanca desligada por padrão): mesmo peso do groundSlam,
+       * com hitstop — é o momento de "grudou na parede". */
+      case 'wallSlam': {
+        const power = Math.min(1, e.speed / 40);
+        sfx.explosao({ ...ouvir, tamanho: 0.4 + power * 0.6 });
+        vfx.dust(f.position, { count: 30, speed: 7 * (0.5 + power), radius: 1.4, life: 1.2 });
+        vfx.ring(f.position, { billboard: true, color: 0xd8c8a0, from: 1, to: 12 * (0.4 + power), life: 0.5 });
+        vfx.burst(f.position, { count: 24, color: 0xffd9a0, speed: 10, life: 0.5 });
+        congelarTroca(f, null, 10);
+        juice.impact({ shake: 0.5 * (0.4 + power), zoom: 0.7 });
+        if (f === player) hud.showBanner('WALL SLAM', 700, 'warn');
+        break;
+      }
 
       case 'groundSlam': {
         const p = f.position.clone();
@@ -1148,6 +1186,8 @@ function marcarDanoTreino(victim) {
 const _proj = new THREE.Vector3();
 const _camDir = new THREE.Vector3();
 const _toTarget = new THREE.Vector3();
+const _obstA = new THREE.Vector3();
+const _obstB = new THREE.Vector3();
 
 function projectToScreen(worldPos) {
   // Teste de "está à frente" feito por produto escalar, NÃO pelo z projetado.
@@ -1261,6 +1301,7 @@ function resetRound() {
 
   for (const b of bots) b.reset();
   arena.reset();
+  obstaculos.reset();
   vfx.reset();
   projectiles.reset();
   beam.reset();
@@ -1465,7 +1506,11 @@ function step(dt) {
 
   prof.time('overlap', () => resolveOverlap(fighters));
 
-  if (!emTreino()) arena.update(dt);
+  if (!emTreino()) {
+    arena.update(dt);
+    // A fase decide quantas colunas ficam de pé (`phases[].obst`).
+    obstaculos.update(dt, arena.fase);
+  }
 
   prof.begin('eventos+ringout');
   for (const f of fighters) {
@@ -1562,6 +1607,13 @@ function render(alpha, dtReal) {
     prof.end('anim+aura/lutador');
 
     combatCam.update(dt, player, opponent, juice);
+    /* Coluna entre a câmera e você ou o seu alvo fica transparente — a cena
+     * nunca é comida pela parede (o braço da câmera já encurtou pra não
+     * atravessar; isto cuida do ALVO, que o braço não protege). */
+    obstaculos.render(dt, camera.position, [
+      player.alive ? player.center(_obstA) : null,
+      opponent && opponent.alive ? opponent.center(_obstB) : null,
+    ]);
 
     const look = input.takeMouseDelta();
     if (look.x || look.y) combatCam.addLookInput(look.x, look.y);
@@ -1643,7 +1695,7 @@ window.PROTO = {
   get bots() { return bots; },
   get lockedOn() { return lockedOn; },
   get modoTreino() { return treino().nome; },
-  arena, vfx, juice, sfx, loop, camera, combatCam,
+  arena, obstaculos, vfx, juice, sfx, loop, camera, combatCam,
   projectiles, beam,
   resetRound,
   ctx,

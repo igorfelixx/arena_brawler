@@ -2573,8 +2573,60 @@ export class Fighter {
       if (this.velocity.y > 0) this.velocity.y = 0;
     }
 
+    this._colidirObstaculos(ctx);
+
     const maxV = TUNING.physics.maxFlightSpeed;
     if (this.velocity.lengthSq() > maxV * maxV) this.velocity.setLength(maxV);
+  }
+
+  /* ================================================================== */
+  /*  Colisão com obstáculos (só no modo arena — no duelo a lista é vazia) */
+  /* ================================================================== */
+  /*  TRÊS RESPOSTAS, conforme o estado — ver `TUNING.obstacles`:
+   *
+   *    voando normal   DESLIZA: perde só a componente que entra na coluna.
+   *                    Raspar não pode travar o voo.
+   *    BLOWAWAY        QUICA: componente normal × restituição, metade da
+   *                    tangencial. A coluna é anteparo contra ring-out —
+   *                    decisão registrada no tuning, e temporária por
+   *                    construção (as colunas afundam antes do fim).
+   *    WALL-SLAM       (alavanca, desligada) blowaway acima de
+   *                    `minImpactSpeed`: dano + HITSTUN preso na parede, a
+   *                    versão de parede do groundSlam. */
+  _colidirObstaculos(ctx) {
+    const obs = ctx && ctx.obstaculos;
+    if (!obs || obs.lista.length === 0) return;
+    const c = obs.colidir(this.position, TUNING.fighter.radius);
+    if (!c) return;
+
+    const n = c.normal;
+    const vn = this.velocity.dot(n);
+    if (vn >= 0) return;                         // já está saindo
+
+    const O = TUNING.obstacles;
+    const impacto = -vn;
+
+    if (this.state === S.BLOWAWAY && n.y < 0.5) {
+      const WS = O.wallSlam;
+      if (WS.enabled && impacto >= WS.minImpactSpeed) {
+        this.velocity.set(0, 0, 0);
+        this.health = Math.max(0, this.health - WS.damage);
+        this._stunFrames = WS.stunFrames;
+        this._enter(S.HITSTUN);
+        this.char.play('hit_react', { fade: 0.04, restart: true });
+        this.events.push({ type: 'wallSlam', speed: impacto, normal: n.clone() });
+        return;
+      }
+      // quica: tira a componente normal e devolve uma fração dela, pra fora
+      this.velocity.addScaledVector(n, -vn);                       // só tangencial
+      this.velocity.multiplyScalar(O.bounceTangentKeep);
+      this.velocity.addScaledVector(n, impacto * O.bounceRestitution);
+      if (impacto > 8) this.events.push({ type: 'wallBounce', speed: impacto, normal: n.clone() });
+      return;
+    }
+
+    // desliza
+    this.velocity.addScaledVector(n, -vn);
   }
 
   /* ================================================================== */

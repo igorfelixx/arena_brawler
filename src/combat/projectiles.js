@@ -149,6 +149,15 @@ export class ProjectileSystem {
       p.pos.addScaledVector(p.vel, dt);
       p.mesh.position.copy(p.pos);
 
+      /* Coluna (modo arena) segura o blast. Se não segurasse, esconder atrás
+       * dela seria inútil contra quem só atira — e o blast teleguiado
+       * atravessaria a cobertura que a linha de visão acabou de criar. */
+      if (ctx?.obstaculos?.contem(p.pos)) {
+        this.vfx?.burst(p.pos, { count: 10, color: p.spec.color, speed: 6, life: 0.3 });
+        this._kill(p);
+        continue;
+      }
+
       // rastro
       if (p.charged) {
         this.vfx?.auraTick(p.pos, { intensity: 0.8, color: p.spec.color, count: 2 });

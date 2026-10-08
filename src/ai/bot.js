@@ -27,6 +27,9 @@ import { emptyCommand, S } from '../combat/fighter.js';
 
 const _v = new THREE.Vector3();
 const _toFoe = new THREE.Vector3();
+const _desvio = new THREE.Vector3();
+const _esc = new THREE.Vector3();
+const _centro = new THREE.Vector3();
 
 export class BotController {
   constructor(fighter, seed = 1337, profile = 'EQUILIBRADO') {
@@ -115,9 +118,15 @@ export class BotController {
      *  Sem isto, dar ao jogador a opção de fugir não adiantaria: ele fugiria
      *  pra um vazio em que nada acontece, e voltaria por tédio.               */
     if (!foe || !foe.alive) return this._foraDeCombate(c, ctx, A);
+    this.escondido = false;
 
     const diff = A.difficulty;
     const dist = f.position.distanceTo(foe.position);
+
+    /* Última posição em que ESTE bot viu um inimigo. É a única informação
+     * que o esconderijo usa (ver `_foraDeCombate`) — memória própria, não
+     * onisciência. */
+    (this._ultimaAmeaca || (this._ultimaAmeaca = new THREE.Vector3())).copy(foe.position);
 
     if (this._punishCooldown > 0) this._punishCooldown--;
 
@@ -569,6 +578,7 @@ export class BotController {
     if (this._respiro > 0) this._respiro--;
 
     const kiBaixo = f.ki < TUNING.ki.max * 0.7;
+    this.escondido = false;       // telemetria: está na sombra de uma coluna?
     const naBorda = ctx.arena.edgeProximity(f.position) > 0.5;
 
     if (naBorda) {
@@ -576,6 +586,34 @@ export class BotController {
       this._setMoveToward(c, _v, ctx);
       if (f.position.y > ctx.arena.ceiling * 0.85) c.vertical = -1;
       return c;
+    }
+
+    /* ESCONDER (só com obstáculos, modo arena): vida baixa → vai pra sombra
+     * da coluna mais próxima, do lado oposto ao último inimigo que viu, e se
+     * recompõe ALI em vez de no aberto. É o mesmo "recompor" de baixo, com
+     * terreno: carregar ki atrás de uma coluna não te deixa visível pra quem
+     * passa. Ver `ai.hideBelowHealth`. */
+    const obs = ctx.obstaculos;
+    if (obs && obs.lista.length && f.health / TUNING.fighter.maxHealth < A.hideBelowHealth) {
+      const ameaca = this._ultimaAmeaca || _centro.set(0, f.position.y, 0);
+      const col = obs.esconderijo(f.position, ameaca, A.hideSearchRadius, _esc,
+        ctx.arena.radius - TUNING.arena.edgeDangerBand);
+      if (col) {
+        _v.subVectors(_esc, f.position);
+        const dy = _v.y;
+        _v.y = 0;
+        const d = _v.length();
+        if (d > 3) {
+          _v.divideScalar(d);
+          this._setMoveToward(c, _v, ctx, d > 12 ? 1 : 0.5);
+          c.vertical = clamp(dy * 0.1, -1, 1);
+          return c;
+        }
+        // Na sombra: recompõe ali. Sem ki pra carregar, fica quieto.
+        this.escondido = true;
+        if (kiBaixo && !f.exhausted) c.charge = true;
+        return c;
+      }
     }
 
     if (kiBaixo && !f.exhausted) {
@@ -591,8 +629,24 @@ export class BotController {
       this._strafeTimer = 90 + Math.floor(this._rand() * 90);
       this._strafeDir *= -1;
     }
+    /* Componente RADIAL da deriva — e ela decide o fim da partida.
+     *
+     * Era fixa em −0,25 (afasta do centro). Medido com obstáculos, 3
+     * partidas: quem está fora de combate passa a partida a 0,82–0,91 do
+     * raio, ou seja, colado na borda. Isso produz os DOIS defeitos do arco:
+     *   - no começo junta todo mundo num anel de 1.500 m de perímetro — mais
+     *     encontro, não menos (a área da faixa da borda é ~1/4 do disco);
+     *   - no fim, os 2 últimos ficam rodando a borda em lados opostos: a
+     *     faixa 20–25 min tinha 5% do tempo em combate, com 2 vivos.
+     * Agora a puxada vai de `offCombatPullFar` (arena grande) a
+     * `offCombatPullNear` (arena pequena), interpolada pelo raio ATUAL —
+     * a zona fechando puxa pro meio, como em todo battle royale.
+     * Base = −0,25 nos dois (comportamento antigo); o modo arena sobrepõe. */
+    const R = ctx.arena.radius;
+    const kR = clamp((A.offCombatFarRadius - R) / Math.max(1, A.offCombatFarRadius - A.offCombatNearRadius), 0, 1);
+    const puxada = A.offCombatPullFar + (A.offCombatPullNear - A.offCombatPullFar) * kR;
     ctx.arena.towardCenter(f.position, _v);
-    _v.multiplyScalar(-0.25);                       // afasta um pouco do centro
+    _v.multiplyScalar(puxada);
     _v.x += this._strafeDir * 0.6;
     _v.normalize();
     this._setMoveToward(c, _v, ctx, 0.35);
@@ -632,6 +686,20 @@ export class BotController {
   }
 
   _setMoveToward(c, worldDir, ctx, scale = 1) {
+    /* DESVIAR de coluna no caminho (modo arena). Fica AQUI, no ponto único
+     * por onde toda intenção de movimento da IA passa — aproximar, recuar,
+     * voltar da borda, ir pro esconderijo. Em um lugar só, nenhum
+     * comportamento novo esquece de desviar. Sem obstáculos sai no primeiro
+     * teste e o duelo não muda. */
+    const obs = ctx.obstaculos;
+    if (obs && obs.lista.length) {
+      const alvo = this.f.target;
+      const ate = alvo && alvo.alive ? this.f.position.distanceTo(alvo.position) : Infinity;
+      if (obs.desviar(this.f.position, worldDir, this._merged.obstacleLookahead, ate, _desvio)) {
+        worldDir = _desvio;
+      }
+    }
+
     // Converte direção do mundo pra eixos do command (relativos à câmera).
     const basis = ctx.moveBasis;
     c.moveX = clamp(worldDir.dot(basis.right) * scale, -1, 1);
@@ -656,6 +724,7 @@ export class BotController {
     this._recuando = false;
     this._holdGuard = 0;
     this._punishCooldown = 0;
+    this._ultimaAmeaca = null;
     resetCommand(this.cmd);
   }
 }

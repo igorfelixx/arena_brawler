@@ -52,7 +52,12 @@ export class CombatCamera {
     this._dir = new THREE.Vector3();
     this._right = new THREE.Vector3();
     this._tmp = new THREE.Vector3();
+    this._pivo = new THREE.Vector3();
     this._fov = TUNING.camera.fov;
+
+    /* Obstáculos do modo arena (main.js injeta). Vazio no duelo — e então
+     * `_encurtar` sai no primeiro teste e a câmera é a de sempre. */
+    this.obstaculos = null;
   }
 
   /** Aplica o movimento de mouse/stick. */
@@ -176,7 +181,11 @@ export class CombatCamera {
     // --- suavização independente de framerate ---
     const kPos = 1 - Math.exp(-C.followLag * dt);
     const kLook = 1 - Math.exp(-C.rotateLag * dt);
+    this._encurtar(player, this._desiredPos);
     this.pos.lerp(this._desiredPos, kPos);
+    // De novo depois da suavização: o lerp pode cortar caminho por DENTRO de
+    // uma coluna mesmo com os dois extremos fora dela.
+    this._encurtar(player, this.pos);
     this.look.lerp(this._desiredLook, kLook);
 
     // --- aplica na câmera, somando o tremor ---
@@ -194,6 +203,28 @@ export class CombatCamera {
       this.cam.fov = this._fov;
       this.cam.updateProjectionMatrix();
     }
+  }
+
+  /**
+   * BRAÇO DE MOLA: se há coluna entre você e a câmera, a câmera vem pra
+   * frente dela. É o `USpringArmComponent` com `bDoCollisionTest` do Unreal.
+   *
+   * Encurtar (e não atravessar com transparência) pro JOGADOR porque câmera
+   * dentro de geometria mostra o interior da malha — ilegível. A
+   * transparência fica pras colunas entre a câmera e o ALVO (obstacles.render),
+   * que o braço não tem como proteger sem girar a câmera — e girar sozinha é
+   * o que mais desorienta.
+   */
+  _encurtar(player, ponto) {
+    const obs = this.obstaculos;
+    if (!obs || obs.lista.length === 0) return;
+    this._pivo.copy(player.position);
+    this._pivo.y += TUNING.camera.height * 0.7;
+    const t = obs.tracar(this._pivo, ponto);
+    if (t >= 1) return;
+    const L = this._pivo.distanceTo(ponto);
+    const tt = Math.max(0.04, t - TUNING.obstacles.cameraMargin / Math.max(L, 1e-3));
+    ponto.sub(this._pivo).multiplyScalar(tt).add(this._pivo);
   }
 
   /** Base horizontal pro movimento relativo à câmera. */

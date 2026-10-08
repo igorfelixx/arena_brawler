@@ -366,7 +366,8 @@ export const TUNING = {
     /* ================================================================
      *  ⚠️  A RESTRIÇÃO QUE IMPEDE A PARTIDA DE NUNCA ACABAR
      * ================================================================
-     *      2 × (raio da ÚLTIMA fase)  <  loseTargetRange
+     *      2 × (raio da ÚLTIMA fase)  <  detectionRange
+     *      e NENHUM obstáculo de pé na última fase
      *
      *  Se a arena final for maior que o alcance de DETECÇÃO, dois sobreviventes
      *  podem se evitar INDEFINIDAMENTE: cada um de um lado, nenhum enxergando
@@ -556,6 +557,15 @@ export const TUNING = {
         /* Limite de detecção: só existe aqui. Ver `TUNING.targeting`. */
         targeting: { detectionEnabled: 1 },
 
+        /* Obstáculos: só existem aqui. Ver `TUNING.obstacles`. A densidade
+         * ao longo da partida é o campo `obst` de cada fase, abaixo. */
+        obstacles: { enabled: 1 },
+
+        /* Deriva fora de combate: neutra com a arena grande (ninguém se
+         * amontoa na borda), puxando pro centro com ela pequena (o fim
+         * junta os sobreviventes). Ver `ai.offCombatPull*`. */
+        ai: { offCombatPullFar: 0, offCombatPullNear: 0.6 },
+
 
         /* ------------------------------------------------------------
          *  CRONOGRAMA DE FASES — o coração do modo
@@ -610,17 +620,22 @@ export const TUNING = {
          *  Os minutos estão esticados pra uma partida de 25–30 min. Se o
          *  playtest mostrar que arrasta, a correção é ENCURTAR OS MINUTOS, não
          *  diminuir os raios — os raios são o que produz o arco.               */
+        /* `obst` = fração das colunas DE PÉ naquele minuto (interpolada como
+         * o raio). Muitas no começo, nenhuma a partir do CLÍMAX: o fim tem
+         * que ser aberto e decisivo, e a restrição de término (ver
+         * `targeting`) só vale se nada bloquear a visão na arena final.  */
         phases: [
-          { min: 0,  raio: 300, teto: 120, label: 'INÍCIO',    sub: 'procure, ou se esconda' },
-          { min: 5,  raio: 230, teto: 100, label: 'MEIO',      sub: 'os primeiros encontros' },
-          { min: 10, raio: 160, teto: 80,  label: 'CONFRONTO', sub: 'não dá mais pra sumir' },
-          { min: 15, raio: 95,  teto: 58,  label: 'FINAL',     sub: 'disputa por posição' },
-          { min: 20, raio: 50,  teto: 38,  label: 'CLÍMAX',    sub: 'não caia' },
-          /* 17 m e não mais: 2×17 = 34 < loseTargetRange (38). É a restrição
-           * que impede a partida de nunca acabar — ver targeting. */
+          { min: 0,  raio: 300, teto: 120, obst: 1.0,  label: 'INÍCIO',    sub: 'procure, ou se esconda' },
+          { min: 5,  raio: 230, teto: 100, obst: 1.0,  label: 'MEIO',      sub: 'os primeiros encontros' },
+          { min: 10, raio: 160, teto: 80,  obst: 0.6,  label: 'CONFRONTO', sub: 'não dá mais pra sumir' },
+          { min: 15, raio: 95,  teto: 58,  obst: 0.25, label: 'FINAL',     sub: 'disputa por posição' },
+          { min: 20, raio: 50,  teto: 38,  obst: 0,    label: 'CLÍMAX',    sub: 'não caia' },
           /* 10 m: 2×10 = 20 < detectionRange (24). Dois sobreviventes SEMPRE
-           * se acham. Ver a restrição em `targeting`. */
-          { min: 26, raio: 10,  teto: 20,  label: 'MORTE SÚBITA', sub: '' },
+           * se acham. Ver a restrição em `targeting`. (Uma versão anterior
+           * deste comentário dizia `< loseTargetRange` — estava errado, e o
+           * aviso de `matchMode` checava o alcance errado até a passada dos
+           * obstáculos.) */
+          { min: 26, raio: 10,  teto: 20,  obst: 0,    label: 'MORTE SÚBITA', sub: '' },
         ],
 
         /* Teto duro. Chegar aqui sem vencedor é um defeito de ritmo, não um
@@ -1990,6 +2005,112 @@ export const TUNING = {
   },
 
   /* ================================================================== */
+  /*  OBSTÁCULOS  —  terreno que esconde (só no modo ARENA)              */
+  /* ================================================================== */
+  /*  O problema medido: com o limite de detecção dá pra FUGIR de uma briga,
+   *  mas só por DISTÂNCIA. A arena era um vazio de 300 m — não existia
+   *  esconder, cobrir, usar terreno. E o arco da partida era plano: % do
+   *  tempo em combate por faixa de 5 min 27/24/28/15/12, mortes 7/15/3/2/2.
+   *
+   *  COLUNAS, e não pedras flutuantes, por três razões medidas/pensadas:
+   *
+   *    1. a visão é bloqueada no PLANO em que se voa. Medido na linha de base:
+   *       altura dos lutadores p10 12 m · p50 24 m · p90 55 m. Uma pedra solta
+   *       bloqueia só um cone; uma coluna de 55–100 m bloqueia o plano inteiro
+   *       em que a briga acontece. Voar ACIMA dela é possível e é uma escolha
+   *       (ver mais longe custa ficar exposto) — terreno com leitura, não
+   *       parede invisível.
+   *    2. AFUNDAR é legível: a fase muda e as colunas descem pro chão. O
+   *       jogador lê "o esconderijo está acabando" sem HUD nenhuma.
+   *    3. colisão e linha de visão contra cilindro vertical são contas de 2D
+   *       mais uma altura — o mesmo que no Unreal vira um capsule trace.
+   *
+   *  A DENSIDADE É LIGADA ÀS FASES (`match.modes.arena.phases[].obst`): fração
+   *  de colunas de pé naquele minuto. Muitas no INÍCIO/MEIO (dá pra sumir),
+   *  ZERO antes da fase final — senão a restrição de término quebra (dois
+   *  sobreviventes atrás de uma coluna numa arena de 10 m não se acham nunca).
+   *  `matchMode.aplicar()` confere isso no boot.
+   *
+   *  `enabled` é 0 NA BASE: o duelo não sobrescreve nada, então a base tem
+   *  que ser o comportamento do duelo — zero obstáculos. O modo arena liga. */
+  obstacles: {
+    enabled: 0,
+
+    /* Quantas colunas e onde. Espalhadas num disco do tamanho da PRIMEIRA
+     * fase (300 m), com folga mínima entre elas pra sempre existir corredor.
+     *
+     * A conta da densidade: a chance de um segmento de comprimento d cruzar
+     * uma coluna de raio r é ≈ densidade × (2r·d + πr²). Com 340 colunas de
+     * raio médio 8 m num disco de 300 m, um par a 20 m tem ~0,6 colunas no
+     * caminho — perto de metade dos encontros a curta distância passa a ser
+     * "eu sei que tem alguém ali, mas não vejo". */
+    count: 720,
+    radiusMin: 4.0,
+    radiusMax: 10.0,
+    heightMin: 55,              // acima do p90 de altura de voo medido (55 m)
+    heightMax: 105,
+    minGap: 4.5,                // corredor mínimo entre duas colunas (m)
+    spawnClearance: 14.0,       // ninguém nasce colado numa coluna
+    seed: 4242,                 // posições reproduzíveis entre partidas
+
+    /* AFUNDAR, não sumir. Uma coluna desce até o chão em `sinkSeconds`; a
+     * colisão e a visão acompanham a altura ATUAL. Sumir num frame seria um
+     * esconderijo apagado debaixo de alguém — afundando, quem está atrás vê
+     * o topo descendo e tem tempo de sair. A ordem é sorteada (`seed`): não
+     * há região "segura" que dure mais que as outras. */
+    sinkSeconds: 18,
+
+    /* LINHA DE VISÃO
+     * Adquirir exige ver AGORA. Perder por obstáculo exige ficar SEM ver por
+     * `losLoseFrames` seguidos. É a mesma histerese de detectionRange /
+     * loseTargetRange, aplicada ao tempo: sem ela o lock PISCA toda vez que
+     * a briga contorna uma coluna, e a câmera pularia junto.
+     * 90 frames (1,5 s) é mais que a janela de perseguição (75f): um smash
+     * que manda o alvo pra trás de uma coluna não quebra a perseguição. */
+    losLoseFrames: 90,
+    eyeHeight: 1.1,             // altura do "olho" acima dos pés, pra visão
+
+    /* COLISÃO (todos os estados, inclusive blowaway)
+     * Fora do blowaway o corpo DESLIZA na coluna (perde só a componente que
+     * entra nela) — bater de raspão não pode travar o voo.
+     *
+     * No BLOWAWAY o corpo QUICA: perde a componente normal × restituição e
+     * metade da tangencial. DECISÃO: a coluna é um anteparo contra ring-out —
+     * quem luta de costas pra uma coluna perto da borda não sai pelo smash.
+     * Isso é terreno com valor tático, e é temporário por construção: as
+     * colunas afundam antes do fim, e o fim continua sendo decidido na borda.
+     * A alternativa (atravessar no blowaway) faria a coluna sólida pra tudo
+     * menos pro golpe mais importante do jogo — incoerente de ler. */
+    bounceRestitution: 0.35,
+    bounceTangentKeep: 0.5,
+
+    /* WALL-SLAM — DESLIGADO por padrão. Decisão de produto em aberto.
+     *
+     * Ligado: bater na coluna em blowaway acima de `minImpactSpeed` causa
+     * dano e prende o corpo em HITSTUN por `stunFrames` (o "grudou na
+     * parede"), que é janela de combo pra quem perseguir. É a versão de
+     * parede do `groundSlam` (que já existe e dá `groundBounceDamage` 4).
+     *
+     * Por que desligado: muda o TTK do modo arena (todo smash perto de
+     * coluna vira dano extra) e dá ao terreno um papel OFENSIVO que nunca
+     * foi jogado por humano. Ver o que foi medido com ele ligado no doc de
+     * passagem (10.10). */
+    wallSlam: {
+      enabled: 0,
+      minImpactSpeed: 16,       // m/s na direção da coluna (smash sai a 46)
+      damage: 36,               // ≈ 2,2 smashes de 16 — dói, não mata
+      stunFrames: 40,           // > startup do rush (4) + homing: dá pra emendar
+    },
+
+    /* CÂMERA — Tenkaichi não deixa a parede comer a cena.
+     * A câmera ENCURTA (mola de braço) quando há coluna entre ela e você, e
+     * colunas entre a câmera e você/seu alvo ficam TRANSPARENTES. As duas
+     * coisas juntas: você nunca some atrás de uma coluna, e o alvo também não. */
+    cameraMargin: 0.8,          // distância mínima da câmera à superfície (m)
+    occluderOpacity: 0.18,      // opacidade de quem tapa você ou o alvo
+  },
+
+  /* ================================================================== */
   /*  BARRA DE VIDA EM CAMADAS  —  a legibilidade do acerto              */
   /* ================================================================== */
   /*  O problema que isto resolve está medido e registrado: com vida 900,
@@ -2324,6 +2445,36 @@ export const TUNING = {
      * simplesmente se deixava cair em 40% dos lançamentos, e isso encurtava a
      * luta por burrice, não por design. */
     recoverChance: 0.85,        // chance de se recuperar após levar smash
+
+    /* ================================================================
+     *  OBSTÁCULOS (só existem no modo arena — ver `TUNING.obstacles`)
+     * ================================================================
+     *  DESVIAR: a IA olha `obstacleLookahead` metros à frente na direção em
+     *  que quer ir e, se houver coluna no caminho, contorna pela tangente.
+     *  Sem isto ela bate de frente e desliza — funciona, mas parece burra, e
+     *  bater de frente custa velocidade justamente na aproximação.
+     *
+     *  USAR: fora de combate e com vida abaixo de `hideBelowHealth`, ela vai
+     *  pra SOMBRA da coluna mais próxima — o lado oposto de onde viu o último
+     *  inimigo — e carrega ki ali. É a versão "com terreno" do que
+     *  `_foraDeCombate` já fazia (recompor). Não é trapaça: ela usa só a
+     *  última posição que ELA viu, não onde os outros estão de fato.
+     *  Não é o recuo vetado (`retreatBelowHealth`, em zero): ela não foge de
+     *  briga nenhuma — só escolhe ONDE se recompor depois que a briga acabou. */
+    obstacleLookahead: 14.0,
+    hideBelowHealth: 0.6,
+    hideSearchRadius: 70.0,     // só procura coluna até aqui (não atravessa a arena)
+
+    /* DERIVA FORA DE COMBATE — componente radial (+ = rumo ao centro).
+     * Interpolada pelo raio ATUAL da arena: `Far` com a arena em
+     * `offCombatFarRadius` ou maior, `Near` em `offCombatNearRadius` ou menor.
+     * Na base os dois são −0,25 (afasta do centro — o comportamento de antes,
+     * e o duelo nunca fica fora de combate). O modo arena sobrepõe: ver o
+     * comentário em `_foraDeCombate` (bot.js) para o que foi medido. */
+    offCombatPullFar: -0.25,
+    offCombatPullNear: -0.25,
+    offCombatFarRadius: 230,
+    offCombatNearRadius: 95,
 
     /* ================================================================
      *  RECUAR  —  a IA não tinha instinto de sobrevivência
