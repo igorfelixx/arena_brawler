@@ -163,6 +163,26 @@
     transition: background .18s, box-shadow .18s;
   }
 
+  /* ---- selo do MAX POWER v2 ----
+     Apagado = sem carga. Aceso = TEM carga (o rival também vê). Dourado e
+     com relógio = no modo. Visível dos dois lados de propósito: o comeback
+     só tem counterplay se for previsível. */
+  .mp-badge {
+    display: flex; align-items: center; gap: 6px; margin-top: 5px;
+    opacity: .22; transition: opacity .2s, filter .2s;
+  }
+  .mp-badge b {
+    font-size: 9px; letter-spacing: .18em; color: #ffd45c;
+    border: 1px solid rgba(255,212,92,.5); border-radius: 2px; padding: 0 4px;
+  }
+  .mp-clock { flex: 0 0 90px; height: 4px; background: rgba(255,255,255,.08); position: relative; }
+  .mp-clock i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: #ffd45c; }
+  .bar-block.right .mp-clock i { left: auto; right: 0; }
+  .mp-badge.pronto { opacity: 1; animation: mpPronto 1.1s ease-in-out infinite; }
+  .mp-badge.ativo { opacity: 1; filter: drop-shadow(0 0 6px #ffd45c); }
+  .mp-badge.ativo b { background: #ffd45c; color: #1a1408; }
+  @keyframes mpPronto { 50% { filter: drop-shadow(0 0 7px #ffd45c) brightness(1.4); } }
+
   /* Quebrar uma camada é um EVENTO. O clarão é longo e forte de propósito:
      é o único instante em que o jogador vê que arrancou algo inteiro. */
   @keyframes layerBreak {

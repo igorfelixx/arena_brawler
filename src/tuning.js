@@ -154,55 +154,124 @@ export const TUNING = {
   },
 
   /* ================================================================== */
-  /*  MAX POWER  —  o estado de poder máximo                             */
+  /*  MAX POWER  —  duas versões, lado a lado                            */
   /* ================================================================== */
-  /*  A ferramenta que faltava pro ki ser DECISÃO e não só combustível.
+  /*  `versao` escolhe qual roda:
    *
-   *  Antes, ki servia pra três coisas (dash, vanish, blast) e todas eram
-   *  compras pequenas. Não havia nada em que apostar a barra inteira, e por isso
-   *  não havia momento de "agora eu vou pra cima": carregar ki era uma pausa.
+   *    'v2'   ESTOURO (padrão). R+K com uma CARGA ganha pela barra de vida.
+   *           Ver o bloco `v2` abaixo e a seção 10.10 do doc de passagem.
+   *    'v1'   o Max Power original, intacto: segurar R acima de 78 de ki,
+   *           7 s de ×1,20 de dano e ki ×0,65, termina em exaustão.
+   *    'off'  sem Max Power nenhum — a base do "com × sem" nas medições.
    *
-   *  A entrada é DELIBERADA e custa caro:
+   *  O v1 FICA porque o dono pediu pra comparar jogando, e porque é a única
+   *  forma honesta de dizer que o v2 é melhor: lado a lado, mesma build.
    *
-   *      carregar ki (R)  →  ki >= enterKiThreshold  →  segurar enterHoldFrames
-   *                                      ↓
-   *                              MAX POWER (durationFrames)
-   *                                      ↓
-   *                            acaba  →  EXAUSTÃO
+   *  ---------------------------------------------------------------------
+   *  POR QUE O v1 FOI SUBSTITUÍDO — medido, não opinado
+   *  ---------------------------------------------------------------------
+   *  40 duelos bot × bot (~99 min de luta): o v1 acendeu ZERO vezes. E lendo
+   *  o código, dois campos dele (`speedMul`, `poiseMul`) nunca eram lidos — o
+   *  estado prometia "mais rápido e poise mais duro" e não entregava (8.19).
+   *  Foram removidos daqui; o comportamento do v1 é exatamente o de antes.
    *
-   *  O counterplay é o que impede isto de ser "apertei botão, fiquei
-   *  invencível", e ele não é uma regra nova — sai da própria estrutura:
-   *
-   *    1. a entrada exige ficar PARADO carregando, que é a posição mais
-   *       vulnerável do jogo. Quem lê entra em cima e interrompe.
-   *    2. o estado DRENA ki, então as ferramentas de escape (vanish,
-   *       perseguição) ficam cada vez mais caras justamente enquanto você está
-   *       sendo agressivo
-   *    3. acabar joga direto na EXAUSTÃO. Quem sobreviveu ao Max Power ganha
-   *       uma janela em que o outro não tem vanish, não tem dash e não tem
-   *       perseguição. Aguentar é uma estratégia legítima.
-   *
-   *  Ou seja: não é um botão de vitória, é uma APOSTA com prazo.               */
+   *  O defeito de design por trás do número: o v1 muda QUANTO o golpe tira
+   *  (+20% sobre vida 900 é um rush de 5 virar 6), não o que ele FAZ; a
+   *  entrada é uma pausa (carregar mais tempo), não um evento; o preço vem no
+   *  fim; e não há gasto final.                                              */
   maxPower: {
+    versao: 'v2',
+
+    /* ---------------- v1 (original, só lido com versao 'v1') ---------------- */
     enterKiThreshold: 78,         // abaixo disto não entra
     enterHoldFrames: 26,          // frames carregando ACIMA do limiar
     enterKiCost: 22,              // o preço de acender
     entryFrames: 18,              // estado de entrada (o clarão), invulnerável
     durationFrames: 420,          // 7 s
     drainPerSec: 11,              // a barra escorre enquanto durar
-
-    /* Modificadores. Deliberadamente MODESTOS: um multiplicador grande
-     * transformaria o estado em "quem acender primeiro ganha", que é o oposto
-     * de um jogo de leitura. O valor do Max Power está em CONSISTÊNCIA (ki mais
-     * barato, poise mais duro, sai do hitstun antes), não em dano bruto. */
     damageMul: 1.20,
     kiCostMul: 0.65,              // vanish/dash/perseguição ficam baratos
-    speedMul: 1.12,
-    poiseMul: 1.6,                // muito mais difícil de arrancar da pressão
     hitstunTakenMul: 0.82,        // sai do stun um pouco antes
-    /* Acabar cai na exaustão. É o que dá ao defensor uma razão pra AGUENTAR em
-     * vez de entrar em pânico — e é o contrapeso do estado inteiro. */
     endsInExhaustion: true,
+
+    /* ======================================================================
+     *  v2 — ESTOURO
+     * ======================================================================
+     *
+     *      carga (ganha apanhando)
+     *          │
+     *       R + K ───→ ESTOURO (golpe: 18f de armadura, onda de 6 m)
+     *          │            │  grab no startup = estouro negado, carga perdida
+     *          │            ↓
+     *          │       MAX POWER — rota 6 · smash blindado · +12% voo · ki ×0,65
+     *          │            │  relógio de 600f que PAUSA com o seu alvo apanhando
+     *          │            ↓
+     *          │       R + K de novo ─→ MAX SMASH (gasta o resto, encerra limpo)
+     *          │       relógio zerou ─→ exaustão de 60f (desperdiçou: paga)
+     *          │
+     *       Perfect Smash acertado com carga ─→ MAX POWER direto (engajador)
+     *
+     *  Referências (ver PORTAR 10.10): o estouro é o Heat Burst do Tekken 8
+     *  (power crush que sempre deixa em vantagem) com a regra do Drive Impact
+     *  do SF6 (armadura que PERDE pro arremesso); o engajador e o relógio que
+     *  pausa no combo são do Heat; o gatilho pela vida é o Awakening do Naruto
+     *  Storm 4; o golpe final que encerra o modo é o Blast 2 do BT3; a mesma
+     *  entrada valendo coisas diferentes por contexto é o Roman Cancel do GG.
+     *  ==================================================================== */
+    v2: {
+      /* GATILHO da carga — decidido pelos NÚMEROS (ver PORTAR 10.10):
+       *   'camada'  1 carga a cada camada de vida perdida (teto `maxCargas`)
+       *   'vida'    1 carga ao cair a `vidaCamadas` camadas ou menos, 1× só
+       *   'rodada'  1 carga no começo da luta, sem reposição (Tekken)        */
+      gatilho: 'camada',
+      maxCargas: 1,
+      vidaCamadas: 2,
+
+      /* ENGAJADOR: acertar um Perfect Smash tendo carga acende o modo sem
+       * estouro. É a rota de perícia — e não soma com o Perfect: o modo acende
+       * DEPOIS do acerto, o golpe que acendeu não ganha nada dele. */
+      ativaPorPerfect: true,
+
+      /* RELÓGIO. 600f de modo que só correm quando o seu alvo NÃO está
+       * apanhando (hitstun, voando, no chão, agarrado). É a regra do Heat que
+       * transforma defender bem em counterplay: guarda, vanish e distância
+       * fazem o relógio correr; tomar combo não.
+       *
+       * O teto de PAREDE existe porque relógio que pausa sem teto vira modo
+       * infinito contra quem não sai do hitstun. 1080f = 18 s, aconteça o que
+       * acontecer. */
+      relogioFrames: 600,
+      tetoParedeFrames: 1080,
+      pausaComAlvoEm: ['hitstun', 'blowaway', 'knockdown', 'grabbed'],
+
+      /* O QUE MUDA NO KIT — qualitativo, não multiplicador de dano.
+       * `damageMul` do v1 NÃO existe aqui de propósito: dano a mais não se
+       * sente com vida 900, e empilharia com o Perfect Smash. */
+      rotaExtra: 2,               // combo.maxChain 4 → 6 durante o modo
+      /* Armadura do smash TOCADO: aguenta 14 de poise (dois rushes de 6) sem
+       * ser interrompido. O smash CARREGADO não tem — senão eram até 56f de
+       * golpe blindado segurando K, o que anularia toda resposta a ele. Um smash
+       * inimigo (poise 40) fura; grab passa por cima de qualquer armadura. */
+      smashArmor: 14,
+      speedMul: 1.12,             // voo, boost e Dragon Dash
+      kiCostMul: 0.65,            // vanish, dash, perseguição, blast
+
+      /* Fim pelo RELÓGIO: exaustão curta. É o Burnout do SF6 — quem deixou o
+       * modo escorrer sem gastar fica um instante sem ferramentas de ki, e
+       * quem aguentou ganha a janela de punir. Gastar no Max Smash não paga
+       * isto: a decisão "durar ou gastar" tem preço dos dois lados. */
+      exaustaoNoFimFrames: 60,
+
+      /* MAX SMASH: dano = base + bônus × fração do relógio que sobrou.
+       * Gastar cedo dói mais; cavalgar o modo e gastar no fim rende menos. */
+      maxSmashDanoBase: 30,
+      maxSmashDanoBonus: 20,
+
+      /* Estouro interrompido (grab no startup): a carga já foi gasta. Negar o
+       * estouro com uma leitura TEM que valer a carga dele, senão o grab seria
+       * só um adiamento. */
+      cargaPerdidaSeInterrompido: true,
+    },
   },
 
   /* ================================================================== */
@@ -999,6 +1068,10 @@ export const TUNING = {
     blast:   ['guard', 'deflect', 'step', 'vanish'],
     pursuit: ['guard', 'vanish', 'zcounter'],
     dash:    ['guard', 'vanish', 'step'],
+    /* ESTOURO do Max Power v2: a guarda NÃO segura. É uma onda pra tirar
+     * gente de cima, e o turtle que pressiona alguém com carga precisa
+     * misturar GRAB (que passa pela armadura dele) — não esperar. */
+    burst:   ['vanish', 'sway'],
   },
 
   /* ================================================================== */
@@ -1541,6 +1614,100 @@ export const TUNING = {
       invulnerability: [0, 6],
       trail: true,
       punchZoom: true,
+    },
+
+    /* ================================================================
+     *  MAX POWER v2 — os dois golpes que só existem nele
+     * ================================================================
+     *  ESTOURO: é a ATIVAÇÃO, e é um golpe de propósito. Um estado de
+     *  "acendendo" seria uma pausa (o defeito do v1); um golpe tem startup,
+     *  hitbox e recovery, entra no frame data, e o outro lado pode ler e
+     *  responder — grab no startup, step/vanish na onda.
+     *
+     *  A onda é centrada no CORPO (`waveRadius`) e pega todo mundo no raio:
+     *  na arena de 30 é o "sai de cima de mim".
+     *
+     *  Conta de vantagem: a onda pega no f18, a vítima fica presa até ~f42, o
+     *  ativador está livre no f38 → ~+4 e a ~5 m. É NEUTRO COM INICIATIVA, não
+     *  combo garantido — o papel do Heat Burst (+1/+2 no Tekken 8).          */
+    max_burst: {
+      clip: 'charge',
+      /* 18 e não 12. Com 12 o estouro era IRREAGÍVEL: um grab (8f) só o
+       * negava se saísse nos 4 primeiros frames, e o vanish/step exigiam
+       * reflexo de 1/15 s. Counterplay que só existe por adivinhação não é
+       * counterplay. Com 18: grab reagindo em até 10f, vanish/step entre o
+       * f8 e o f18. A armadura protege o startup inteiro, então ele ficar
+       * mais longo não o deixa mais fraco contra golpe — só contra leitura. */
+      startup: 18, active: 4, recovery: 16,
+      damage: 8,
+      poiseDamage: 0,
+      socket: 'hand_r',
+      waveRadius: 6.0,            // a hitbox é o CORPO, não o punho
+      hitboxRadius: 0,
+      knockback: 24.0,            // ~5 m de separação (knockbackDecay 4,5)
+      knockup: 4.0,
+      hitstop: 8,
+      shake: 0.6,
+      hitstun: 24,
+      blockstun: 0,
+      chipDamage: 0,
+      cancelInto: [],
+      cancelWindow: null,
+      homingRange: 0,
+      homingStrength: 0,
+      vanishWindow: 10,
+      /* Armadura TOTAL no startup: absorve qualquer golpe (o dano entra). Só
+       * o GRAB passa, porque a pegada não é um acerto — é a regra do Drive
+       * Impact × arremesso, e a matriz já a materializa. */
+      armor: 999,
+      priority: 2,
+      type: 'burst',
+      category: 'burst',
+      zCounterable: false,        // não há golpe pra ler: é uma onda
+      launch: { type: 'hitstun' },// NÃO abre perseguição: separa, não lança
+      isBurst: true,
+    },
+
+    /* MAX SMASH: o gasto final. R+K dentro do modo. Encerra o Max Power SEM
+     * exaustão — é a outra metade da decisão "durar ou gastar" (Blast 2 do
+     * BT3, Heat Smash do Tekken). O dano real é calculado na hora (ver
+     * `maxPower.v2.maxSmashDano*`): o `damage` daqui é só o piso.
+     *
+     * 16f de startup é REAGÍVEL — a mesma propriedade que faz o smash comum
+     * ser arriscado (§3.6). Vanish, Z-Counter e sway respondem; a armadura só
+     * impede que um jab o interrompa. Errar custa 28 frames, o maior recovery
+     * do kit. */
+    smash_max: {
+      clip: 'attack_heavy',
+      startup: 16, active: 4, recovery: 28,
+      damage: 30,
+      poiseDamage: 50,
+      socket: 'hand_r',
+      hitboxRadius: 0.9,
+      knockback: 50.0,
+      knockup: 6.0,
+      hitstop: 22,
+      shake: 1.1,
+      hitstun: 60,
+      blockstun: 30,
+      chipDamage: 6.0,
+      guardBreak: true,
+      cancelInto: [],
+      cancelWindow: null,
+      homingRange: 3.4,
+      homingStrength: 0.9,
+      advanceSpeed: 12.0,
+      advanceFrames: [6, 18],
+      vanishWindow: 14,
+      armor: 999,
+      priority: 4,
+      type: 'smash',
+      category: 'smash',
+      causesBlowaway: true,
+      launch: { type: 'blowaway' },
+      trail: true,
+      punchZoom: true,
+      isMaxSmash: true,
     },
   },
 
@@ -2318,6 +2485,19 @@ export const TUNING = {
      * Importa pro playtest pelo lado RECEPTOR: é a única forma de o jogador
      * sentir o counterplay (aguentar os 7 s e punir a exaustão que vem depois). */
     maxPowerChance: 0.5,
+
+    /* ---- Max Power v2 ----
+     * Os três números que fazem a mecânica ser TESTÁVEL contra bot: sem a IA
+     * estourar, o jogador nunca sente o lado receptor; sem a IA agarrar o
+     * estouro, o counterplay não existe na prática (a lição do cancelOnBlock:
+     * regra que ninguém usa é inerte).
+     *
+     * `mpBurstChance` é por DECISÃO (a cada `decisionIntervalFrames`), não por
+     * frame, e só vale nas situações em que estourar faz sentido: cercado por
+     * 2+, sob pressão na guarda, ou perdendo com o rival colado. */
+    mpBurstChance: 0.55,
+    mpMaxSmashChance: 0.6,
+    mpCounterGrabChance: 0.5,
     blastChance: 0.30,
     chargeKiBelow: 28,          // carrega ki quando abaixo disto
     /* 0,85: um jogador competente quase sempre tenta recuperar. Com 0,6 a IA
@@ -2558,7 +2738,22 @@ export const DEBUG_SLIDERS = [
   ['maxPower.kiCostMul',          0.1, 1,   0.05,'Max Power: custo de ki ×'],
   ['ki.exhaustFrames',              0, 300, 5,   'Exaustão: duração (f)'],
   ['ki.exhaustRegenPerSec',         0, 30,  0.5, 'Exaustão: regen /s'],
-  ['ai.maxPowerChance',             0, 1,   0.02,'IA: chance de acender Max Power'],
+  ['ai.maxPowerChance',             0, 1,   0.02,'IA v1: chance de acender Max Power'],
+  ['maxPower.v2.relogioFrames',    60, 1200, 10, 'MP v2: relógio do modo (f)'],
+  ['maxPower.v2.tetoParedeFrames', 60, 2400, 10, 'MP v2: teto de parede (f)'],
+  ['maxPower.v2.rotaExtra',         0, 6,   1,   'MP v2: elos extras na rota'],
+  ['maxPower.v2.smashArmor',        0, 60,  1,   'MP v2: armadura do smash (poise)'],
+  ['maxPower.v2.speedMul',          1, 1.6, 0.02,'MP v2: velocidade de voo ×'],
+  ['maxPower.v2.kiCostMul',       0.1, 1,   0.05,'MP v2: custo de ki ×'],
+  ['maxPower.v2.exaustaoNoFimFrames', 0, 180, 5, 'MP v2: exaustão se o relógio zerar'],
+  ['maxPower.v2.maxSmashDanoBase',  0, 120, 1,   'MP v2: Max Smash, dano base'],
+  ['maxPower.v2.maxSmashDanoBonus', 0, 120, 1,   'MP v2: Max Smash, bônus por relógio'],
+  ['moves.max_burst.waveRadius',    1, 15,  0.5, 'MP v2: raio da onda (m)'],
+  ['moves.max_burst.startup',       1, 40,  1,   'MP v2: startup do estouro'],
+  ['moves.max_burst.knockback',     0, 60,  1,   'MP v2: empurrão da onda'],
+  ['ai.mpBurstChance',              0, 1,   0.02,'IA v2: chance de estourar'],
+  ['ai.mpMaxSmashChance',           0, 1,   0.02,'IA v2: chance de Max Smash'],
+  ['ai.mpCounterGrabChance',        0, 1,   0.02,'IA v2: agarrar estouro/smash blindado'],
 
   ['__group', 'Trades / Prioridade'],
   ['trade.enabled',                 0, 1,   1,   'Trades ligados?'],

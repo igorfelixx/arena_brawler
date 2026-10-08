@@ -221,6 +221,17 @@ export class BotController {
       return c;
     }
 
+    /* ================================================================
+     *  MAX POWER v2 — os dois lados da mecânica
+     * ================================================================
+     *  Sem isto a mecânica não é testável contra bot: o jogador nunca sentiria
+     *  o lado receptor (o estouro, o smash blindado), e o counterplay (grab no
+     *  estouro, punir o fim do modo) nunca seria cobrado dele. */
+    if (TUNING.maxPower.versao === 'v2') {
+      const r = this._maxPowerV2(c, ctx, A, foe, dist, diff, atacandoPerto);
+      if (r) return c;
+    }
+
     // Já se comprometeu a bloquear: segura até o fim.
     if (this._holdGuard > 0) {
       this._holdGuard--;
@@ -353,7 +364,11 @@ export class BotController {
     const eleDefende = foe.state === S.GUARD || foe.blockstunFrames > 0;
     if (eleDefende && dist <= TUNING.defense.grab.range * 1.15
         && f.grabCooldown === 0 && f.canAct
-        && this._roll(A.grabChance * (0.6 + diff * 0.6))) {
+        && this._roll(A.grabChance * (0.6 + diff * 0.6)
+                      /* Rival com carga de Max Power na guarda: a guarda dele
+                       * virou ameaça (ele estoura de dentro dela), e o grab é
+                       * a única coisa que passa pela armadura do estouro. */
+                      * (foe.maxPowerCargas > 0 ? 1.5 : 1))) {
       c.grab = true;
       this._setMoveToward(c, _toFoe, ctx, 0.4);
       return c;
@@ -383,13 +398,15 @@ export class BotController {
      *  não produz botão segurado. Acender exige 26 frames CONTÍNUOS de charge
      *  acima do limiar, então precisa ser um COMPROMISSO com prazo, não um
      *  sorteio a cada frame. */
-    if (this._maxPowerIntent > 0) {
+    const MPv1 = TUNING.maxPower.versao === 'v1';
+    if (!MPv1) this._maxPowerIntent = 0;
+    if (MPv1 && this._maxPowerIntent > 0) {
       this._maxPowerIntent--;
       // Abortar se o adversário chegou: carregar colado é suicídio, e insistir
       // faria a IA parecer quebrada em vez de ambiciosa.
       if (dist > 7 && !f.inMaxPower && !f.exhausted) { c.charge = true; return c; }
       this._maxPowerIntent = 0;
-    } else if (!f.inMaxPower && !f.exhausted && dist > 10
+    } else if (MPv1 && !f.inMaxPower && !f.exhausted && dist > 10
                && f.ki >= TUNING.maxPower.enterKiThreshold * 0.8
                && this._roll(A.maxPowerChance * diff * 0.12)) {
       /* A chance é pequena POR FRAME porque este teste roda todo frame: 12% de
@@ -418,7 +435,7 @@ export class BotController {
     this._decisionTimer--;
     if (this._decisionTimer <= 0) {
       this._decisionTimer = A.decisionIntervalFrames;
-      this._chooseIntent(dist, diff, ctx);
+      this._chooseIntent(dist, diff, ctx, foe);
     }
 
     /* ---------- 4/5/6. execução da intenção ---------- */
@@ -450,7 +467,7 @@ export class BotController {
          * insistisse, ela ficaria apertando um botão morto — que é exatamente
          * a experiência que estamos tirando do jogador. Ela tem que tomar a
          * MESMA decisão que o humano: finalizar ou sair. */
-        if (f.comboCount >= TUNING.combo.maxChain) {
+        if (f.comboCount >= f.maxChain) {
           if (dist <= A.attackRange * 1.3) {
             c.smash = true;
             c.smashDir = this._pickSmashDir(foe, ctx);
@@ -473,7 +490,10 @@ export class BotController {
           const inCombo = f.state === S.ATTACK;
           if (inCombo) {
             const canSmash = f.move?.cancelInto?.some((k) => k.startsWith('smash'));
-            if (canSmash && this._roll(A.smashChance * (0.6 + diff * 0.6))) {
+            if (f.inMaxPowerV2 && this._querMaxSmash(foe, ctx, A, diff, true)) {
+              c.maxPower = true;            // MAX SMASH como ender da rota
+              this._comboCount = 0;
+            } else if (canSmash && this._roll(A.smashChance * (0.6 + diff * 0.6))) {
               c.smash = true;
               c.smashDir = this._pickSmashDir(foe, ctx);
               this._smashHold = this._rollSmashCharge();
@@ -529,6 +549,111 @@ export class BotController {
     }
 
     return c;
+  }
+
+  /**
+   * Max Power v2 do lado da IA. Devolve true se já decidiu o frame.
+   *
+   * Probabilidades POR FRAME derivadas de "por decisão" (÷ decisionInterval):
+   * o estouro é um aperto só, mas a situação que o justifica dura vários
+   * frames, e um teste por frame com a chance cheia estouraria no 1º frame
+   * sempre — previsível e sem leitura.
+   */
+  _maxPowerV2(c, ctx, A, foe, dist, diff, atacandoPerto) {
+    const f = this.f;
+    const V = TUNING.maxPower.v2;
+    const B = TUNING.moves.max_burst;
+    const porFrame = (p) => this._roll(p / Math.max(1, A.decisionIntervalFrames));
+
+    /* ---- RECEPTOR: o rival está estourando, ou vem smash blindado ----
+     *
+     * O estouro tem 18f de startup e armadura: golpe não adianta, GUARDA não
+     * adianta. Só grab (passa pela armadura), vanish/step (a onda é
+     * esquivável) ou sair do raio. É exatamente a lição que o jogador precisa
+     * aprender — e a IA tem que fazer o mesmo, senão a mecânica só é forte. */
+    const fm = foe.move;
+    const naStartup = foe.state === S.ATTACK && foe.attackPhase === 'startup';
+    const estourando = naStartup && fm?.isBurst;
+    const blindado = naStartup && (fm?.isMaxSmash
+      || (foe.inMaxPowerV2 && fm?.type === 'smash' && foe.smashChargeFrames === 0));
+
+    if ((estourando || blindado) && foe.stateFrame >= this._reactionFrames()) {
+      const G = TUNING.defense.grab;
+      // Grab só se ainda der tempo: ele precisa ficar ativo ANTES da onda.
+      const sobra = fm.startup - foe.stateFrame;
+      if (dist <= G.range * 1.15 && f.canAct && f.grabCooldown === 0
+          && sobra > TUNING.moves.grab.startup && this._roll(A.mpCounterGrabChance * diff)) {
+        this._holdGuard = 0;
+        c.grab = true;
+        this._setMoveToward(c, _toFoe, ctx, 0.3);
+        return true;
+      }
+      if (estourando && dist < B.waveRadius + 1.5) {
+        if (f.ki >= f.vanishCost() && this._roll(A.vanishChance * diff * 0.6)) {
+          c.vanish = true; return true;
+        }
+        // Step pra trás: os i-frames passam pela onda; a guarda não.
+        this._holdGuard = 0;
+        c.guard = true;
+        _v.copy(_toFoe).multiplyScalar(-1);
+        this._setMoveToward(c, _v, ctx);
+        return true;
+      }
+    }
+
+    /* ---- ATIVADOR: dentro do modo, o gasto final ---- */
+    if (f.inMaxPowerV2 && f.canAct && dist <= A.attackRange * 1.3
+        && this._querMaxSmash(foe, ctx, A, diff, false)) {
+      c.maxPower = true;
+      this._setMoveToward(c, _toFoe, ctx, 0.4);
+      return true;
+    }
+
+    /* ---- ATIVADOR: estourar ---- */
+    if (f.maxPowerCargas > 0 && !f.inMaxPower && (f.canAct || f.state === S.GUARD)) {
+      // Cercado: 2+ inimigos no raio da onda. É o "sai de cima de mim".
+      let perto = 0;
+      for (const o of ctx.fighters || []) {
+        if (o !== f && o.alive && o.position.distanceTo(f.position) < B.waveRadius) perto++;
+      }
+      const atras = f.health < foe.health;
+      const naGuarda = f.state === S.GUARD && (f.blockstunFrames > 0 || atacandoPerto);
+      const guardaFraca = f.guardStamina < TUNING.defense.guard.maxStamina * 0.6;
+
+      let p = 0;
+      if (perto >= 2) p = A.mpBurstChance;                                 // cercado
+      else if (naGuarda && (guardaFraca || atras)) p = A.mpBurstChance;     // estouro de guarda
+      else if (atacandoPerto && atras) p = A.mpBurstChance * 0.6;          // pressão perdendo
+      else if (dist < B.waveRadius * 0.8 && atras) p = A.mpBurstChance * 0.25; // tomar a iniciativa
+
+      if (p > 0 && porFrame(p * diff)) {
+        c.maxPower = true;
+        c.charge = true;
+        if (f.state === S.GUARD) c.guard = true;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Vale gastar o modo AGORA? O Max Smash rende mais cedo (dano escala com o
+   * relógio que sobrou), mas 16f de startup contra quem está livre é convite
+   * a vanish/Z-Counter. Então: dentro do combo, ou com o rival na borda, ou
+   * quando o modo vai escorrer de qualquer jeito (melhor gastar que pagar a
+   * exaustão do fim).
+   */
+  _querMaxSmash(foe, ctx, A, diff, emCombo) {
+    const f = this.f;
+    const frac = f.maxPowerFrac;
+    const naBorda = ctx.arena.edgeProximity(foe.position) > 0.4;
+    const quaseMorto = foe.health < 160;
+    const acabando = frac < 0.25;
+    const preso = foe.state === S.HITSTUN;
+    let p = 0;
+    if (emCombo) p = (naBorda || quaseMorto || acabando || frac < 0.6) ? A.mpMaxSmashChance : A.mpMaxSmashChance * 0.3;
+    else if (acabando || (preso && (naBorda || quaseMorto))) p = A.mpMaxSmashChance / Math.max(1, A.decisionIntervalFrames) * 3;
+    return p > 0 && this._roll(p * (0.5 + diff * 0.5));
   }
 
   /** Decide por quantos frames vai SEGURAR este smash. */
@@ -600,9 +725,22 @@ export class BotController {
   }
 
   /* ---------------------------------------------------------------- */
-  _chooseIntent(dist, diff, ctx) {
+  _chooseIntent(dist, diff, ctx, foe = null) {
     const A = this._merged;
     const r = this._rand();
+    const f = this.f;
+
+    /* Max Power v2: no modo a IA vai pra cima (o modo é curto e o relógio só
+     * pausa quando ela acerta). E o rival ESGOTADO — exausto depois de deixar
+     * o modo escorrer — é a janela que o counterplay promete: ela tem que
+     * cobrar, senão o fim do modo não custa nada contra bot. */
+    if (TUNING.maxPower.versao === 'v2') {
+      if (foe && foe.exhausted && dist < A.dashRange) { this._intent = 'attack'; return; }
+      if (f.inMaxPower && dist <= A.dashRange && r < 0.85) {
+        this._intent = dist > A.attackRange * 2.2 ? 'dash' : 'attack';
+        return;
+      }
+    }
 
     if (dist > A.dashRange) {
       this._intent = r < 0.7 ? 'dash' : 'blast';
@@ -665,7 +803,7 @@ function resetCommand(c) {
   c.moveX = 0; c.moveY = 0; c.vertical = 0;
   c.rush = false; c.smash = false; c.blast = false; c.blastHeld = false;
   c.guard = false; c.vanish = false; c.dash = false; c.charge = false; c.ultimate = false;
-  c.grab = false; c.smashHeld = false;
+  c.grab = false; c.smashHeld = false; c.maxPower = false;
   c.smashDir = 'forward';
 }
 

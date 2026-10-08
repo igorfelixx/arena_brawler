@@ -83,6 +83,11 @@ export function emptyCommand() {
      * independentes, e se o Fighter deduzisse, ela agarraria por acidente todas
      * as vezes que decidisse bloquear e revidar no mesmo frame. */
     grab: false,
+    /* MAX POWER v2: R+K. Campo PRÓPRIO pelo mesmo motivo do `grab`: a tradução
+     * de "dois botões juntos" mora em quem produz o command. O significado
+     * depende do estado (GG Roman Cancel): fora do modo é o ESTOURO, dentro do
+     * modo é o MAX SMASH. */
+    maxPower: false,
     // direção do smash: 'forward' | 'up' | 'down'
     smashDir: 'forward',
   };
@@ -231,9 +236,16 @@ export class Fighter {
     /* ================================================================== */
     /*  KI: MAX POWER E EXAUSTÃO  (§18, §19)                               */
     /* ================================================================== */
-    this.maxPowerFrames = 0;    // > 0 = está em Max Power
+    this.maxPowerFrames = 0;    // > 0 = está em Max Power (no v2: o RELÓGIO)
     this._maxPowerCharge = 0;   // frames carregando ACIMA do limiar de entrada
     this.exhaustFrames = 0;     // > 0 = sem nenhuma ferramenta de ki
+
+    /* MAX POWER v2. A CARGA é o recurso — ganha pela barra de vida (ver
+     * `maxPower.v2.gatilho`). Fica no Fighter porque a HUD dos DOIS lados
+     * precisa mostrá-la: o comeback tem que ser previsível pra ter counterplay. */
+    this.maxPowerCargas = Fighter.cargasIniciais();
+    this._mpParede = 0;         // frames de parede desde que o modo acendeu
+    this._mpVidaUsada = false;  // gatilho 'vida': a carga só vem uma vez
 
     /* Prioridade/armor: quanto poise o golpe atual já absorveu sem quebrar. */
     this._armorAbsorbed = 0;
@@ -296,14 +308,32 @@ export class Fighter {
    * ignoraria o slider. */
   get maxPoise() { return TUNING.fighter.maxPoise; }
   get maxGuardStamina() { return TUNING.defense.guard.maxStamina; }
-  get maxChain() { return TUNING.combo.maxChain; }
+  /* No Max Power v2 a rota cresce (`rotaExtra`). Tudo que pergunta "a rota
+   * esgotou?" passa por aqui — Fighter E IA — senão os dois divergiriam. */
+  get maxChain() {
+    return TUNING.combo.maxChain + (this.inMaxPowerV2 ? TUNING.maxPower.v2.rotaExtra : 0);
+  }
 
   /* ---- Max Power e exaustão (§18, §19) ----------------------------- */
   get inMaxPower() { return this.maxPowerFrames > 0; }
   get exhausted() { return this.exhaustFrames > 0; }
+  get mpVersao() { return TUNING.maxPower.versao; }
+  get inMaxPowerV2() { return this.maxPowerFrames > 0 && TUNING.maxPower.versao === 'v2'; }
 
-  /** Multiplicador de dano de saída. É por aqui que o Max Power dói mais. */
-  get damageMul() { return this.inMaxPower ? TUNING.maxPower.damageMul : 1; }
+  /** Fração do relógio do v2 que ainda resta (0..1). HUD, IA e Max Smash. */
+  get maxPowerFrac() {
+    if (!this.inMaxPowerV2) return 0;
+    return Math.min(1, this.maxPowerFrames / TUNING.maxPower.v2.relogioFrames);
+  }
+
+  /** Multiplicador de dano de saída. SÓ o v1 tem: no v2 o modo muda o que os
+   * golpes FAZEM, e dano a mais empilharia com o Perfect Smash. */
+  get damageMul() {
+    return this.inMaxPower && this.mpVersao === 'v1' ? TUNING.maxPower.damageMul : 1;
+  }
+
+  /** Voo e dash mais rápidos no v2 — o "high speed" do BT3. */
+  get speedMul() { return this.inMaxPowerV2 ? TUNING.maxPower.v2.speedMul : 1; }
 
   /**
    * Custo efetivo de ki de uma ação.
@@ -314,7 +344,8 @@ export class Fighter {
    * duplicados.
    */
   kiCost(base) {
-    return base * (this.inMaxPower ? TUNING.maxPower.kiCostMul : 1);
+    if (!this.inMaxPower) return base;
+    return base * (this.mpVersao === 'v2' ? TUNING.maxPower.v2.kiCostMul : TUNING.maxPower.kiCostMul);
   }
 
   /**
@@ -519,7 +550,9 @@ export class Fighter {
      *  E quando acaba, cai na EXAUSTÃO. Esse encadeamento é o counterplay
      *  inteiro: quem aguentou os 7 segundos ganha uma janela em que o outro não
      *  tem vanish, não tem dash e não tem perseguição. Aguentar é jogar bem.   */
-    if (this.maxPowerFrames > 0) {
+    if (this.maxPowerFrames > 0 && this.mpVersao === 'v2') {
+      this._tickMaxPowerV2();
+    } else if (this.maxPowerFrames > 0) {
       this.maxPowerFrames--;
       this.ki = Math.max(0, this.ki - TUNING.maxPower.drainPerSec * dt);
       if (this.maxPowerFrames === 0 || this.ki <= 0) {
@@ -547,7 +580,9 @@ export class Fighter {
       } else if (this.exhaustFrames === 0) {
         this.events.push({ type: 'exhaustEnd' });
       }
-    } else if (this.state !== S.CHARGE && !this.inMaxPower) {
+    } else if (this.state !== S.CHARGE && (!this.inMaxPower || this.mpVersao === 'v2')) {
+      /* O v1 não regenera no modo (ele DRENA). O v2 não mexe no ki: o preço
+       * dele é a carga e o risco, não a barra. */
       this.ki = Math.min(TUNING.ki.max, this.ki + TUNING.ki.passiveRegenPerSec * dt);
     }
 
@@ -622,6 +657,10 @@ export class Fighter {
     // Ordem de prioridade = ordem de leitura. Ultimate ganha de tudo.
     if (cmd.ultimate && this._tryUltimate(ctx)) return;
 
+    // R+K: estouro (fora do modo) ou Max Smash (dentro). Antes do charge,
+    // porque R está apertado junto e o charge engoliria a intenção.
+    if (cmd.maxPower && this._tryMaxPowerV2(ctx, cmd)) return;
+
     /* PERSEGUIÇÃO VEM ANTES DO SMASH, e a ordem é a mecânica.
      *
      * O tipo de perseguição é escolhido pelo que você está SEGURANDO junto com
@@ -680,7 +719,7 @@ export class Fighter {
        * Curvar devagar é o compromisso de MUDAR DE IDEIA no meio do dash. */
       this.velocity
         .copy(this._dashDirection(cmd, ctx, this._tmp))
-        .multiplyScalar(TUNING.flight.dashSpeed);
+        .multiplyScalar(TUNING.flight.dashSpeed * this.speedMul);
 
       this.char.play('dash', { fade: 0.1 });
       return;
@@ -743,7 +782,7 @@ export class Fighter {
     cur.normalize();
     cur.lerp(this._tmp, 1 - Math.exp(-turn * dt)).normalize();
 
-    this.velocity.copy(cur).multiplyScalar(TUNING.flight.dashSpeed);
+    this.velocity.copy(cur).multiplyScalar(TUNING.flight.dashSpeed * this.speedMul);
     this.yaw = Math.atan2(cur.x, cur.z);
 
     this.char.play('dash', { fade: 0.1 });
@@ -766,7 +805,7 @@ export class Fighter {
 
     // Rota esgotada: a investida também não sai. Sem isto, J te levava até o
     // alvo e não acontecia nada — pior que o botão simplesmente não responder.
-    if (this.comboCount >= TUNING.combo.maxChain) return false;
+    if (this.comboCount >= this.maxChain) return false;
 
     const d = this.position.distanceTo(this.target.position);
     if (d <= A.attackAt || d > A.range) return false;
@@ -1201,6 +1240,11 @@ export class Fighter {
     const f = this.stateFrame;
     const total = moveTotalFrames(m);
 
+    /* O ESTOURO SAIU: o modo acende no primeiro frame ATIVO, não no aperto.
+     * Os 18 frames de startup são a janela do grab — interromper ali nega o
+     * modo inteiro, e é por isso que o counterplay é uma leitura real. */
+    if (m.isBurst && f === m.startup) this._acenderMaxPowerV2('estouro');
+
     // Homing e avanço acontecem no startup: é o que faz o soco ACERTAR num
     // jogo aéreo. Sem isso, o combo erra e a culpa parece ser do jogador.
     if (f <= m.startup) this._applyHoming(dt, m, ctx);
@@ -1256,6 +1300,10 @@ export class Fighter {
      * guarda, e defender não cobrava preço nenhum. Ver `combo.cancelOnBlock`. */
     if (this.contactAllowsChain && m.cancelWindow
         && f >= m.cancelWindow[0] && f <= m.cancelWindow[1]) {
+      /* MAX SMASH como ender da rota — o Heat Smash no meio do combo. Só
+       * dentro do modo: o ESTOURO não sai de cancel (ele empurraria a vítima
+       * pra fora do próprio combo, e seria um combo-breaker pelo lado errado). */
+      if (cmd.maxPower && this.inMaxPowerV2 && this._tryMaxPowerV2(ctx, cmd)) return;
       if (cmd.smash) {
         const key = this._smashKey(cmd.smashDir);
         if (m.cancelInto.includes(key) && this._tryAttack(key, ctx, cmd)) return;
@@ -1332,6 +1380,17 @@ export class Fighter {
   /* --- guarda ------------------------------------------------------- */
   _sGuard(dt, cmd, ctx) {
     const G = TUNING.defense.guard;
+
+    /* ESTOURO DE GUARDA — inclusive em blockstun.
+     *
+     * É o "amarelo" do Roman Cancel / o Drive Reversal: a saída da pressão
+     * pra quem está aguentando. Vem ANTES do blockstun de propósito, senão só
+     * sairia nos frames em que a pressão já parou — inútil. Gasta a CARGA, que
+     * não é repetível; não é um botão de pânico, é uma aposta de uma vez. */
+    if (cmd.maxPower && !this.inMaxPower && this._tryMaxPowerV2(ctx, cmd)) {
+      this.blockstunFrames = 0;
+      return;
+    }
 
     /* BLOCKSTUN — travado no impacto que você aparou.
      *
@@ -1425,6 +1484,10 @@ export class Fighter {
 
   /* --- carregar ki --------------------------------------------------- */
   _sCharge(dt, cmd, ctx) {
+    // R segurado e K tocado: estouro. O caminho mais comum de entrada no v2,
+    // porque quem aperta R+K quase nunca acerta o MESMO frame.
+    if (cmd.maxPower && this._tryMaxPowerV2(ctx, cmd)) return;
+
     if (!cmd.charge) {
       this._maxPowerCharge = 0;
       this._enter(S.IDLE);
@@ -1453,7 +1516,7 @@ export class Fighter {
      *  Em exaustão não entra: seria o loop perfeito de sair do castigo direto
      *  pro modo forte.                                                         */
     const MP = TUNING.maxPower;
-    if (!this.inMaxPower && !this.exhausted && this.ki >= MP.enterKiThreshold) {
+    if (MP.versao === 'v1' && !this.inMaxPower && !this.exhausted && this.ki >= MP.enterKiThreshold) {
       this._maxPowerCharge++;
       if (this._maxPowerCharge === 1) this.events.push({ type: 'maxPowerReady' });
       if (this._maxPowerCharge >= MP.enterHoldFrames) {
@@ -1508,12 +1571,137 @@ export class Fighter {
    * tentativa de gastar, e o serrote é justamente o que `exhaustExitKi` evita
    * do outro lado.
    */
-  _enterExhaustion() {
+  _enterExhaustion(frames = TUNING.ki.exhaustFrames) {
     if (this.exhausted) return;
     this.ki = 0;
-    this.maxPowerFrames = 0;
-    this.exhaustFrames = TUNING.ki.exhaustFrames;
+    /* No v1 zerar o ki ENCERRA o modo (ele vivia da barra). No v2 não: o modo
+     * não depende de ki, e a exaustão só tira as ferramentas que custam ki. */
+    if (this.mpVersao !== 'v2') this.maxPowerFrames = 0;
+    this.exhaustFrames = frames;
     this.events.push({ type: 'exhaustStart' });
+  }
+
+  /* ================================================================== */
+  /*  MAX POWER v2 — ESTOURO  (ver TUNING.maxPower.v2 e PORTAR 10.10)    */
+  /* ================================================================== */
+  /**
+   * R+K. O significado depende do estado — a gramática do Roman Cancel:
+   *
+   *   fora do modo, com carga  → ESTOURO (o golpe que acende o modo)
+   *   dentro do modo           → MAX SMASH (gasta o resto e encerra)
+   *
+   * O estouro é um GOLPE, não um estado de "acendendo": tem startup, onda e
+   * recovery, e o outro lado lê e responde no frame data. A carga é gasta no
+   * aperto; o modo só acende no primeiro frame ativo (ver `_sAttack`).
+   */
+  _tryMaxPowerV2(ctx, cmd) {
+    if (TUNING.maxPower.versao !== 'v2') return false;
+    const V = TUNING.maxPower.v2;
+
+    if (this.inMaxPower) {
+      const frac = this.maxPowerFrac;
+      if (!this._tryAttack('smash_max', ctx, cmd)) return false;
+      /* O dano depende do relógio que SOBROU: gastar cedo dói mais. Mesma
+       * técnica do Perfect Smash — `Object.create` por cima do golpe base,
+       * nunca mexendo no TUNING (senão a segunda vez valeria outra coisa). */
+      const base = this.move;
+      const v = Object.create(base);
+      v.damage = V.maxSmashDanoBase + V.maxSmashDanoBonus * frac;
+      v.chipDamage = (base.chipDamage ?? 0) * (v.damage / Math.max(1, base.damage));
+      this.move = v;
+      this.events.push({ type: 'maxSmashStart', frac });
+      this._encerrarMaxPowerV2('maxSmash');
+      return true;
+    }
+
+    if (this.maxPowerCargas <= 0) return false;
+    if (!this._tryAttack('max_burst', ctx, cmd)) return false;
+    this.maxPowerCargas--;
+    this.velocity.multiplyScalar(0.3);
+    this.events.push({ type: 'maxBurstStart' });
+    return true;
+  }
+
+  /** Acende o modo. `via`: 'estouro' | 'perfect'. */
+  _acenderMaxPowerV2(via) {
+    const V = TUNING.maxPower.v2;
+    this.maxPowerFrames = V.relogioFrames;
+    this._mpParede = 0;
+    this.events.push({ type: 'maxPowerStart', via });
+  }
+
+  /**
+   * O ENGAJADOR: acertou um Perfect Smash tendo carga → o modo acende sem
+   * estouro. Chamado pela resolução de acerto DEPOIS do dano: o golpe que
+   * acendeu não ganha nada do modo (Perfect e Max Power não se somam).
+   */
+  engajarPorPerfect() {
+    const V = TUNING.maxPower.v2;
+    if (TUNING.maxPower.versao !== 'v2' || !V.ativaPorPerfect) return false;
+    if (this.inMaxPower || this.maxPowerCargas <= 0) return false;
+    this.maxPowerCargas--;
+    this._acenderMaxPowerV2('perfect');
+    return true;
+  }
+
+  /**
+   * O relógio do modo. Pausa enquanto o SEU alvo está apanhando de VOCÊ
+   * (o Heat do Tekken 8): quem defende bem faz ele correr, quem toma combo
+   * não. O teto de parede impede o pausado de virar infinito.
+   *
+   * "De você" (`_ultimoAtacante`) e não só "apanhando": na arena de 30, um
+   * terceiro batendo no seu alvo não pode esticar o SEU modo.
+   */
+  _tickMaxPowerV2() {
+    const V = TUNING.maxPower.v2;
+    this._mpParede++;
+    const alvo = this.target;
+    const pausa = alvo && alvo.alive && alvo._ultimoAtacante === this
+      && V.pausaComAlvoEm.includes(alvo.state);
+    if (!pausa) this.maxPowerFrames--;
+    if (this._mpParede >= V.tetoParedeFrames) this.maxPowerFrames = 0;
+    if (this.maxPowerFrames <= 0) this._encerrarMaxPowerV2('relogio');
+  }
+
+  /** Fim do modo. Só o fim pelo RELÓGIO cobra exaustão (o Burnout do SF6). */
+  _encerrarMaxPowerV2(via) {
+    this.maxPowerFrames = 0;
+    this._mpParede = 0;
+    this.events.push({ type: 'maxPowerEnd', via });
+    const ex = TUNING.maxPower.v2.exaustaoNoFimFrames;
+    if (via === 'relogio' && ex > 0) this._enterExhaustion(ex);
+  }
+
+  /**
+   * A barra de vida perdeu uma camada? Então talvez você ganhe uma carga.
+   * O gatilho é a CAMADA (a barra que a HUD mostra), e não um número
+   * escondido: o comeback tem que ser previsível pros dois lados.
+   */
+  _registrarPerdaDeVida(hpAntes) {
+    if (TUNING.maxPower.versao !== 'v2' || this.health <= 0) return;
+    const V = TUNING.maxPower.v2;
+    const L = Math.max(1, TUNING.healthBar.layers);
+    const tam = TUNING.fighter.maxHealth / L;
+    const antes = Math.ceil(hpAntes / tam - 1e-9);
+    const depois = Math.ceil(this.health / tam - 1e-9);
+    if (depois >= antes) return;
+
+    let ganha = false;
+    if (V.gatilho === 'camada') ganha = true;
+    else if (V.gatilho === 'vida' && !this._mpVidaUsada && depois <= V.vidaCamadas) {
+      this._mpVidaUsada = true;
+      ganha = true;
+    }
+    if (ganha && this.maxPowerCargas < V.maxCargas) {
+      this.maxPowerCargas++;
+      this.events.push({ type: 'maxPowerCarga' });
+    }
+  }
+
+  /** Cargas no começo da luta — só o gatilho 'rodada' começa com uma. */
+  static cargasIniciais() {
+    const V = TUNING.maxPower.v2;
+    return TUNING.maxPower.versao === 'v2' && V.gatilho === 'rodada' ? V.maxCargas : 0;
   }
 
   /* --- vanish --------------------------------------------------------- */
@@ -2157,6 +2345,10 @@ export class Fighter {
      * `smash_*` — e um teste por string quebraria em silêncio, deixando um
      * ender contar como elo de rota. */
     const ender = m.type === 'smash' || m.type === 'pursuit';
+    /* O ESTOURO não é elo nem ender: não conta na rota e não é barrado por
+     * ela. Ele é a saída de uma situação, não parte de uma sequência — se a
+     * rota esgotada o bloqueasse, ele falharia justo quando mais se precisa. */
+    const foraDaRota = m.type === 'burst';
 
     /* A ROTA TEM FIM — e o fim vale inclusive vindo da IDLE.
      *
@@ -2169,7 +2361,7 @@ export class Fighter {
      * Agora, esgotada a rota, rush NÃO SAI até a interação resetar
      * (`chainResetFrames` sem atacar). Sobram os enders e o reposicionamento —
      * que é exatamente o ponto de decisão que faltava. */
-    if (!ender && this.comboCount >= this.maxChain) return false;
+    if (!ender && !foraDaRota && this.comboCount >= this.maxChain) return false;
 
     // Reavalia a mira. Com lock-on solto, cada golpe procura o melhor alvo na
     // direção apontada — é assim que se troca de vítima no meio da sequência.
@@ -2191,7 +2383,9 @@ export class Fighter {
     /* Enders não contam como elo e, ao serem usados, ABREM a rota de novo
      * (`enderClearsChain`). Finalizar direito é recompensado: você fica livre
      * pra reengajar ou perseguir sem esperar o reset. */
-    if (ender) {
+    if (foraDaRota) {
+      // nada: a rota segue exatamente como estava
+    } else if (ender) {
       /* `noChainClear` existe pro spike de perseguição: ele é um ender, mas NÃO
        * pode devolver rota nova — senão a perseguição de alta velocidade daria
        * dano, distância E pressão, e as outras duas viravam decoração. */
@@ -2199,7 +2393,7 @@ export class Fighter {
     } else {
       this.comboCount += 1;
     }
-    this.chainResetTimer = TUNING.combo.chainResetFrames;
+    if (!foraDaRota) this.chainResetTimer = TUNING.combo.chainResetFrames;
 
     this.move = m;
     this.moveKey = key;
@@ -2335,7 +2529,7 @@ export class Fighter {
     let speed = cmd.dash ? F.boostSpeed : F.baseSpeed;
     if (cmd.moveY < 0) speed *= F.backMul;
     else if (Math.abs(cmd.moveX) > 0.5) speed *= F.strafeMul;
-    speed *= mul;
+    speed *= mul * this.speedMul;
 
     this._desired.set(0, 0, 0)
       .addScaledVector(basis.right, cmd.moveX)
@@ -2382,12 +2576,18 @@ export class Fighter {
      *  perder o turno, e é o que permite um personagem pesado atravessar um jab
      *  sem que ele fique imune a um smash (o poiseDamage de um smash passa longe
      *  de qualquer valor de armor razoável). */
-    if (this.state === S.ATTACK && this.move && this.move.armor > 0
+    const armadura = this._armaduraAtual();
+    if (this.state === S.ATTACK && this.move && armadura > 0
         && this.stateFrame <= this.move.startup) {
-      this._armorAbsorbed += move.poiseDamage || 0;
-      if (this._armorAbsorbed < this.move.armor) {
+      /* Golpe que não tem poise (a onda do estouro, um blast) ainda assim
+       * conta 1: senão ele passaria por QUALQUER armadura sem ser notado. */
+      this._armorAbsorbed += Math.max(1, move.poiseDamage || 0);
+      if (this._armorAbsorbed < armadura) {
+        const hpAntes = this.health;
         this.health = Math.max(0, this.health - damage);
         if (this.immortal && this.health <= 0) this.health = 1;
+        this._ultimoAtacante = attacker;
+        this._registrarPerdaDeVida(hpAntes);
         this.flashFrames = TUNING.juice.impactFlashFrames;
         this.events.push({ type: 'armorAbsorb', attacker, damage });
         return 'armor';
@@ -2423,12 +2623,15 @@ export class Fighter {
       }
     }
 
+    const hpAntes = this.health;
     this.health = Math.max(0, this.health - damage);
+    this._ultimoAtacante = attacker;
     // Tomar dano reinicia o relógio da regeneração: quem está sob pressão
     // contínua não se recompõe, e é isso que mantém a briga letal.
     this._semDanoFrames = 0;
     // Boneco de treino não morre: a sessão precisa durar mais que dez segundos.
     if (this.immortal && this.health <= 0) this.health = 1;
+    this._registrarPerdaDeVida(hpAntes);
     this.poise -= move.poiseDamage || 0;
     this.flashFrames = TUNING.juice.impactFlashFrames;
 
@@ -2515,7 +2718,7 @@ export class Fighter {
        * estado e o menos visível: não é dano, é TURNO — a diferença entre comer
        * a rota inteira e conseguir revidar no meio dela. */
       this._stunFrames = Math.round(
-        move.hitstun * (this.inMaxPower ? TUNING.maxPower.hitstunTakenMul : 1));
+        move.hitstun * (this.inMaxPower && this.mpVersao === 'v1' ? TUNING.maxPower.hitstunTakenMul : 1));
       this.char.play('hit_react', { fade: 0.04, restart: true });
     }
 
@@ -2529,6 +2732,22 @@ export class Fighter {
     this.vanishChain = 0;
     this.events.push({ type: 'damaged', result, damage, attacker });
     return result;
+  }
+
+  /**
+   * Armadura do golpe atual. A do golpe (`move.armor`), ou — no Max Power v2 —
+   * a do SMASH TOCADO. O carregado não tem: segurar K pina o golpe no startup
+   * (stateFrame 6 ≤ 13), e com armadura isso seriam até 56 frames de golpe
+   * blindado. Achado lendo o código ANTES de existir; ver PORTAR 10.10.
+   */
+  _armaduraAtual() {
+    const m = this.move;
+    if (!m) return 0;
+    if (m.armor > 0) return m.armor;
+    if (this.inMaxPowerV2 && m.type === 'smash' && this.smashChargeFrames === 0) {
+      return TUNING.maxPower.v2.smashArmor;
+    }
+    return 0;
   }
 
   _enterBlowaway(move) {
@@ -2556,7 +2775,9 @@ export class Fighter {
         this.velocity.y = -this.velocity.y * TUNING.blowaway.groundBounceRestitution;
         this.velocity.x *= 0.55;
         this.velocity.z *= 0.55;
+        const hpAntes = this.health;
         this.health = Math.max(0, this.health - TUNING.blowaway.groundBounceDamage);
+        this._registrarPerdaDeVida(hpAntes);
         this.events.push({ type: 'groundSlam', speed: Math.abs(this.velocity.y) });
         if (Math.abs(this.velocity.y) < 4) {
           this._enter(S.KNOCKDOWN);
@@ -2600,9 +2821,21 @@ export class Fighter {
       if (this.inMaxPower) intensity = Math.max(intensity, 1.6) * 1.35;
       else if (this.exhausted) intensity = Math.min(intensity, 0.12);
 
-      // Ki baixo apaga a aura — leitura visual grátis do recurso.
-      intensity *= 0.35 + 0.65 * (this.ki / TUNING.ki.max);
+      /* ESTOURO carregando: a aura explode nos 12 frames de startup. É o
+       * telegrafo — quem está do outro lado precisa VER que vem uma onda pra
+       * decidir entre agarrar, stepar ou sumir. */
+      const estourando = this.state === S.ATTACK && this.move?.isBurst;
+      if (estourando) intensity = 3.2;
+
+      // Ki baixo apaga a aura — leitura visual grátis do recurso. No modo v2
+      // não: o modo não depende de ki, e a aura tem que gritar "cuidado".
+      if (!this.inMaxPowerV2 && !estourando) intensity *= 0.35 + 0.65 * (this.ki / TUNING.ki.max);
       this.aura.set(intensity);
+
+      /* Cor DOURADA no Max Power v2 (e no estouro): a mesma silhueta com outra
+       * cor é a leitura mais rápida que existe — vale mais que qualquer HUD,
+       * porque quem luta olha o corpo do outro. */
+      this.aura.setColor?.(this.inMaxPowerV2 || estourando ? 0xffd45c : this.auraColor);
     }
 
     // --- clarão de impacto ---
@@ -2632,6 +2865,16 @@ export class Fighter {
   /* ================================================================== */
   _enter(state, resetFrame = true) {
     if (this.state === state && !resetFrame) return;
+
+    /* ESTOURO NEGADO: saiu do golpe antes do primeiro frame ativo (grab,
+     * clash, guarda quebrada...). O modo não acende — e a carga, por padrão,
+     * já foi. Negar o estouro com uma leitura tem que VALER a carga. */
+    if (this.state === S.ATTACK && state !== S.ATTACK && this.move?.isBurst
+        && this.stateFrame < this.move.startup) {
+      if (!TUNING.maxPower.v2.cargaPerdidaSeInterrompido) this.maxPowerCargas++;
+      this.events.push({ type: 'maxBurstNegado' });
+    }
+
     if (this.state !== state) {
       this.state = state;
       this.stateFrame = 0;
@@ -2711,6 +2954,10 @@ export class Fighter {
     this.maxPowerFrames = 0;
     this._maxPowerCharge = 0;
     this.exhaustFrames = 0;
+    this.maxPowerCargas = Fighter.cargasIniciais();
+    this._mpParede = 0;
+    this._mpVidaUsada = false;
+    this._ultimoAtacante = null;
     this._armorAbsorbed = 0;
     this.tradeLostFrames = 0;
     this.hitstopFrames = 0;

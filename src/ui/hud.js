@@ -109,12 +109,46 @@ export class HUD {
      *  As divisórias são tão importantes quanto a cor: elas dão RÉGUA. Sem
      *  elas a cor muda mas não há contra o que comparar o quanto caiu.        */
     this._construirCamadas();
+    this._construirMaxPower();
 
     this._ghost = { p1: 1, p2: 1 };
     this._camada = { p1: 0, p2: 0 };
     this._comboCount = 0;
     this._comboTimer = 0;
     this._bannerTimer = 0;
+  }
+
+  /**
+   * SELO DO MAX POWER v2, debaixo das duas barras de vida.
+   *
+   * A carga é informação dos DOIS lados de propósito: o comeback só tem
+   * counterplay se for previsível. "Ele tem MAX" muda como você pressiona —
+   * é hora de misturar grab, porque a guarda dele virou uma ameaça.
+   * Dentro do modo o selo vira um RELÓGIO que esvazia (e para quando o
+   * alvo está apanhando — o jogador vê o "Heat" pausar).
+   */
+  _construirMaxPower() {
+    this._mp = {};
+    for (const bloco of this.el.querySelectorAll('.bar-block')) {
+      const d = document.createElement('div');
+      d.className = 'mp-badge';
+      d.innerHTML = '<b>MAX</b><span class="mp-clock"><i></i></span>';
+      bloco.appendChild(d);
+      this._mp[bloco.classList.contains('left') ? 'p1' : 'p2'] = {
+        el: d, clock: d.querySelector('.mp-clock i'),
+      };
+    }
+  }
+
+  _atualizarMaxPower(quem, f) {
+    const M = this._mp?.[quem];
+    if (!M) return;
+    const v2 = TUNING.maxPower.versao === 'v2';
+    if (!f || !v2) { M.el.className = 'mp-badge'; return; }
+    const ativo = f.inMaxPower;
+    const pronto = !ativo && f.maxPowerCargas > 0;
+    M.el.className = 'mp-badge' + (ativo ? ' ativo' : pronto ? ' pronto' : '');
+    M.clock.style.width = ativo ? (f.maxPowerFrac * 100).toFixed(1) + '%' : '0%';
   }
 
   /** Os pontinhos que dizem QUANTAS camadas ainda existem. */
@@ -356,7 +390,20 @@ export class HUD {
 
     /* MAX POWER e EXAUSTÃO: mudam o que o jogador PODE fazer, então precisam de
      * linha própria — ki na barra não diz que nada sai. */
-    if (player.inMaxPower) {
+    if (player.inMaxPower && extra.mpVersao === 'v2') {
+      const V = TUNING.maxPower.v2;
+      const alvo = player.target;
+      const pausado = alvo && alvo._ultimoAtacante === player && V.pausaComAlvoEm.includes(alvo.state);
+      L.push(`MAX POWER v2  relógio ${player.maxPowerFrames}/${V.relogioFrames}f`
+           + `  parede ${player._mpParede}/${V.tetoParedeFrames}f${pausado ? '   ◄ PAUSADO (alvo apanhando)' : ''}`);
+      L.push(`        rota ${player.maxChain}  smash blindado ${V.smashArmor}  `
+           + `Max Smash agora: ${(V.maxSmashDanoBase + V.maxSmashDanoBonus * player.maxPowerFrac).toFixed(0)} de dano`);
+    } else if (extra.mpVersao === 'v2' && player.maxPowerCargas > 0) {
+      L.push(`MAX POWER  carga ${player.maxPowerCargas}  ◄ R+K estoura (de pé ou na guarda)`);
+    }
+    if (player.inMaxPower && extra.mpVersao === 'v2') {
+      // já descrito acima
+    } else if (player.inMaxPower) {
       L.push(`MAX POWER ${player.maxPowerFrames}f   dano ×${extra.mpDamageMul}`
            + `  ki ×${extra.mpKiMul}   (acaba em exaustão)`);
     } else if (player.exhausted) {
@@ -522,6 +569,9 @@ export class HUD {
 
     this.p1hpGhost.style.width = (this._ghost.p1 * 100) + '%';
     this.p2hpGhost.style.width = (this._ghost.p2 * 100) + '%';
+
+    this._atualizarMaxPower('p1', player);
+    this._atualizarMaxPower('p2', opponent);
 
     this.p1ki.style.width = (player.ki / kiMax * 100) + '%';
     this.p2ki.style.width = ((opponent ? opponent.ki : 0) / kiMax * 100) + '%';

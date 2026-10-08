@@ -358,6 +358,44 @@ export class Audio {
     }
   }
 
+  /* ---- Max Power v2 ----
+   * Três sons, e cada um tem uma função de LEITURA, não de enfeite:
+   *   aviso   — os 12f do estouro: uma subida rápida que diz "vem onda".
+   *             É o que dá tempo ao outro lado de agarrar/stepar.
+   *   maxSmash — o gasto final: metal grave em acorde menor. NÃO usa o sino
+   *             do Perfect (aquele timbre é exclusivo do recibo de timing).
+   *   fim     — o modo escorreu: a mesma descida da exaustão, mais longa.
+   * Todos passam pela regra de distância (`_ganho`): o estouro de um estranho
+   * do outro lado da arena não pode soar como o seu. */
+  maxEstouroAviso({ pos, meu }) {
+    const ganho = this._ganho({ pos, meu });
+    if (!this._pode('mpAviso', ganho)) return;
+    const b = this._bus(ganho);
+    this._voz(0.3);
+    this._tom({ tipo: 'sawtooth', f0: 140, f1: 560, dur: 0.2, vol: 0.18, ataque: 0.15, saida: b });
+    this._ruido({ f0: 400, f1: 3200, q: 2, dur: 0.2, vol: 0.4, ataque: 0.15, saida: b });
+  }
+
+  maxSmash({ pos, meu }) {
+    const ganho = this._ganho({ pos, meu });
+    if (!this._pode('mpSmash', ganho)) return;
+    const b = this._bus(ganho);
+    this._voz(0.9);
+    for (const [f, v] of [[110, 0.2], [131, 0.16], [165, 0.14]]) {
+      this._tom({ tipo: 'sawtooth', f0: f * 2, f1: f, dur: 0.7, vol: v, ataque: 0.05, saida: b });
+    }
+    this._tom({ f0: 70, f1: 30, dur: 0.6, vol: 0.9, saida: b });
+  }
+
+  maxPowerFim({ pos, meu }) {
+    const ganho = this._ganho({ pos, meu });
+    if (!this._pode('mpFim', ganho)) return;
+    const b = this._bus(ganho);
+    this._voz(0.9);
+    this._tom({ tipo: 'sawtooth', f0: 495, f1: 110, dur: 0.8, vol: 0.12, saida: b });
+    this._tom({ tipo: 'triangle', f0: 330, f1: 82, dur: 0.8, vol: 0.2, saida: b });
+  }
+
   exaustao({ pos, meu }) {
     const ganho = this._ganho({ pos, meu });
     if (!this._pode('exaustao', ganho)) return;
@@ -396,6 +434,10 @@ export class Audio {
         break;
       case 'camadaMinha':  // perdeu uma camada: grave, de alerta
         this._tom({ tipo: 'triangle', f0: 330, f1: 165, dur: 0.3, vol: 0.3, saida: b });
+        break;
+      case 'maxPronto':    // ganhou carga de Max Power: dois toques que sobem
+        this._tom({ tipo: 'triangle', f0: 660, dur: 0.12, vol: 0.25, saida: b });
+        this._tom({ tipo: 'triangle', f0: 990, dur: 0.2, vol: 0.25, atraso: 0.1, saida: b });
         break;
       case 'fase':         // a arena apertou: gongo
         this._tom({ tipo: 'sine', f0: 98, dur: 2.2, vol: 0.45, ataque: 0.01, saida: b });

@@ -36,15 +36,20 @@ export function resolveMelee(fighters, ctx) {
     if (attacker.attackPhase !== 'active') continue;
 
     const move = attacker.move;
-    const socket = attacker.char.socket(move.socket);
-    socket.getWorldPosition(_hitPos);
+    /* ONDA (estouro do Max Power v2): a hitbox é o CORPO, não o punho. Uma
+     * esfera centrada no atacante pega todo mundo no raio — é o "sai de cima
+     * de mim" da arena de 30. Um caminho só pros dois casos, pra que vanish,
+     * sway e a matriz de defesa valham igual pra onda e pro soco. */
+    const onda = move.waveRadius > 0;
+    if (onda) attacker.center(_hitPos);
+    else attacker.char.socket(move.socket).getWorldPosition(_hitPos);
 
     for (const victim of fighters) {
       if (victim === attacker || !victim.alive) continue;
       if (attacker.hitThisMove.has(victim)) continue;
 
       victim.center(_victimC);
-      const reach = move.hitboxRadius + TUNING.fighter.radius * 1.35;
+      const reach = (onda ? move.waveRadius : move.hitboxRadius) + TUNING.fighter.radius * 1.35;
       if (_hitPos.distanceToSquared(_victimC) > reach * reach) continue;
 
       attacker.hitThisMove.add(victim);
@@ -147,6 +152,13 @@ export function resolveMelee(fighters, ctx) {
        * re-aproximava com um J. Agora é o começo da SEGUNDA disputa: o
        * atacante escolhe perseguir e o defensor escolhe como voltar. */
       if (victim.state === 'blowaway') attacker.openPursuit(victim);
+
+      /* ENGAJADOR do Max Power v2: Perfect Smash que CONECTOU (não aparado)
+       * acende o modo de quem tem carga. Depois do dano, de propósito — o golpe
+       * que acendeu não ganha nada do modo. */
+      if (move.isPerfect && result !== 'guard' && attacker.engajarPorPerfect?.()) {
+        ctx.onMaxPowerEngage?.(attacker, victim);
+      }
 
       ctx.onHit?.({ attacker, victim, move, result, point: _hitPos.clone() });
     }

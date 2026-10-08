@@ -334,6 +334,11 @@ function congelarTroca(a, b, frames) {
 }
 
 const ctx = {
+  /* A IA precisa saber QUANTOS inimigos estão em cima dela pra decidir o
+   * estouro ("sai de cima de mim"). Getter porque `fighters` é reatribuído no
+   * boot e um valor copiado aqui seria o array vazio do começo. */
+  get fighters() { return fighters; },
+  onMaxPowerEngage,
   arena, vfx, juice, projectiles, beam, moveBasis,
   onHit, onVanish, onClash, onDashImpact, onZCounter, onSway,
   onGrab, onTradeClash, onTradeWin,
@@ -468,6 +473,25 @@ function buildPlayerCommand() {
   // ganhava a corrida da ordem de leitura em `_sFree`.
   if (c.grab) c.rush = false;
 
+  /* ================================================================
+   *  MAX POWER v2 = R + K
+   * ================================================================
+   *  Segurar R e tocar K (ou os dois juntos). Não é tecla nova: R já é "poder"
+   *  e K já é "golpe pesado", e a combinação lê como "golpe de poder" — o §29
+   *  de novo. Ordem tolerante: R primeiro (o lutador entra em CHARGE por um
+   *  frame, e é de lá que o estouro sai) ou os dois no mesmo frame.
+   *  Com F segurado junto, é o ESTOURO DE GUARDA.
+   *
+   *  Quando é R+K, o smash NÃO sai: um aperto, uma intenção. */
+  /* BUFFER, não edge. Medido: o estouro de guarda não saía — o K era tocado
+   * durante o hitstop do bloqueio, o corpo estava congelado e o edge de um
+   * frame morria ali (o Fighter não roda no hitstop). É a 8.20 de novo: a
+   * intenção precisa sobreviver a estado ocupado, e é gasta no frame em que
+   * o golpe SAI (consumePlayerInputs). */
+  c.maxPower = (input.down('chargeKi') && input.buffered('smash', 8))
+            || (input.down('smash') && input.buffered('chargeKi', 8));
+  if (c.maxPower) c.smash = false;
+
   // Direção do smash: vertical manda. Espaço+K sobe, C+K crava.
   c.smashDir = c.vertical > 0.5 ? 'up' : c.vertical < -0.5 ? 'down' : 'forward';
 
@@ -500,7 +524,8 @@ function consumePlayerInputs() {
   for (const e of player.events) {
     if (e.type === 'rushApproach') input.consume('rush');
     else if (e.type === 'attackStart') {
-      input.consume(e.key.startsWith('smash') ? 'smash' : 'rush');
+      // O estouro e o Max Smash saem do K: quem tem que ser quitado é o smash.
+      input.consume(e.key.startsWith('smash') || e.key === 'max_burst' ? 'smash' : 'rush');
     }
   }
 }
@@ -679,6 +704,14 @@ function onDashImpact(dasher, victim) {
   if (dasher === player) hud.addCombo();
 }
 
+/* ENGAJADOR do Max Power v2: um Perfect Smash com carga acendeu o modo.
+ * O evento `maxPowerStart` já faz o anúncio; aqui só o reforço no ponto do
+ * acerto, pra ligar visualmente "foi ESTE golpe que acendeu". */
+function onMaxPowerEngage(attacker, victim) {
+  const p = victim.position.clone(); p.y += 0.9;
+  vfx.ring(p, { billboard: true, color: 0xffd45c, from: 0.8, to: 14, life: 0.6 });
+}
+
 /** Eventos que o próprio Fighter emitiu neste frame. */
 function drainEvents(f) {
   const ouvir = { pos: f.position, meu: f === player };
@@ -850,25 +883,80 @@ function drainEvents(f) {
         if (f === player) hud.showBanner('MAX POWER pronto · continue segurando R', 900);
         break;
 
+      /* ================================================================
+       *  MAX POWER v2 — o ESTOURO é um evento dos DOIS lados
+       * ================================================================
+       *  O pedido era explícito: a ativação precisa ser algo que os dois
+       *  percebem. Três camadas de aviso, em ordem de tempo:
+       *    1. STARTUP (12f): aura dourada explodindo + anel que CONTRAI até o
+       *       corpo + som que sobe. É o telegrafo: dá tempo de agarrar,
+       *       stepar ou sumir.
+       *    2. ONDA (f12): anel horizontal do tamanho EXATO do raio, tremor, som
+       *       de explosão, banner pros dois.
+       *    3. MODO: aura dourada enquanto durar, barra própria na HUD.
+       *  Sem câmera lenta (8.36) e sem congelar a tela de ninguém além de
+       *  quem está na troca (8.31). */
+      case 'maxBurstStart': {
+        sfx.maxEstouroAviso(ouvir);
+        const p = f.position.clone(); p.y += 0.9;
+        vfx.ring(p, { color: 0xffd45c, from: TUNING.moves.max_burst.waveRadius, to: 0.6, life: 0.2 });
+        vfx.burst(p, { count: 24, color: 0xffe9a0, speed: 4, life: 0.25 });
+        if (f === player) hud.showBanner('ESTOURO!', 500, 'big');
+        else if (meu(f.target)) hud.showBanner(`${f.name}: ESTOURO — agarre ou saia!`, 700, 'warn');
+        break;
+      }
+
+      case 'maxBurstNegado': {
+        sfx.quebraGuarda(ouvir);
+        vfx.burst(f.position, { count: 20, color: 0x8899aa, speed: 6, life: 0.35 });
+        if (f === player) hud.showBanner('ESTOURO NEGADO · carga perdida', 1000, 'warn');
+        else if (meu(f.target) || meu(f.grabbedBy)) hud.showBanner('ESTOURO NEGADO!', 900, 'big');
+        break;
+      }
+
       case 'maxPowerStart': {
         sfx.maxPower(ouvir);
         const p = f.position.clone(); p.y += 0.9;
+        const v2 = TUNING.maxPower.versao === 'v2';
+        const raio = v2 ? TUNING.moves.max_burst.waveRadius : 14;
         vfx.burst(p, { count: 80, color: 0xfff0b0, speed: 20, life: 0.8 });
         vfx.ring(p, { billboard: true, color: 0xffe08a, from: 0.6, to: 20, life: 0.8 });
-        vfx.ring(p, { color: f.auraColor, from: 1, to: 14, life: 0.7 });
-        congelarTroca(f, null, 10);
+        /* O anel horizontal mostra o ALCANCE da onda — quem estava fora dele
+         * entende por que não foi empurrado. */
+        vfx.ring(p, { color: 0xffd45c, from: 1, to: raio, life: 0.55 });
+        vfx.ring(p, { color: f.auraColor, from: 1, to: raio * 1.15, life: 0.7 });
+        congelarTroca(f, null, v2 ? 6 : 10);
         juice.impact({ shake: 0.9, zoom: 1.1 });
-        juice.slowMo(20, 0.45);
-        hud.showBanner(f === player ? 'MAX POWER!' : `${f.name}: MAX POWER`, 1400,
+        juice.slowMo(20, 0.45);       // no-op: câmera lenta desligada (8.36)
+        const comoPerfect = e.via === 'perfect' ? ' (PERFECT)' : '';
+        hud.showBanner(f === player ? `MAX POWER!${comoPerfect}` : `${f.name}: MAX POWER${comoPerfect}`, 1400,
           f === player ? 'big' : 'warn');
         break;
       }
 
-      /* Acabou → cai na exaustão. Este é o momento que o DEFENSOR estava
-       * esperando, e ele precisa ser visível dos dois lados: é a janela em que o
-       * outro não tem vanish, não tem dash e não tem perseguição. */
+      /* Ganhou uma carga (perdeu uma camada). Pro jogador é um sinal sonoro
+       * próprio; pro rival, o aviso fica na HUD (o selo MAX acende). */
+      case 'maxPowerCarga':
+        if (f === player) { sfx.sinal('maxPronto'); hud.showBanner('MAX POWER PRONTO  ·  R+K', 900); }
+        break;
+
+      case 'maxSmashStart': {
+        sfx.maxSmash(ouvir);
+        const p = f.position.clone(); p.y += 0.9;
+        vfx.burst(p, { count: 30, color: 0xffd45c, speed: 8, life: 0.3 });
+        if (f === player) hud.showBanner('MAX SMASH!', 800, 'big');
+        else if (meu(f.target)) hud.showBanner('MAX SMASH — reaja!', 700, 'warn');
+        break;
+      }
+
+      /* Acabou → no v1 cai na exaustão; no v2 depende de COMO acabou. */
       case 'maxPowerEnd':
         vfx.burst(f.position, { count: 20, color: 0x8899aa, speed: 5, life: 0.5 });
+        if (e.via === 'relogio') {
+          sfx.maxPowerFim(ouvir);
+          if (f === player) hud.showBanner('MAX POWER ACABOU · sem ki por um instante', 1000, 'warn');
+          else if (meu(f.target)) hud.showBanner(`${f.name} ESGOTOU · PUNA`, 1000, 'big');
+        }
         break;
 
       case 'exhaustStart':
@@ -1582,6 +1670,7 @@ function render(alpha, dtReal) {
         // Config da carga do golpe ATUAL: a janela perfeita é por golpe.
         charge: player.move ? moveCharge(player.move) : null,
         vbMax: TUNING.defense.vanishBattle.maxExchanges,
+        mpVersao: TUNING.maxPower.versao,
         mpDamageMul: TUNING.maxPower.damageMul,
         mpKiMul: TUNING.maxPower.kiCostMul,
         mpHold: TUNING.maxPower.enterHoldFrames,
