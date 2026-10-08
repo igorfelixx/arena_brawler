@@ -41,6 +41,7 @@ const BINDINGS = {
   trainReset: { keys: ['KeyG'] },                   // recoloca os bonecos
   botProfile: { keys: ['KeyB'] },                   // cicla o estilo da IA
   debugHud:   { keys: ['KeyH'] },                   // telemetria de frame data
+  mute:       { keys: ['KeyM'] },                   // liga/desliga o som
   debugPanel: { keys: ['KeyP'] },
   reset:      { keys: ['Backspace'] },
 };
@@ -238,7 +239,8 @@ export const KEYMAP_HELP = [
   ['F + J',           'Grab — passa pela guarda · F na hora = escape'],
   ['V',               'Vanish — some atrás de quem te bate (errar custa ki)'],
   ['Shift (lançou)',  'Perseguir · +V = vanish · +K = alta velocidade'],
-  ['R (ki cheio)',    'Carregar até o fim = MAX POWER'],
+  ['R',               'Carregar ki'],
+  ['R + K',           'MAX POWER: estouro (com carga MAX) · no modo = MAX SMASH'],
   ['X',               'Ultimate'],
   ['Q',               'Trocar de alvo'],
   ['E',               'Soltar / retomar o lock-on'],

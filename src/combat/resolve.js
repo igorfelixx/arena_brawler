@@ -36,15 +36,20 @@ export function resolveMelee(fighters, ctx) {
     if (attacker.attackPhase !== 'active') continue;
 
     const move = attacker.move;
-    const socket = attacker.char.socket(move.socket);
-    socket.getWorldPosition(_hitPos);
+    /* ONDA (estouro do Max Power v2): a hitbox é o CORPO, não o punho. Uma
+     * esfera centrada no atacante pega todo mundo no raio — é o "sai de cima
+     * de mim" da arena de 30. Um caminho só pros dois casos, pra que vanish,
+     * sway e a matriz de defesa valham igual pra onda e pro soco. */
+    const onda = move.waveRadius > 0;
+    if (onda) attacker.center(_hitPos);
+    else attacker.char.socket(move.socket).getWorldPosition(_hitPos);
 
     for (const victim of fighters) {
       if (victim === attacker || !victim.alive) continue;
       if (attacker.hitThisMove.has(victim)) continue;
 
       victim.center(_victimC);
-      const reach = move.hitboxRadius + TUNING.fighter.radius * 1.35;
+      const reach = (onda ? move.waveRadius : move.hitboxRadius) + TUNING.fighter.radius * 1.35;
       if (_hitPos.distanceToSquared(_victimC) > reach * reach) continue;
 
       attacker.hitThisMove.add(victim);
@@ -65,7 +70,8 @@ export function resolveMelee(fighters, ctx) {
         const swayVale = defenseWorks(move, 'sway') && !move.beatsSway;
         if (swayVale && victim.trySonicSway(attacker, ctx)) {
           const SW = TUNING.defense.sonicSway;
-          ctx.juice?.impact({ hitstop: SW.hitstop, shake: SW.shake });
+          ctx.congelarTroca?.(victim, attacker, SW.hitstop);
+          ctx.juice?.impact({ shake: SW.shake });
           ctx.juice?.slowMo(SW.slowMoFrames, SW.slowMoScale);
           ctx.onSway?.(victim, attacker, _hitPos.clone());
         } else {
@@ -82,7 +88,8 @@ export function resolveMelee(fighters, ctx) {
        * bloqueio qualquer e a perícia não valeria nada. */
       if (victim.tryZCounter(attacker, ctx, move)) {
         const Z = TUNING.defense.zCounter;
-        ctx.juice?.impact({ hitstop: Z.hitstop, shake: Z.shake, zoom: 1 });
+        ctx.congelarTroca?.(victim, attacker, Z.hitstop);
+        ctx.juice?.impact({ shake: Z.shake, zoom: 1 });
         ctx.juice?.slowMo(Z.slowMoFrames, Z.slowMoScale);
         ctx.onZCounter?.(victim, attacker, _hitPos.clone());
         break;                 // o golpe do atacante acabou aqui
@@ -92,7 +99,8 @@ export function resolveMelee(fighters, ctx) {
       if (defenseWorks(move, 'vanish') && victim.vanishPressFrame <= move.vanishWindow) {
         if (victim.doVanish(attacker, ctx)) {
           const V = TUNING.defense.vanish;
-          ctx.juice?.impact({ hitstop: V.hitstop, shake: V.shake });
+          ctx.congelarTroca?.(victim, attacker, V.hitstop);
+          ctx.juice?.impact({ shake: V.shake });
           ctx.juice?.slowMo(V.slowMoFrames, V.slowMoScale);
           ctx.onVanish?.(victim, attacker, _hitPos);
           continue;
@@ -109,7 +117,8 @@ export function resolveMelee(fighters, ctx) {
         const G = TUNING.defense.grab;
         if (G.cannotGrabStates.includes(victim.state)) continue;
         attacker.beginGrab(victim, ctx);
-        ctx.juice?.impact({ hitstop: G.hitstop, shake: G.shake });
+        ctx.congelarTroca?.(attacker, victim, G.hitstop);
+        ctx.juice?.impact({ shake: G.shake });
         ctx.onGrab?.(attacker, victim, _hitPos.clone());
         break;
       }
@@ -143,6 +152,13 @@ export function resolveMelee(fighters, ctx) {
        * re-aproximava com um J. Agora é o começo da SEGUNDA disputa: o
        * atacante escolhe perseguir e o defensor escolhe como voltar. */
       if (victim.state === 'blowaway') attacker.openPursuit(victim);
+
+      /* ENGAJADOR do Max Power v2: Perfect Smash que CONECTOU (não aparado)
+       * acende o modo de quem tem carga. Depois do dano, de propósito — o golpe
+       * que acendeu não ganha nada do modo. */
+      if (move.isPerfect && result !== 'guard' && attacker.engajarPorPerfect?.()) {
+        ctx.onMaxPowerEngage?.(attacker, victim);
+      }
 
       ctx.onHit?.({ attacker, victim, move, result, point: _hitPos.clone() });
     }
@@ -180,6 +196,15 @@ export function resolveTrade(fighters, ctx) {
     if (!a.alive || a.attackPhase !== 'active' || !a.move) continue;
 
     for (let j = i + 1; j < fighters.length; j++) {
+      /* `a` é RECHECADO aqui dentro, e não só no laço de fora.
+       *
+       * Se `a` perdeu uma troca contra um `b` anterior, ele foi pra HITSTUN e
+       * `_enter` zerou `a.move`. O laço continuava pro próximo `j` e lia
+       * `a.move.priority` num null. Crash — e um que só existe com três ou
+       * mais lutadores no alcance de troca, então nenhum teste 1×1 o pegaria.
+       * Apareceu na primeira varredura de 30 lutadores. */
+      if (a.attackPhase !== 'active' || !a.move) break;
+
       const b = fighters[j];
       if (!b.alive || b.attackPhase !== 'active' || !b.move) continue;
 
@@ -210,7 +235,8 @@ export function resolveTrade(fighters, ctx) {
         a.velocity.copy(_dir).multiplyScalar(-T.clashKnockback);
         b.velocity.copy(_dir).multiplyScalar(T.clashKnockback);
 
-        ctx.juice?.impact({ hitstop: T.hitstop, shake: T.shake, zoom: 0.8 });
+        ctx.congelarTroca?.(a, b, T.hitstop);
+        ctx.juice?.impact({ shake: T.shake, zoom: 0.8 });
         ctx.juice?.slowMo(T.slowMoFrames, T.slowMoScale);
         ctx.onTradeClash?.(a, b, _mid.clone());
       } else {
@@ -223,7 +249,8 @@ export function resolveTrade(fighters, ctx) {
         perdedor.stagger(T.loserStunFrames);
         perdedor.tradeLostFrames = T.loserStunFrames;
 
-        ctx.juice?.impact({ hitstop: Math.round(T.hitstop * 0.6), shake: T.shake * 0.6 });
+        ctx.congelarTroca?.(vencedor, perdedor, Math.round(T.hitstop * 0.6));
+        ctx.juice?.impact({ shake: T.shake * 0.6 });
         ctx.onTradeWin?.(vencedor, perdedor, _mid.clone());
       }
     }
@@ -257,7 +284,8 @@ export function resolveDashImpact(fighters, ctx) {
       if (b.vanishPressFrame <= TUNING.dragonDash.impactVanishWindow) {
         if (b.doVanish(a, ctx)) {
           const V = TUNING.defense.vanish;
-          ctx.juice?.impact({ hitstop: V.hitstop, shake: V.shake });
+          ctx.congelarTroca?.(b, a, V.hitstop);
+          ctx.juice?.impact({ shake: V.shake });
           ctx.juice?.slowMo(V.slowMoFrames, V.slowMoScale);
           ctx.onVanish?.(b, a, b.position.clone());
           a.dashHits.add(b);
@@ -266,6 +294,9 @@ export function resolveDashImpact(fighters, ctx) {
       }
 
       a.dashImpact(b, ctx);
+      /* O `impactHitstop` existia no tuning desde sempre e NINGUEM lia — a
+       * tromba de dash nao congelava nada. Armadilha 8.19 mais uma vez. */
+      ctx.congelarTroca?.(a, b, TUNING.dragonDash.impactHitstop);
       ctx.onDashImpact?.(a, b);
       break;                                      // o dash acabou; sai do laço
     }
@@ -298,7 +329,8 @@ export function resolveDashClash(fighters, ctx) {
       b._enter('idle');
 
       const mid = _hitPos.copy(a.position).lerp(b.position, 0.5);
-      ctx.juice?.impact({ hitstop: D.clashHitstop, shake: D.clashShake, zoom: 1 });
+      ctx.congelarTroca?.(a, b, D.clashHitstop);
+      ctx.juice?.impact({ shake: D.clashShake, zoom: 1 });
       ctx.vfx?.burst(mid, { count: 50, color: 0xffffff, speed: 16, life: 0.5 });
       ctx.vfx?.ring(mid, { billboard: true, color: 0xcfefff, from: 0.5, to: 12, life: 0.5 });
       ctx.onClash?.(mid.clone());

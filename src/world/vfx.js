@@ -335,6 +335,13 @@ class AuraShell {
 
   set(target) { this.target = target; }
 
+  /** Troca a cor da chama (Max Power v2 = dourado). Barato: só um uniform. */
+  setColor(hex) {
+    if (this._cor === hex) return;
+    this._cor = hex;
+    this.mat.uniforms.uColor.value.setHex(hex);
+  }
+
   update(dt, elapsed) {
     // Sobe rápido, desce devagar: aura acende na hora e some com preguiça.
     const k = this.target > this.intensity ? 14 : 4.5;
