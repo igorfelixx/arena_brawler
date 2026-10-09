@@ -83,7 +83,7 @@ netcode. **Naraka: Bladepoint** é a outra referência (60 jogadores, melee).
 
 | Sistema | Verificação |
 |---|---|
-| Rush direcional (J+dir) | 4/4 golpes corretos; gancho +6,7 m/s, chute −8,8 m/s |
+| Cadeia fixa do rush (J) | 5 elos em ordem garantida; J nº N dispara `rushChain[N]` |
 | Troca de alvo por direção | alterna entre rivais conforme a direção apontada |
 | Vários lutadores | 3 na arena, 60 fps, IAs brigando entre si |
 | Bancada de treino | 6 modos; boneco reage, não morre, volta sozinho |
@@ -166,20 +166,25 @@ jogo de luta usa, e converte pra Unreal sem reinterpretação.
 
 ### 3.3 Os golpes
 
-**Rush direcional** (`J` + direção) — a direção ESCOLHE o golpe. Não há ordem
-fixa: o jogador compõe o combo.
+**Cadeia leve** (`J`, ordem fixa estilo BT3) — um botão só, a sequência é a
+coreografia. Substituiu o antigo rush direcional (`J`+direção compõe o combo),
+que o dono reprovou em playtest ("D+J / W+J é ruim", "é só J ou só K"). No BT3
+a string leve é um botão; a direção fica com o pesado.
 
-| Entrada | Golpe | Efeito |
+| Ordem | Golpe | Efeito |
 |---|---|---|
-| `J` | soco de direita | prende no combo |
-| `J` + esquerda | soco de esquerda | prende no combo |
-| `J` + cima | gancho | levanta o alvo, abre perseguição aérea |
-| `J` + baixo | chute descendente | crava o alvo, prepara o slam |
+| `rush_1` | jab de direita | prende no combo |
+| `rush_2` | gancho de esquerda | prende no combo |
+| `rush_3` | chute circular | sobe o dano |
+| `rush_4` | chute alto | sobe o dano |
+| `rush_5` | joelhada | mais dano e stun, fim da string |
 
-Direita/esquerda quase não deslocam (servem pra manter preso); cima/baixo são
-as ferramentas de POSICIONAMENTO, e é com elas que se prepara ring-out ou slam.
-Qualquer elo emenda em qualquer outro, até `combo.maxChain` (6) — aí só resta
-smash, que é lento e vanishável, devolvendo a chance de escapar.
+A ordem mora em `TUNING.combo.rushChain` (dados, não código). `cancelInto` é
+**sequencial**: cada elo só emenda no próximo da lista (e todos emendam nos
+três smashes). `combo.maxChain` (5) vale inclusive vindo da IDLE. Ao esgotar,
+só resta o smash — ou esperar `chainResetFrames`. O gancho-launcher e o
+chute-cravado não sumiram: viraram `smash_up` e `smash_down`, que já existiam.
+A direção agora mora onde ela é decisão de finalização, não de digitador.
 
 **Smash** (`K`, com direção) — o finalizador. Lento, telegrafado, quebra guarda,
 e manda o adversário voando. **Três direções:**
@@ -1609,7 +1614,7 @@ Especificamente não validado:
 - [ ] O ring-out é divertido ou frustrante?
 - [ ] A janela de vanish (7–14 frames) é justa?
 - [ ] O custo de ki do vanish (20) cria a pressão certa?
-- [ ] O combo de 4 elos é longo demais? Curto demais?
+- [ ] A cadeia de 5 elos é longa demais? Curta demais?
 - [ ] A arena encolhendo muda a luta, ou é só um relógio?
 - [ ] Carregar ki é um risco interessante ou uma pausa chata?
 - [ ] A IA é um oponente ou um saco de pancada?

@@ -43,8 +43,12 @@ Tudo abaixo foi verificado rodando no navegador (ver seção 2 do doc de passage
 para os números):
 
 - voo 360°, Dragon Dash (perseguir / fugir / contornar, com tromba que para)
-- **rush direcional**: `J`+direção escolhe o golpe (direita / esquerda / gancho
-  pra cima / chute pra baixo). Qualquer elo emenda em qualquer outro, teto de 6
+- **cadeia fixa do rush** (`J`): ordem garantida estilo BT3 — jab, gancho,
+  chute circular, chute alto, joelhada (5 elos, `combo.rushChain`). O dono
+  reprovou o rush direcional antigo em playtest ("D+J / W+J é ruim"); a
+  direção agora só escolhe o smash (`Espaço+K` / `C+K` / `K`). Gancho-launcher
+  e chute-cravado viraram `smash_up`/`smash_down`. **Não jogado por humano
+  ainda** — a cadeia nova é mecânica, não playtest
 - smash nas 3 direções, blowaway, ring-out
 - vanish, guarda direcional, guard break, step, recuperação aérea
 - ki blasts, feixe de ultimate
@@ -100,7 +104,7 @@ O protótipo tinha uma ESTEIRA de combo. Agora tem uma ROTA com fim e uma
 segunda disputa depois do lançamento:
 
 ```
-NEUTRO → aproximar → ROTA (até 4 elos) → ENDER (smash) → LANÇAMENTO
+NEUTRO → aproximar → ROTA (5 elos, cadeia fixa) → ENDER (smash) → LANÇAMENTO
                           │                                   ↓
                      esgotou? só                    ╔═ PERSEGUIR (Shift) ═╗
                      ender/reposicionar             ║ custa ki · 75f      ║
@@ -218,8 +222,11 @@ navegador: 7 golpes aparados esgotam a guarda; **1 smash abre na hora**.
    o gargalo é `ai.guardHoldFrames`, quanto tempo a IA SUSTENTA a decisão de
    bloquear. Está no painel (`P`). **Mas bot roteirizado não mede profundidade
    — isto precisa de playtest humano antes de virar mudança.**
-3. **As rotas direcionais** (gancho/chute) nunca foram julgadas por humano: não
-   se sabe se levantam/cravam o tanto certo.
+3. **A cadeia fixa nova nunca foi julgada por humano.** O rush direcional
+   (gancho/chute via J+direção) foi removido por reprovção em playtest; os
+   cinco elos novos (jab → gancho → chute circular → chute alto → joelhada)
+   são mecânica medida, não sensação jogada — não se sabe se a coreografia
+   FLUI quando se aperta J cinco vezes seguidas contra quem reage.
 
 3b. **Tudo da passada BT3-like funciona MECANICAMENTE e nada foi jogado por
    humano.** A distinção importa neste projeto: `cancelOnBlock` já fez

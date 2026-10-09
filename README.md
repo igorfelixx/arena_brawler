@@ -55,7 +55,7 @@ mannequin procedural. Isso é proposital — ver "Sobre o placeholder".
 | `Espaço` / `C` | subir / descer |
 | `Shift` | Dragon Dash (segurar) — custa ki |
 | `Shift` + direção | dash **na direção apontada** — fugir, contornar, esquivar |
-| `J` / botão esq. | Rush — repita pro combo de 4 |
+| `J` / botão esq. | Rush — cadeia fixa de 5, J avança o elo |
 | `K` / botão dir. | Smash — finaliza o combo e lança |
 | `Espaço`+`K` / `C`+`K` | smash pra cima / cravado no chão |
 | `L` | ki blast (segurar = carregado) |
@@ -84,19 +84,23 @@ tempo sem apanhar (dá pra ler quanto o combo inteiro tirou antes de recomeçar)
 e se você mandar ele pra fora com um smash, ele volta sozinho. A arena também
 para de encolher, pra não sumir o chão no meio do exercício.
 
-### Golpes direcionais
+### A cadeia do rush (J)
 
-A direção que você segura escolhe o golpe — não há ordem fixa, você compõe:
+`J` sozinho avança uma **cadeia fixa de 5 golpes**, estilo BT3 — a direção
+não escolhe mais nada no meio do caminho:
 
-| Entrada | Golpe |
-|---|---|
-| `J` | soco de direita |
-| `J` + esquerda | soco de esquerda |
-| `J` + cima | gancho — levanta o alvo |
-| `J` + baixo | chute descendente — crava |
+| Ordem | Golpe | Efeito |
+|---|---|---|
+| 1º | jab de direita | prende no combo |
+| 2º | gancho de esquerda | prende no combo |
+| 3º | chute circular | sobe o dano |
+| 4º | chute alto | sobe o dano |
+| 5º | joelhada | o "pesado" da string — mais dano e stun |
 
-Qualquer elo emenda em qualquer outro (se o anterior encostou), até 6 elos.
-Depois disso só resta o smash.
+Cada elo só emenda no **próximo** da lista (não dá pra pular). Ao chegar no
+5º, só resta o smash — ou esperar a rota resetar. A direção continua
+importando no **finalizador**: `Espaço+K` sobe, `C+K` crava, `K` solto manda
+pra longe (ring-out).
 
 ### Lock-on: travado vs. livre
 
@@ -231,7 +235,7 @@ O resto do código three.js é descartável. Isso é esperado, não é dívida.
 
 Funcionando e testado no navegador:
 
-- combo de 4 elos encadeando por cancel, com homing
+- cadeia fixa de 5 elos emendando em ordem (J avança o elo), com homing
 - smash lançando a 46 m/s, blowaway com arrasto, ring-out por sair do raio
 - vanish consumindo ki, reaparecendo atrás, zerando o dano
 - guarda direcional, guard break, step com i-frames, recuperação aérea
