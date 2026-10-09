@@ -209,7 +209,7 @@ export class BotController {
     }
 
     // Startup do golpe mais rápido que a IA tem — é com ele que ela puniria.
-    const meuStartup = TUNING.moves.rush_r.startup;
+    const meuStartup = TUNING.moves.rush_1.startup;
     const brechaVale = brechaFrames > meuStartup + A.punishMarginFrames;
     const janelaDePunicao = brechaVale && dist < A.punishRange;
 

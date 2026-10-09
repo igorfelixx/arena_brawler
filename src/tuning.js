@@ -50,11 +50,30 @@ export const TUNING = {
   /*  VOO E MOVIMENTO  —  o jogo é 100% aéreo                            */
   /* ================================================================== */
   flight: {
-    baseSpeed: 13.0,            // m/s — voo normal
+    // 13 → 20 (Etapa 1). Medido na bancada: cruzeiro de 13 m/s contra dash de
+    // 62 m/s = razão 4,8:1 — o voo normal parecia parado perto do dash, e é a
+    // sensação de "meia boca" no deslocamento. 20 mantém a hierarquia
+    // (20 cruzeiro < 30 boost < 62 dash) e NÃO é lido pelo dash (que usa
+    // dashSpeed direto), então a rampa recém-feita não muda.
+    baseSpeed: 20.0,            // m/s — voo normal
     boostSpeed: 30.0,           // m/s — segurando boost
     dashSpeed: 62.0,            // m/s — Dragon Dash (投 em direção ao alvo)
     accel: 55,                  // m/s²
-    decel: 42,
+    /* FRENAGEM MEDIDA e preservada. A fórmula é k = 1 − exp(−decel/baseSpeed
+     * × 6dt): a velocidade-ALVO está no denominador, então mudar baseSpeed
+     * muda o freio SEM ninguém pedir. Medições (bancada, dash solto a 62):
+     *
+     *   base 13 / decel 42 → 62 → 44,9 no +1f, → 8,9 no +6f, → 0 em ~16f
+     *   base 20 / decel 42 → 62 → 50,3 no +1f, → 0 em ~36f   (A/B medido)
+     *   base 20 / decel 65 → 62 → 44,9 no +1f, → 0 em ~16f   (restaurado)
+     *
+     * Suspeitei de "corte seco" na frenagem e era artefato do meu cenário:
+     * media o rescaldo de dash que já tinha trombado (dashImpact faz
+     * velocity *= 0,12 e sai do estado). Veredicto: manter a curva exponencial
+     * de ~16f. Por isso decel = 65 = 42 × 20/13 — escala junto com baseSpeed
+     * pra conservar k. Divida os dois por N se quiser o freio mais/menos firme.
+     */
+    decel: 65,
     verticalSpeed: 11.0,        // m/s — subir/descer
     turnSpeed: 9.0,             // rad/s — giro do corpo (baixo = mais peso)
     strafeMul: 0.9,             // orbitar o alvo é um pouco mais lento
@@ -73,7 +92,17 @@ export const TUNING = {
 
   dragonDash: {
     kiCost: 14,
+    /* Rampa de arrancada. Existia como `startupFrames: 6` MORTO — só a
+     * declaração, nada lia; a velocidade era degrau 0 → 62 m/s no frame do
+     * input (bancada: framesAte90pct = 0, pico no frame 0 = "teleporta").
+     * Agora a velocidade sobe de launchSpeedMul ao teto nestes frames, com
+     * aceleração crescente (t²): já sai andando e TERMINA rápido, que é a
+     * leitura visual de "enrola e estoura". 6f = 100 ms. */
     startupFrames: 6,
+    /* Fração da velocidade máxima no frame 0. 0 = fica parado 1-2 frames
+     * (input lag disfarçado de anticipation); 1,0 = o teleporta medido.
+     * 0,35 = 21,7 m/s na entrada, 62 no frame 6. */
+    launchSpeedMul: 0.35,
     maxFrames: 90,              // dura enquanto segurar, até este teto
     // Curva DIRIGINDO NA MÃO (sem lock, ou segurando direção). Baixo de
     // propósito: é o compromisso de não poder mudar de ideia no meio do dash.
@@ -708,7 +737,7 @@ export const TUNING = {
      *   bloqueou  → NÃO emenda, come o recovery    (o turno vira)
      *   errou     → NÃO emenda, come o recovery    (punição)
      *
-     * Com o rush_r (recovery 9, blockstun 4) isso dá ~+9 de vantagem pro
+     * Com o rush_1 (recovery 8, blockstun 4) isso dá ~+8 de vantagem pro
      * defensor: tempo de sobra pra revidar com um rush de 4 de startup. É o
      * que obriga o atacante a misturar SMASH (que quebra guarda) em vez de
      * martelar — e é o eixo ATAQUE ↔ BLOCK ↔ COUNTER que faltava.
@@ -739,8 +768,20 @@ export const TUNING = {
      *  sair — de verdade, inclusive vindo da IDLE — até a interação resetar.
      *  Sobram os ENDERS (smash) e o reposicionamento. É a diferença entre
      *  "quem segura o combo?" e "quem ganha a próxima troca?".
+     *
+     *  Subiu de 4 pra 5 com a cadeia fixa estilo BT3: são cinco golpes
+     *  DISTINTOS na lista (não mais quatro direções repetíveis), então o
+     *  mesmo teto agora cobre uma string inteira de coreografia.
      */
-    maxChain: 4,
+    maxChain: 5,
+
+    /* A ordem da cadeia leve. `fighter._rushKey` lê isto com `comboCount`
+     * como índice: J nº N dispara `rushChain[N]`. Tirar um elo daqui remove
+     * o golpe da string sem apagar a definição em `moves` — e acrescentar
+     * um número (rush_6) funciona sozinho enquanto existir o move e o clip.
+     * É dados, não código: personagens com strings diferentes no futuro
+     * trocam este array, não a máquina de estados. */
+    rushChain: ['rush_1', 'rush_2', 'rush_3', 'rush_4', 'rush_5'],
 
     /* Quantos frames sem atacar para a rota zerar e o neutro voltar.
      *
@@ -1192,35 +1233,42 @@ export const TUNING = {
   },
 
   /* ================================================================== */
-  /*  RUSH COMBO  —  a sequência rápida de socos                         */
+  /*  RUSH COMBO  —  a cadeia fixa de socos e chutes                     */
   /* ================================================================== */
-  /*  Cada elo é curto (~14 frames total) e emenda no seguinte. O ÚLTIMO
-   *  elo é o SMASH: lento, forte, manda voando. É o ritmo do Tenkaichi.
+  /*  Cada elo é curto e emenda no SEGUINTE da ordem fixa (estilo BT3):
+   *  apertar J avança a string — soco, soco, chute, chute alto, joelhada.
+   *  Não há direção no meio do caminho: a coreografia é a sequência.
+   *  O ÚLTIMO elo é o SMASH (K, com direção): lento, forte, manda voando.
+   *
+   *  POR QUE TROCOU do rush direcional (J+W = gancho, J+S = chute...):
+   *  o dono jogou e reprovou — "D+J / W+J é ruim", "é só J ou só K".
+   *  No BT3 a string leve é um botão só, e a direção fica COM O PESADO
+   *  (Triângulo + cima/baixo escolhe o finisher). O gancho-launcher e o
+   *  chute-cravado não sumiram: viraram smash_up e smash_down, que já
+   *  existiam. A direção agora mora onde ela é decisão de finalização,
+   *  não de digitador.
    *
    *  REGRA DE BALANCEAMENTO: `blockstun` é MENOR que o recovery do golpe.
    *  Isso significa que quem BLOQUEIA sai do stun antes de quem atacou, e
    *  ganha o turno. É o que pune martelar botão na guarda alheia — sem isso,
    *  o atacante mantém a vez pra sempre e apertar rush vira a jogada ótima.  */
   moves: {
-    /* ---- RUSH DIRECIONAL ----
+    /* ---- CADEIA LEVE (J) — ordem fixa, cada elo com peso próprio ----
      *
-     * A direção que você segura escolhe o golpe. Não há ordem fixa: você
-     * COMPÕE o combo. Qualquer elo emenda em qualquer outro (se encostar),
-     * até `combo.maxChain`.
+     *   J  rush_1  jab direto            rápido, prende
+     *   J  rush_2  gancho de esquerda    prende
+     *   J  rush_3  chute circular        sobe o dano
+     *   J  rush_4  chute alto            sobe o dano
+     *   J  rush_5  joelhada              o "pesado" da string — mais dano
+     *                                     e stun, ainda prende
      *
-     *   J          soco de direita
-     *   J + A      soco de esquerda
-     *   J + W      gancho — levanta o alvo, abre perseguição aérea
-     *   J + S      chute de cima pra baixo — crava o alvo
-     *
-     * Direita e esquerda quase não deslocam o alvo (servem pra prender no
-     * combo). Cima e baixo deslocam de verdade — são as ferramentas de
-     * posicionamento, e é com elas que se prepara o ring-out ou o slam.
-     * O finalizador pesado continua sendo o smash (K). */
+     * `combo.rushChain` é a ordem; `combo.maxChain` é o teto. CancelInto é
+     * SEQUENCIAL (só no próximo da lista) — é isso que faz a coreografia
+     * ser coreografia em vez de martelada: você não pula o chute. */
 
-    rush_r: {
+    rush_1: {
       clip: 'attack_light_1',
-      startup: 4, active: 3, recovery: 9,
+      startup: 4, active: 3, recovery: 8,
       damage: 5,
       poiseDamage: 6,
       socket: 'hand_r',
@@ -1232,9 +1280,9 @@ export const TUNING = {
       hitstun: 14,
       blockstun: 4,
       chipDamage: 0.3,
-      cancelInto: ['rush_r', 'rush_l', 'rush_u', 'rush_d',
+      cancelInto: ['rush_2',
                    'smash_forward', 'smash_up', 'smash_down'],
-      cancelWindow: [5, 16],
+      cancelWindow: [5, 15],
       homingRange: 2.8,
       homingStrength: 0.85,
       advanceSpeed: 7.0,
@@ -1242,9 +1290,9 @@ export const TUNING = {
       vanishWindow: 9,
     },
 
-    rush_l: {
+    rush_2: {
       clip: 'attack_light_2',
-      startup: 4, active: 3, recovery: 9,
+      startup: 4, active: 3, recovery: 8,
       damage: 5,
       poiseDamage: 6,
       socket: 'hand_l',
@@ -1256,9 +1304,9 @@ export const TUNING = {
       hitstun: 14,
       blockstun: 4,
       chipDamage: 0.3,
-      cancelInto: ['rush_r', 'rush_l', 'rush_u', 'rush_d',
+      cancelInto: ['rush_3',
                    'smash_forward', 'smash_up', 'smash_down'],
-      cancelWindow: [5, 16],
+      cancelWindow: [5, 15],
       homingRange: 2.8,
       homingStrength: 0.85,
       advanceSpeed: 7.0,
@@ -1266,47 +1314,70 @@ export const TUNING = {
       vanishWindow: 9,
     },
 
-    rush_u: {                     // gancho: manda pra cima
-      clip: 'attack_up',
-      startup: 6, active: 3, recovery: 12,
+    rush_3: {
+      clip: 'attack_light_3',
+      startup: 5, active: 3, recovery: 9,
       damage: 6,
-      poiseDamage: 9,
-      socket: 'hand_r',
+      poiseDamage: 8,
+      socket: 'foot_r',
       hitboxRadius: 0.70,
-      knockback: 1.2,
-      knockup: 9.0,               // levanta o alvo — abre perseguição aérea
-      hitstop: 6,
+      knockback: 2.0,
+      knockup: 0.0,
+      hitstop: 5,
+      shake: 0.12,
+      hitstun: 16,
+      blockstun: 5,
+      chipDamage: 0.4,
+      cancelInto: ['rush_4',
+                   'smash_forward', 'smash_up', 'smash_down'],
+      cancelWindow: [6, 17],
+      homingRange: 2.8,
+      homingStrength: 0.85,
+      advanceSpeed: 6.5,
+      advanceFrames: [1, 6],
+      vanishWindow: 9,
+    },
+
+    rush_4: {
+      clip: 'attack_light_4',
+      startup: 5, active: 3, recovery: 9,
+      damage: 6,
+      poiseDamage: 8,
+      socket: 'foot_l',
+      hitboxRadius: 0.70,
+      knockback: 2.0,
+      knockup: 0.0,
+      hitstop: 5,
+      shake: 0.12,
+      hitstun: 16,
+      blockstun: 5,
+      chipDamage: 0.4,
+      cancelInto: ['rush_5',
+                   'smash_forward', 'smash_up', 'smash_down'],
+      cancelWindow: [6, 17],
+      homingRange: 2.8,
+      homingStrength: 0.85,
+      advanceSpeed: 6.5,
+      advanceFrames: [1, 6],
+      vanishWindow: 9,
+    },
+
+    rush_5: {                     // joelhada: fim da string leve
+      clip: 'attack_light_5',
+      startup: 6, active: 3, recovery: 11,
+      damage: 8,
+      poiseDamage: 11,
+      socket: 'foot_r',
+      hitboxRadius: 0.72,
+      knockback: 2.4,
+      knockup: 0.0,
+      hitstop: 7,
       shake: 0.16,
       hitstun: 20,
       blockstun: 6,
-      chipDamage: 0.4,
-      cancelInto: ['rush_r', 'rush_l', 'rush_u', 'rush_d',
-                   'smash_forward', 'smash_up', 'smash_down'],
-      cancelWindow: [7, 20],
-      homingRange: 2.8,
-      homingStrength: 0.85,
-      advanceSpeed: 6.0,
-      advanceFrames: [1, 7],
-      vanishWindow: 10,
-    },
-
-    rush_d: {                     // chute descendente: crava
-      clip: 'attack_down',
-      startup: 6, active: 3, recovery: 13,
-      damage: 7,
-      poiseDamage: 10,
-      socket: 'foot_r',
-      hitboxRadius: 0.72,
-      knockback: 1.2,
-      knockup: -11.0,             // crava pra baixo — prepara o slam no chão
-      hitstop: 7,
-      shake: 0.18,
-      hitstun: 22,
-      blockstun: 7,
       chipDamage: 0.5,
-      cancelInto: ['rush_r', 'rush_l', 'rush_u', 'rush_d',
-                   'smash_forward', 'smash_up', 'smash_down'],
-      cancelWindow: [7, 21],
+      cancelInto: ['smash_forward', 'smash_up', 'smash_down'],
+      cancelWindow: [7, 20],
       homingRange: 2.8,
       homingStrength: 0.85,
       advanceSpeed: 6.0,
@@ -2339,6 +2410,27 @@ export const TUNING = {
     followLag: 11.0,
     rotateLag: 9.0,
 
+    /* Lags por estado do jogador — "arrasto" medido com o jogador e o alvo
+     * deslizando juntos a velocidade constante (harness da Etapa 2, 150 frames,
+     * frames 120+). O erro de regime de um seguidor exponencial é v/k, ou seja
+     * v/followLag — por isso um lag fixo não serve: o mesmo 11 que está certo
+     * parado sobra demais a 62 m/s.
+     *
+     * ANTES (followLag 11 / rotateLag 9 em tudo):
+     *   move 20 m/s: 1,66 m · hitstun 30: 2,48 m · blowaway 46: 3,81 m
+     *   pursuit 52: 4,31 m · dash 62: 5,14 m de arrasto
+     * 5 m de arrasto no dash = o jogador sai de quadro na ponta da tela.
+     * META do ajuste: dash ~2,5 m (followLag ≈ 24 → 62/24 ≈ 2,6 m).
+     *
+     * Só acima da base: estados parados/recebendo dano mantêm o lag base,
+     * porque aproximar a câmera de um corpo em hitstun só faz a tela tremer
+     * com o knockback. */
+    lagPorEstado: {
+      dash:     { followLag: 24, rotateLag: 16 },
+      pursuit:  { followLag: 22, rotateLag: 15 },
+      approach: { followLag: 20, rotateLag: 14 },
+    },
+
     // Afasta conforme os dois se distanciam, pra manter os dois na tela.
     widenPerMeter: 0.16,
     maxDistance: 22.0,
@@ -2641,7 +2733,7 @@ export const DEBUG_SLIDERS = [
    * "turtle domina" e "pressão domina" só sai de playtest. ---- */
   ['__group', 'Guarda / Turnos'],
   ['combo.cancelOnBlock',           0, 1,   1,   'Bloqueio deixa emendar? (liga = antigo)'],
-  ['moves.rush_r.blockstun',        0, 30,  1,   'Blockstun do rush'],
+  ['moves.rush_1.blockstun',        0, 30,  1,   'Blockstun do rush'],
   ['moves.smash_forward.blockstun', 0, 60,  1,   'Blockstun do smash'],
   ['defense.guard.staminaPerHit',   0, 50,  1,   'Guarda: desgaste por golpe'],
   ['defense.guard.staminaDrainPerSec', 0, 40, 1, 'Guarda: desgaste por segundo'],
@@ -2717,7 +2809,7 @@ export const DEBUG_SLIDERS = [
   ['trade.loserStunFrames',         0, 90,  1,   'Punição de quem perde a troca'],
   ['trade.clashKnockback',          0, 60,  1,   'Clash: empurrão'],
   ['moves.smash_forward.priority',  0, 8,   1,   'Prioridade do smash'],
-  ['moves.rush_r.priority',         0, 8,   1,   'Prioridade do rush'],
+  ['moves.rush_1.priority',         0, 8,   1,   'Prioridade do rush'],
 
   ['__group', 'Hitstop por categoria'],
   ['juice.hitstopProfiles.normal',   0, 30, 1,   'Hitstop: rush'],
@@ -2729,7 +2821,7 @@ export const DEBUG_SLIDERS = [
 
   ['__group', 'Vanish / Defesa'],
   ['moves.smash_forward.vanishWindow', 0, 30, 1, 'Janela de vanish (smash)'],
-  ['moves.rush_r.vanishWindow',     0, 30,  1,   'Janela de vanish (rush)'],
+  ['moves.rush_1.vanishWindow',     0, 30,  1,   'Janela de vanish (rush)'],
   ['defense.vanish.whiffKiCost',    0, 40,  1,   'Custo de ERRAR o vanish'],
   ['defense.vanish.whiffCooldownFrames', 0, 60, 1, 'Cooldown após errar vanish'],
   ['combo.maxChain',                1, 12,  1,   'Máx. de elos no combo'],

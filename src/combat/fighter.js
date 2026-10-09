@@ -644,7 +644,7 @@ export class Fighter {
     if (cmd.smash && this._tryAttack(this._smashKey(cmd.smashDir), ctx)) return;
     // Rush longe = INVESTIDA (voa até o alvo). Rush perto = soco direcional.
     if (cmd.rush && this._tryRushApproach(ctx)) return;
-    if (cmd.rush && this._tryAttack(this._rushKey(cmd), ctx, cmd)) return;
+    if (cmd.rush && this._tryAttack(this._rushKey(), ctx, cmd)) return;
     if (cmd.blast && this._tryBlast(ctx)) return;
 
     if (cmd.guard) {
@@ -680,7 +680,7 @@ export class Fighter {
        * Curvar devagar é o compromisso de MUDAR DE IDEIA no meio do dash. */
       this.velocity
         .copy(this._dashDirection(cmd, ctx, this._tmp))
-        .multiplyScalar(TUNING.flight.dashSpeed);
+        .multiplyScalar(this._dashSpeedAtual());
 
       this.char.play('dash', { fade: 0.1 });
       return;
@@ -727,7 +727,7 @@ export class Fighter {
     }
 
     // Ataque durante o dash: cancela em rush (a abertura clássica do Tenkaichi).
-    if (cmd.rush && this._tryAttack(this._rushKey(cmd), ctx, cmd)) return;
+    if (cmd.rush && this._tryAttack(this._rushKey(), ctx, cmd)) return;
     if (cmd.smash && this._tryAttack(this._smashKey(cmd.smashDir), ctx, cmd)) return;
 
     const chasing = this._isChasing(cmd);
@@ -743,10 +743,30 @@ export class Fighter {
     cur.normalize();
     cur.lerp(this._tmp, 1 - Math.exp(-turn * dt)).normalize();
 
-    this.velocity.copy(cur).multiplyScalar(TUNING.flight.dashSpeed);
+    this.velocity.copy(cur).multiplyScalar(this._dashSpeedAtual());
     this.yaw = Math.atan2(cur.x, cur.z);
 
     this.char.play('dash', { fade: 0.1 });
+  }
+
+  /**
+   * Velocidade do dash NESTE frame — a rampa, não o degrau.
+   *
+   * Medido na bancada antes desta função existir: `framesAte90pct = 0`, o pico
+   * de 62 m/s no frame 0 do input. O corpo pulava de parado a velocidade de
+   * cruzeiro em um frame, e é exatamente essa descontinuidade que a olhada
+   * lê como "teleporte" em vez de movimento.
+   *
+   * A curva é t² (aceleração crescente): o dash ARRANCA devagar e TERMINA
+   * rápido. É a mesma leitura de anticipation do braço que se prepara antes de
+   * socar — os frames finais são os de maior velocidade, então a saída de
+   * curva continua cortante.
+   */
+  _dashSpeedAtual() {
+    const D = TUNING.dragonDash;
+    const t = Math.min(1, this.dashFrames / Math.max(1, D.startupFrames));
+    const rampa = D.launchSpeedMul + (1 - D.launchSpeedMul) * t * t;
+    return TUNING.flight.dashSpeed * rampa;
   }
 
   /* --- Investida de rush ------------------------------------------- */
@@ -796,7 +816,7 @@ export class Fighter {
     const d = this.position.distanceTo(this.target.position);
 
     // Chegou: emenda no primeiro elo do combo.
-    if (d <= A.attackAt) { this._tryAttack(this._rushKey(cmd), ctx, cmd); return; }
+    if (d <= A.attackAt) { this._tryAttack(this._rushKey(), ctx, cmd); return; }
 
     // Desistiu (alvo fugiu, ou tempo esgotado).
     if (f > A.maxFrames || d > A.range * 1.4) {
@@ -935,7 +955,7 @@ export class Fighter {
         this._faceTargetNow(junto);
       }
 
-      if (cmd.rush && this._tryAttack(this._rushKey(cmd), ctx, cmd)) return;
+      if (cmd.rush && this._tryAttack(this._rushKey(), ctx, cmd)) return;
       if (cmd.smash && this._tryAttack(this._smashKey(cmd.smashDir), ctx, cmd)) return;
 
       if (this._pursuitCarry === 0) {
@@ -1261,9 +1281,9 @@ export class Fighter {
         if (m.cancelInto.includes(key) && this._tryAttack(key, ctx, cmd)) return;
       }
       if (cmd.rush) {
-        // A direção segurada AGORA escolhe o próximo elo — é assim que o
-        // jogador compõe o combo em vez de seguir uma ordem fixa.
-        const next = this._rushKey(cmd);
+        // Próximo elo da cadeia fixa (índice = comboCount). `cancelInto`
+        // sequencial barra pulos: rush_1 só emenda em rush_2, etc.
+        const next = this._rushKey();
         if (m.cancelInto.includes(next) && this._tryAttack(next, ctx, cmd)) return;
       }
     }
@@ -2142,7 +2162,13 @@ export class Fighter {
    * Vertical (Espaço/C) tem prioridade sobre o horizontal: quem aperta
    * Espaço+J está claramente pedindo o gancho, não um soco lateral.
    */
-  _rushKey(cmd) { return rushKeyFor(cmd); }
+  /* Cadeia fixa: o índice É o progresso. `comboCount` conta elos não-ender
+   * da rota atual, então J nº N dispara `rushChain[N]` — sem ler direção.
+   * Trocar a string (personagens diferentes) é trocar `TUNING.combo.rushChain`;
+   * a máquina de estados não muda. */
+  _rushKey() {
+    return rushKeyFor(TUNING.combo.rushChain, this.comboCount);
+  }
 
   /**
    * @param {object} [cmd]  se vier, o alvo é reavaliado para ESTE golpe —

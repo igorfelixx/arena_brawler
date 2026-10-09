@@ -59,7 +59,7 @@ import { HUD } from './ui/hud.js';
  *
  *  Estava dentro de `boot()`, e o navegador pegou o erro: o `DebugPanel` é
  *  construído no corpo do módulo, ANTES do boot, e ao montar os sliders ele
- *  procura `moves.rush_r.priority` — que ainda não existia. O painel descartava
+ *  procura `moves.rush_1.priority` — que ainda não existia. O painel descartava
  *  o slider com um aviso no console e seguia. Ou seja: a alavanca de prioridade
  *  simplesmente não aparecia, e ninguém ia descobrir por quê.
  *
