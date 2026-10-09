@@ -296,6 +296,85 @@ const P_SMASH_HIT = mix(P_GUARD_READY, {
   'mixamorig:RightLeg':     [ 40,   0,  0],
 });
 
+/* --- poses intermediárias dos golpes (LEAD / OVER) --------------------------
+ * Todo golpe de ataque tem duas âncoras de contato: wind → hit. Medido na
+ * bancada de animação ANTES desta seção: o percurso entre elas era
+ * perfeitamente linear — velCV = 0, dragFrames = 0 — o braço chegava exatamente
+ * no impacto e parava. Parado no impacto não é soco, é robô.
+ *
+ * Um soco de verdade quebra a velocidade duas vezes:
+ *
+ *   LEAD (meio do arco wind→hit, antes do impacto):
+ *     o TRONCO já terminou a torção (pLeadTronco ≈ 1) e o membro vai atrás
+ *     (pLeadMembro ≈ 0,5). O corpo antece, o braço arrasta — é a antecipação.
+ *   OVER (depois do impacto): o membro PASSA do hit (~10% do arco) e volta —
+ *     é o snap; sem ele o impacto não "ressoa" no final do golpe.
+ *
+ * `entre(wind, hit, padrao, graus)` interpola os EULER por osso (não quat: as
+ * poses são âncoras do frame data e ler grau a grau ajuda a auditar o que
+ * mudou). `graus` sobrepõe o PARÂMETRO de interpolação POR OSSO — não é
+ * multiplicador de graus: em LEAD o tronco usa 1 (chega inteiro no impacto) e
+ * o membro cai no `padrao` = 0,5; em OVER o tronco usa 1,04 e o membro 1,10. */
+const OSSOS_TRONCO = [
+  'mixamorig:Spine', 'mixamorig:Spine1', 'mixamorig:Spine2',
+  'mixamorig:Neck', 'mixamorig:Head',
+];
+
+/* Rede de segurança: com p > 1 a extrapolação poderia dobrar cotovelo/joelho
+ * PARA TRÁS do limite anatômico. Hoje nenhum uso passa p>1 nesses ossos
+ * (`graus` só carrega tronco + ombro/quadril), mas fica pronto pro dia em que
+ * alguém estourar o overshoot de um cotovelo. Convenção de eixos (cabeçalho
+ * do arquivo): joelho dobra +X nos dois lados, cotovelo dir. +Y e esq. −Y. */
+const _CAP_ARTICULACOES = {
+  'mixamorig:RightForeArm': (v) => { if (v[1] < 0) v[1] = 0; },
+  'mixamorig:LeftForeArm':  (v) => { if (v[1] > 0) v[1] = 0; },
+  'mixamorig:RightLeg':     (v) => { if (v[0] < 0) v[0] = 0; },
+  'mixamorig:LeftLeg':      (v) => { if (v[0] < 0) v[0] = 0; },
+};
+
+function entre(wind, hit, padrao, graus = {}) {
+  const out = {};
+  // wind/hit nascem de mix(P_GUARD_READY, ...) e herdam todos os ossos; a
+  // cadeia de fallback cobre poses futuras mais enxutas sem quebrar.
+  const ossos = new Set([...Object.keys(wind), ...Object.keys(hit)]);
+  for (const b of ossos) {
+    const w = wind[b] || hit[b] || P_GUARD_READY[b] || [0, 0, 0];
+    const h = hit[b] || wind[b] || P_GUARD_READY[b] || [0, 0, 0];
+    const p = (b in graus) ? graus[b] : padrao;
+    const v = [
+      w[0] + (h[0] - w[0]) * p,
+      w[1] + (h[1] - w[1]) * p,
+      w[2] + (h[2] - w[2]) * p,
+    ];
+    if (p > 1 && _CAP_ARTICULACOES[b]) _CAP_ARTICULACOES[b](v);
+    out[b] = v;
+  }
+  return out;
+}
+
+const _tronco = (p) => Object.fromEntries(OSSOS_TRONCO.map((b) => [b, p]));
+
+/* Os 12 intermediários (6 golpes × LEAD/OVER). O `membro` de cada golpe é o
+ * osso que carrega o overshoot — o membro que ataca: ombro nos socos, gancho
+ * e smash; quadril nos dois chutes. */
+const P_PUNCH_R_LEAD = entre(P_PUNCH_R_WIND, P_PUNCH_R_HIT, 0.5, _tronco(1));
+const P_PUNCH_R_OVER  = entre(P_PUNCH_R_WIND, P_PUNCH_R_HIT, 1, { ..._tronco(1.04), 'mixamorig:RightArm': 1.10 });
+
+const P_PUNCH_L_LEAD = entre(P_PUNCH_L_WIND, P_PUNCH_L_HIT, 0.5, _tronco(1));
+const P_PUNCH_L_OVER  = entre(P_PUNCH_L_WIND, P_PUNCH_L_HIT, 1, { ..._tronco(1.04), 'mixamorig:LeftArm': 1.10 });
+
+const P_KICK_R_LEAD = entre(P_KICK_R_WIND, P_KICK_R_HIT, 0.5, _tronco(1));
+const P_KICK_R_OVER  = entre(P_KICK_R_WIND, P_KICK_R_HIT, 1, { ..._tronco(1.04), 'mixamorig:RightUpLeg': 1.10 });
+
+const P_UPPER_LEAD = entre(P_UPPER_WIND, P_UPPER_HIT, 0.5, _tronco(1));
+const P_UPPER_OVER  = entre(P_UPPER_WIND, P_UPPER_HIT, 1, { ..._tronco(1.04), 'mixamorig:RightArm': 1.10 });
+
+const P_AXE_LEAD = entre(P_AXE_WIND, P_AXE_HIT, 0.5, _tronco(1));
+const P_AXE_OVER  = entre(P_AXE_WIND, P_AXE_HIT, 1, { ..._tronco(1.04), 'mixamorig:RightUpLeg': 1.10 });
+
+const P_SMASH_LEAD = entre(P_SMASH_WIND, P_SMASH_HIT, 0.5, _tronco(1));
+const P_SMASH_OVER  = entre(P_SMASH_WIND, P_SMASH_HIT, 1, { ..._tronco(1.04), 'mixamorig:RightArm': 1.10 });
+
 /* --- guarda --------------------------------------------------------------- */
 const P_BLOCK = mix(P_BASE, {
   'mixamorig:Spine':        [ 10,   0,  0],
@@ -451,7 +530,9 @@ const P_ULT_FIRE = mix(P_BASE, {
 
 /* ==========================================================================
  *  DEFINIÇÃO DOS CLIPES
- *  { base, loop, keys: [ [tempoSegundos, pose], ... ] }
+ *  { base, loop, keys: [ [tempoSegundos, pose, ease?], ... ] }
+ *  `ease` opcional ('in' | 'out' | 'inout') curva o segmento que TERMINA
+ *  naquela key. Sem tag = linear (comportamento de sempre).
  * ========================================================================== */
 const CLIPS = {
   idle: {
@@ -488,32 +569,47 @@ const CLIPS = {
     keys: [[0, P_CHARGE], [0.22, P_CHARGE_PEAK], [0.44, P_CHARGE]],
   },
 
-  /* Socos. Os tempos batem com o frame data de tuning.js:
-   * key 0 = neutro, key 1 = fim do startup (impacto), key 2 = recovery. */
+  /* Socos. Os tempos batem com o frame data de tuning.js: o impacto é a key
+   * em `hit` e NUNCA sai de lá (ancora a grade inteira). Entre wind e hit
+   * entra a LEAD (meio do arco, antecipação) e depois do hit a OVER (passa
+   * do alvo e volta = snap). Cadeia de ease: wind 'out' (sai rápido do
+   * neutro), LEAD 'in' (acelera pro impacto), hit 'out' (frena no contato),
+   * OVER 'in' (arranca do contato), guarda 'out' (volta e assenta). */
   attack_light_1: {
     base: P_GUARD_READY, loop: false,
-    keys: [[0, P_GUARD_READY], [0.045, P_PUNCH_R_WIND], [0.105, P_PUNCH_R_HIT], [0.25, P_GUARD_READY]],
+    keys: [[0, P_GUARD_READY], [0.045, P_PUNCH_R_WIND, 'out'], [0.075, P_PUNCH_R_LEAD, 'in'],
+      [0.105, P_PUNCH_R_HIT, 'out'], [0.14, P_PUNCH_R_OVER, 'in'], [0.25, P_GUARD_READY, 'out']],
   },
   attack_light_2: {
     base: P_GUARD_READY, loop: false,
-    keys: [[0, P_GUARD_READY], [0.045, P_PUNCH_L_WIND], [0.105, P_PUNCH_L_HIT], [0.25, P_GUARD_READY]],
+    keys: [[0, P_GUARD_READY], [0.045, P_PUNCH_L_WIND, 'out'], [0.075, P_PUNCH_L_LEAD, 'in'],
+      [0.105, P_PUNCH_L_HIT, 'out'], [0.14, P_PUNCH_L_OVER, 'in'], [0.25, P_GUARD_READY, 'out']],
   },
   attack_light_3: {
     base: P_GUARD_READY, loop: false,
-    keys: [[0, P_GUARD_READY], [0.05, P_KICK_R_WIND], [0.115, P_KICK_R_HIT], [0.28, P_GUARD_READY]],
+    keys: [[0, P_GUARD_READY], [0.05, P_KICK_R_WIND, 'out'], [0.082, P_KICK_R_LEAD, 'in'],
+      [0.115, P_KICK_R_HIT, 'out'], [0.15, P_KICK_R_OVER, 'in'], [0.28, P_GUARD_READY, 'out']],
   },
   attack_up: {
     base: P_GUARD_READY, loop: false,
-    keys: [[0, P_GUARD_READY], [0.06, P_UPPER_WIND], [0.13, P_UPPER_HIT], [0.34, P_GUARD_READY]],
+    keys: [[0, P_GUARD_READY], [0.06, P_UPPER_WIND, 'out'], [0.095, P_UPPER_LEAD, 'in'],
+      [0.13, P_UPPER_HIT, 'out'], [0.165, P_UPPER_OVER, 'in'], [0.34, P_GUARD_READY, 'out']],
   },
   attack_down: {
     base: P_GUARD_READY, loop: false,
-    keys: [[0, P_GUARD_READY], [0.065, P_AXE_WIND], [0.135, P_AXE_HIT], [0.36, P_GUARD_READY]],
+    keys: [[0, P_GUARD_READY], [0.065, P_AXE_WIND, 'out'], [0.10, P_AXE_LEAD, 'in'],
+      [0.135, P_AXE_HIT, 'out'], [0.17, P_AXE_OVER, 'in'], [0.36, P_GUARD_READY, 'out']],
   },
 
+  /* Smash: tem uma key parada no hit (0.235→0.30) porque o frame data segura
+   * o contato — a LEAD/OVER do smash é em volta dessa pausa: LEAD antes do
+   * hit, OVER saindo dele e voltando. 'inout' na volta pro neutro: é a
+   * recuperação longa (24f), curva suave evita chicote no fim. */
   attack_heavy: {
     base: P_GUARD_READY, loop: false,
-    keys: [[0, P_GUARD_READY], [0.14, P_SMASH_WIND], [0.235, P_SMASH_HIT], [0.30, P_SMASH_HIT], [0.62, P_GUARD_READY]],
+    keys: [[0, P_GUARD_READY], [0.14, P_SMASH_WIND, 'out'], [0.187, P_SMASH_LEAD, 'in'],
+      [0.235, P_SMASH_HIT, 'out'], [0.27, P_SMASH_OVER, 'in'], [0.30, P_SMASH_HIT, 'out'],
+      [0.62, P_GUARD_READY, 'inout']],
   },
 
   block:        { base: P_BLOCK, loop: true,  keys: [[0, P_BLOCK], [1.4, mix(P_BLOCK, { 'mixamorig:Spine': [12, 0, 0] })], [2.8, P_BLOCK]] },
@@ -552,8 +648,23 @@ const ALIASES = {
  *  CONSTRUÇÃO DOS AnimationClip
  * ========================================================================== */
 
+/* Easings por segmento. A tag mora na key de DESTINO: curva entre a pose
+ * anterior e a dela. Quadráticas de propósito — o overshoot NÃO vem da curva
+ * (quadrática não passa de 1), vem das poses LEAD/OVER, que exageram a
+ * articulação além do alvo. A curva só decide se o movimento acelera no
+ * início (in), desacelera no fim (out) ou faz as duas (inout). */
+const EASES = {
+  in:    (u) => u * u,
+  out:   (u) => 1 - (1 - u) * (1 - u),
+  inout: (u) => (u < 0.5 ? 2 * u * u : 1 - 2 * (1 - u) * (1 - u)),
+};
+const EASE_SUBDIV = 8; // passos por segmento com tag — curva lisa a 60 fps
+
 const _euler = new THREE.Euler();
 const _quat = new THREE.Quaternion();
+const _qa = new THREE.Quaternion();
+const _qb = new THREE.Quaternion();
+const _qc = new THREE.Quaternion();
 
 function poseToQuat(deg) {
   _euler.set(deg[0] * D, deg[1] * D, deg[2] * D, 'XYZ');
@@ -563,6 +674,12 @@ function poseToQuat(deg) {
 /**
  * Monta um THREE.AnimationClip a partir de uma definição de clipe.
  * Só gera tracks de rotação — igual ao padrão do Mixamo.
+ *
+ * Uma key pode carregar uma 3ª coluna com a tag de ease
+ * (`[tempo, pose, ease]`). A subdivisão acontece na grade de TEMPOS,
+ * compartilhada por todos os ossos (todos os tracks precisam dos mesmos
+ * instantes). Segmento sem tag gera um único ponto = exatamente o clipe
+ * linear antigo; tag desconhecida cai no mesmo caminho (silencioso).
  */
 function buildClip(name, def) {
   const { base, keys } = def;
@@ -571,31 +688,60 @@ function buildClip(name, def) {
   const boneNames = new Set(Object.keys(base));
   for (const [, pose] of keys) for (const b of Object.keys(pose)) boneNames.add(b);
 
-  const times = keys.map(([t]) => t);
+  // Grade única: cada segmento [key i-1 → key i] vira n sub-passos.
+  // `j === n` grava o tempo EXATO da key — a âncora de sincronia com o frame
+  // data (impacto em t = hit) não pode derivar por arredondamento.
+  const times = [keys[0][0]];
+  const segN = [];
+  for (let i = 1; i < keys.length; i++) {
+    const t0 = keys[i - 1][0], t1 = keys[i][0];
+    const n = EASES[keys[i][2]] ? EASE_SUBDIV : 1;
+    segN.push(n);
+    for (let j = 1; j <= n; j++) {
+      times.push(j === n ? t1 : t0 + (t1 - t0) * (j / n));
+    }
+  }
+
   const tracks = [];
 
   for (const bone of boneNames) {
     const values = [];
-    let varies = false;
-    let first = null;
 
-    for (const [, pose] of keys) {
-      const deg = pose[bone] || base[bone] || [0, 0, 0];
-      const q = poseToQuat(deg);
-      values.push(q.x, q.y, q.z, q.w);
-      if (first === null) first = [q.x, q.y, q.z, q.w];
-      else if (!varies) {
-        const n = values.length;
-        varies = Math.abs(values[n - 4] - first[0]) > 1e-6
-              || Math.abs(values[n - 3] - first[1]) > 1e-6
-              || Math.abs(values[n - 2] - first[2]) > 1e-6
-              || Math.abs(values[n - 1] - first[3]) > 1e-6;
+    // Pose de partida do primeiro segmento (cópia: poseToQuat devolve um
+    // temporário compartilhado — guardá-lo sem copiar corromperia os outros).
+    _qa.copy(poseToQuat(keys[0][1][bone] || base[bone] || [0, 0, 0]));
+    values.push(_qa.x, _qa.y, _qa.z, _qa.w);
+
+    for (let i = 1; i < keys.length; i++) {
+      _qb.copy(poseToQuat(keys[i][1][bone] || base[bone] || [0, 0, 0]));
+      const n = segN[i - 1];
+      const ease = EASES[keys[i][2]];
+      for (let j = 1; j <= n; j++) {
+        if (j === n) {
+          // âncora exata da key (n === 1 ⇒ clipe sem tag, igual ao antigo)
+          values.push(_qb.x, _qb.y, _qb.z, _qb.w);
+        } else {
+          _qc.slerpQuaternions(_qa, _qb, ease(j / n));
+          values.push(_qc.x, _qc.y, _qc.z, _qc.w);
+        }
       }
+      _qa.copy(_qb);
+    }
+
+    // Variedade varrida DEPOIS da amostragem (a subdivisão mudou o tamanho do
+    // array). Critério igual ao de antes: difere do primeiro valor em 1e-6.
+    let varies = false;
+    const first = [values[0], values[1], values[2], values[3]];
+    for (let k = 4; k < values.length && !varies; k += 4) {
+      varies = Math.abs(values[k] - first[0]) > 1e-6
+            || Math.abs(values[k + 1] - first[1]) > 1e-6
+            || Math.abs(values[k + 2] - first[2]) > 1e-6
+            || Math.abs(values[k + 3] - first[3]) > 1e-6;
     }
 
     // Mesmo ossos "parados" precisam de track: é o que segura a pose
     // quando outro clipe termina. Só descartamos se for idêntico à T-pose.
-    if (!varies && first && Math.abs(first[3] - 1) < 1e-6
+    if (!varies && Math.abs(first[3] - 1) < 1e-6
         && Math.abs(first[0]) < 1e-6 && Math.abs(first[1]) < 1e-6 && Math.abs(first[2]) < 1e-6) {
       continue;
     }
