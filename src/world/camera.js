@@ -179,8 +179,14 @@ export class CombatCamera {
     }
 
     // --- suavização independente de framerate ---
-    const kPos = 1 - Math.exp(-C.followLag * dt);
-    const kLook = 1 - Math.exp(-C.rotateLag * dt);
+    /* Lag por estado: em alta velocidade o erro de regime (v/followLag) cresce
+     * linearmente com v, então um lag fixo deixa o jogador de costas na ponta
+     * da tela. `lagPorEstado` (TUNING.camera) só sobe o lag nos estados RÁPIDOS;
+     * todos os outros caem no lag base. Medido na Etapa 2: dash 62 m/s com lag
+     * fixo 11 arrastava 5,14 m — com 24, ~2,6 m. */
+    const lag = (C.lagPorEstado && C.lagPorEstado[player.state]) || null;
+    const kPos = 1 - Math.exp(-(lag ? lag.followLag : C.followLag) * dt);
+    const kLook = 1 - Math.exp(-(lag ? lag.rotateLag : C.rotateLag) * dt);
     this._encurtar(player, this._desiredPos);
     this.pos.lerp(this._desiredPos, kPos);
     // De novo depois da suavização: o lerp pode cortar caminho por DENTRO de
@@ -193,14 +199,19 @@ export class CombatCamera {
     this.cam.position.set(this.pos.x + s.x, this.pos.y + s.y, this.pos.z + s.z);
     this.cam.lookAt(this.look);
 
-    // --- FOV: base + velocidade + punch zoom ---
+    // --- FOV: base + velocidade (suavizado) + punch zoom (sem suavizar) ---
     const speedFov = Math.min(speed * C.speedFovPerUnit, C.speedFovMax);
-    const targetFov = C.fov + speedFov + (juice ? juice.punchZoom : 0);
-    // O FOV também precisa de suavização, senão pulsa a cada mudança de velocidade.
+    const targetFov = C.fov + speedFov;
+    // O FOV também precisa de suavização, senão pulsa a cada mudança de
+    // velocidade — mas o punch zoom NÃO entra aqui. O pulso do juice dura só
+    // 10 frames (easeOutCubic) e a suavização de rate 9 o filtrava em duas
+    // vezes (curva do juice + esta): o pico medido era 3,9° dos 7,0°
+    // configurados. Ele é impacto, não estado — chega crudo em cam.fov.
     this._fov += (targetFov - this._fov) * (1 - Math.exp(-9 * dt));
+    const fovFinal = this._fov + (juice ? juice.punchZoom : 0);
 
-    if (Math.abs(this.cam.fov - this._fov) > 0.01) {
-      this.cam.fov = this._fov;
+    if (Math.abs(this.cam.fov - fovFinal) > 0.01) {
+      this.cam.fov = fovFinal;
       this.cam.updateProjectionMatrix();
     }
   }
