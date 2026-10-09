@@ -149,6 +149,15 @@ export class ProjectileSystem {
       p.pos.addScaledVector(p.vel, dt);
       p.mesh.position.copy(p.pos);
 
+      /* Coluna (modo arena) segura o blast. Se não segurasse, esconder atrás
+       * dela seria inútil contra quem só atira — e o blast teleguiado
+       * atravessaria a cobertura que a linha de visão acabou de criar. */
+      if (ctx?.obstaculos?.contem(p.pos)) {
+        this.vfx?.burst(p.pos, { count: 10, color: p.spec.color, speed: 6, life: 0.3 });
+        this._kill(p);
+        continue;
+      }
+
       // rastro
       if (p.charged) {
         this.vfx?.auraTick(p.pos, { intensity: 0.8, color: p.spec.color, count: 2 });
@@ -181,7 +190,11 @@ export class ProjectileSystem {
           p.vel.negate().multiplyScalar(TUNING.defense.guard.deflectSpeedMul);
           p.owner = f;
           p.target = f.target;
-          ctx.juice?.impact({ hitstop: 4, shake: 0.12 });
+          /* Rebater congela QUEM rebateu, nao a arena inteira. Com 16 lutadores
+           * trocando blasts, o congelamento global daqui sozinho ja segurava o
+           * jogo — ver juice.hitstopScope. */
+          ctx.congelarTroca?.(f, null, 4);
+          ctx.juice?.impact({ shake: 0.12 });
           this.vfx?.burst(p.pos, { count: 10, color: 0xffffff, speed: 6, life: 0.25 });
           continue;
         }
@@ -375,6 +388,10 @@ export class BeamSystem {
 
       _v2.copy(this.dir);
       f.applyHit({ move, attacker: this.owner, direction: _v2, guarded: false, ctx });
+      /* O feixe nao passa por `ctx.onHit`, entao o `hitstop: 2` acima nunca
+       * era aplicado — mais um caso da armadilha 8.19. Agora congela os dois
+       * corpos do tique, e so a tela de quem esta envolvido. */
+      ctx.congelarTroca?.(f, this.owner, move.hitstop);
       this.vfx?.burst(f.position, { count: 8, color: U.color, speed: 6, life: 0.25 });
     }
   }

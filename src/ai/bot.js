@@ -27,6 +27,9 @@ import { emptyCommand, S } from '../combat/fighter.js';
 
 const _v = new THREE.Vector3();
 const _toFoe = new THREE.Vector3();
+const _desvio = new THREE.Vector3();
+const _esc = new THREE.Vector3();
+const _centro = new THREE.Vector3();
 
 export class BotController {
   constructor(fighter, seed = 1337, profile = 'EQUILIBRADO') {
@@ -58,6 +61,8 @@ export class BotController {
     /* Compromisso de carregar ki até acender o Max Power. Ver a nota longa no
      * bloco 2 do update: sorteio por frame não segura botão. */
     this._maxPowerIntent = 0;
+    /* Compromisso de RECUAR, com histerese. Ver o bloco 1.35 no update. */
+    this._recuando = false;
 
     /* Quantos frames ainda vai SEGURAR a guarda.
      *
@@ -93,13 +98,35 @@ export class BotController {
 
     const f = this.f;
     const foe = f.target;
-    if (!f.alive || !foe || !foe.alive) return c;
+    if (!f.alive) return c;
 
     const A = this._cfg();
     if (!A.enabled) return c;
 
+    /* ================================================================
+     *  SEM ALVO = FORA DE COMBATE. E isso é um ESTADO, não um vazio.
+     * ================================================================
+     *  Antes, `target` nulo fazia o bot devolver comando vazio e ficar
+     *  boiando. Com o limite de detecção isso passou a acontecer o tempo todo
+     *  — e é justamente o momento mais interessante taticamente.
+     *
+     *  O que um lutador faz quando não há ninguém por perto é o que dá RITMO à
+     *  partida: ele se recompõe. Carrega ki, se afasta da aglomeração, escolhe
+     *  de onde vai entrar na próxima briga. É o respiro que separa um jogo de
+     *  decisões de uma porradaria contínua.
+     *
+     *  Sem isto, dar ao jogador a opção de fugir não adiantaria: ele fugiria
+     *  pra um vazio em que nada acontece, e voltaria por tédio.               */
+    if (!foe || !foe.alive) return this._foraDeCombate(c, ctx, A);
+    this.escondido = false;
+
     const diff = A.difficulty;
     const dist = f.position.distanceTo(foe.position);
+
+    /* Última posição em que ESTE bot viu um inimigo. É a única informação
+     * que o esconderijo usa (ver `_foraDeCombate`) — memória própria, não
+     * onisciência. */
+    (this._ultimaAmeaca || (this._ultimaAmeaca = new THREE.Vector3())).copy(foe.position);
 
     if (this._punishCooldown > 0) this._punishCooldown--;
 
@@ -182,7 +209,7 @@ export class BotController {
     }
 
     // Startup do golpe mais rápido que a IA tem — é com ele que ela puniria.
-    const meuStartup = TUNING.moves.rush_r.startup;
+    const meuStartup = TUNING.moves.rush_1.startup;
     const brechaVale = brechaFrames > meuStartup + A.punishMarginFrames;
     const janelaDePunicao = brechaVale && dist < A.punishRange;
 
@@ -231,6 +258,49 @@ export class BotController {
       this._holdGuard = A.guardHoldFrames;
       c.guard = true;
       return c;
+    }
+
+    /* ================================================================
+     *  1.35  RECUAR  —  sair da briga que está perdendo
+     * ================================================================
+     *  Vem depois da defesa imediata (vanish/guarda já rodaram) e antes de
+     *  qualquer coisa ofensiva: quem decidiu sair não persegue, não agarra e
+     *  não procura troca.
+     *
+     *  O compromisso com HISTERESE (`retreatBelowHealth` pra entrar,
+     *  `retreatUntilHealth` pra sair) é o mesmo padrão de `guardHoldFrames`, e
+     *  pela mesma razão registrada na armadilha 8.15: decisão por frame não
+     *  produz comportamento sustentado. Com um limiar só, a IA sairia e
+     *  voltaria no mesmo frame em que a vida cruzasse a linha, e o recuo não
+     *  existiria na prática.
+     *
+     *  Recuar NÃO é fugir em linha reta do adversário: é ir pro espaço ABERTO.
+     *  Correr pro lado oposto do inimigo leva direto pra borda — e num jogo de
+     *  ring-out isso é pior que apanhar. */
+    const vidaFrac = f.health / TUNING.fighter.maxHealth;
+    if (A.retreatBelowHealth > 0) {
+      if (!this._recuando && vidaFrac < A.retreatBelowHealth && this._roll(A.retreatChance)) {
+        this._recuando = true;
+      } else if (this._recuando && vidaFrac >= A.retreatUntilHealth) {
+        this._recuando = false;
+      }
+
+      if (this._recuando) {
+        /* Direção: para LONGE do adversário, mas corrigida pro centro da
+         * arena. Sem a correção, recuar é um jeito elaborado de cometer
+         * ring-out. */
+        _v.copy(_toFoe).multiplyScalar(-1);
+        ctx.arena.towardCenter(f.position, _toFoe);      // reaproveita o temp
+        const perto = ctx.arena.edgeProximity(f.position);
+        _v.lerp(_toFoe, Math.min(1, perto * 1.4)).normalize();
+
+        this._setMoveToward(c, _v, ctx, A.retreatSpeedMul);
+        // Dash pra criar distância de verdade, se houver ki sobrando.
+        if (dist < 12 && f.ki > TUNING.dragonDash.kiCost * 2) c.dash = true;
+        // Guarda no caminho: sair não pode significar comer tudo de graça.
+        if (dist < 5) c.guard = true;
+        return c;
+      }
     }
 
     /* ---------- 1.4 RESPONDER À VANISH BATTLE ----------
@@ -388,8 +458,9 @@ export class BotController {
         /* ROTA ESGOTADA: martelar rush não sai mais (nem a investida). Se a IA
          * insistisse, ela ficaria apertando um botão morto — que é exatamente
          * a experiência que estamos tirando do jogador. Ela tem que tomar a
-         * MESMA decisão que o humano: finalizar ou sair. */
-        if (f.comboCount >= TUNING.combo.maxChain) {
+         * MESMA decisão que o humano: finalizar ou sair.
+         * O teto é o da cadeia ativa (3 no ar, 5 no chão). */
+        if (f.comboCount >= f.comboCeiling) {
           if (dist <= A.attackRange * 1.3) {
             c.smash = true;
             c.smashDir = this._pickSmashDir(foe, ctx);
@@ -484,6 +555,105 @@ export class BotController {
     return Math.max(1, Math.round(meio + erro));
   }
 
+  /**
+   * FORA DE COMBATE — ninguém ao alcance de detecção.
+   *
+   * Três coisas, em ordem de prioridade, e cada uma existe por uma razão:
+   *
+   *   1. RECOMPOR  ki baixo é o motivo nº 1 de perder a próxima briga, e este
+   *      é o único momento seguro pra carregar. É o que transforma "fugi" em
+   *      "fugi E voltei melhor" — sem isso, fugir seria só adiar.
+   *
+   *   2. NÃO IR PRA BORDA  estar fora de combate não ajuda se você se mata
+   *      sozinho. Num jogo de ring-out, vagar sem rumo é perigoso.
+   *
+   *   3. NÃO VOLTAR CEDO DEMAIS  um compromisso de alguns segundos antes de
+   *      procurar briga de novo. Sem ele o bot sai do alcance de detecção e
+   *      volta no frame seguinte, e o "fora de combate" não dura nada —
+   *      mesmo problema de `guardHoldFrames` (armadilha 8.15).
+   */
+  _foraDeCombate(c, ctx, A) {
+    const f = this.f;
+
+    if (this._respiro === undefined) this._respiro = 0;
+    if (this._respiro > 0) this._respiro--;
+
+    const kiBaixo = f.ki < TUNING.ki.max * 0.7;
+    this.escondido = false;       // telemetria: está na sombra de uma coluna?
+    const naBorda = ctx.arena.edgeProximity(f.position) > 0.5;
+
+    if (naBorda) {
+      ctx.arena.towardCenter(f.position, _v);
+      this._setMoveToward(c, _v, ctx);
+      if (f.position.y > ctx.arena.ceiling * 0.85) c.vertical = -1;
+      return c;
+    }
+
+    /* ESCONDER (só com obstáculos, modo arena): vida baixa → vai pra sombra
+     * da coluna mais próxima, do lado oposto ao último inimigo que viu, e se
+     * recompõe ALI em vez de no aberto. É o mesmo "recompor" de baixo, com
+     * terreno: carregar ki atrás de uma coluna não te deixa visível pra quem
+     * passa. Ver `ai.hideBelowHealth`. */
+    const obs = ctx.obstaculos;
+    if (obs && obs.lista.length && f.health / TUNING.fighter.maxHealth < A.hideBelowHealth) {
+      const ameaca = this._ultimaAmeaca || _centro.set(0, f.position.y, 0);
+      const col = obs.esconderijo(f.position, ameaca, A.hideSearchRadius, _esc,
+        ctx.arena.radius - TUNING.arena.edgeDangerBand);
+      if (col) {
+        _v.subVectors(_esc, f.position);
+        const dy = _v.y;
+        _v.y = 0;
+        const d = _v.length();
+        if (d > 3) {
+          _v.divideScalar(d);
+          this._setMoveToward(c, _v, ctx, d > 12 ? 1 : 0.5);
+          c.vertical = clamp(dy * 0.1, -1, 1);
+          return c;
+        }
+        // Na sombra: recompõe ali. Sem ki pra carregar, fica quieto.
+        this.escondido = true;
+        if (kiBaixo && !f.exhausted) c.charge = true;
+        return c;
+      }
+    }
+
+    if (kiBaixo && !f.exhausted) {
+      c.charge = true;
+      return c;
+    }
+
+    /* Nada urgente: deriva devagar pelo espaço aberto. Devagar de propósito —
+     * voar rápido sem alvo só encurta o tempo até esbarrar em alguém, que é o
+     * contrário do que este estado existe pra produzir. */
+    this._strafeTimer--;
+    if (this._strafeTimer <= 0) {
+      this._strafeTimer = 90 + Math.floor(this._rand() * 90);
+      this._strafeDir *= -1;
+    }
+    /* Componente RADIAL da deriva — e ela decide o fim da partida.
+     *
+     * Era fixa em −0,25 (afasta do centro). Medido com obstáculos, 3
+     * partidas: quem está fora de combate passa a partida a 0,82–0,91 do
+     * raio, ou seja, colado na borda. Isso produz os DOIS defeitos do arco:
+     *   - no começo junta todo mundo num anel de 1.500 m de perímetro — mais
+     *     encontro, não menos (a área da faixa da borda é ~1/4 do disco);
+     *   - no fim, os 2 últimos ficam rodando a borda em lados opostos: a
+     *     faixa 20–25 min tinha 5% do tempo em combate, com 2 vivos.
+     * Agora a puxada vai de `offCombatPullFar` (arena grande) a
+     * `offCombatPullNear` (arena pequena), interpolada pelo raio ATUAL —
+     * a zona fechando puxa pro meio, como em todo battle royale.
+     * Base = −0,25 nos dois (comportamento antigo); o modo arena sobrepõe. */
+    const R = ctx.arena.radius;
+    const kR = clamp((A.offCombatFarRadius - R) / Math.max(1, A.offCombatFarRadius - A.offCombatNearRadius), 0, 1);
+    const puxada = A.offCombatPullFar + (A.offCombatPullNear - A.offCombatPullFar) * kR;
+    ctx.arena.towardCenter(f.position, _v);
+    _v.multiplyScalar(puxada);
+    _v.x += this._strafeDir * 0.6;
+    _v.normalize();
+    this._setMoveToward(c, _v, ctx, 0.35);
+    return c;
+  }
+
   /* ---------------------------------------------------------------- */
   _chooseIntent(dist, diff, ctx) {
     const A = this._merged;
@@ -517,6 +687,20 @@ export class BotController {
   }
 
   _setMoveToward(c, worldDir, ctx, scale = 1) {
+    /* DESVIAR de coluna no caminho (modo arena). Fica AQUI, no ponto único
+     * por onde toda intenção de movimento da IA passa — aproximar, recuar,
+     * voltar da borda, ir pro esconderijo. Em um lugar só, nenhum
+     * comportamento novo esquece de desviar. Sem obstáculos sai no primeiro
+     * teste e o duelo não muda. */
+    const obs = ctx.obstaculos;
+    if (obs && obs.lista.length) {
+      const alvo = this.f.target;
+      const ate = alvo && alvo.alive ? this.f.position.distanceTo(alvo.position) : Infinity;
+      if (obs.desviar(this.f.position, worldDir, this._merged.obstacleLookahead, ate, _desvio)) {
+        worldDir = _desvio;
+      }
+    }
+
     // Converte direção do mundo pra eixos do command (relativos à câmera).
     const basis = ctx.moveBasis;
     c.moveX = clamp(worldDir.dot(basis.right) * scale, -1, 1);
@@ -538,8 +722,10 @@ export class BotController {
     this._blastHold = 0;
     this._smashHold = 0;
     this._maxPowerIntent = 0;
+    this._recuando = false;
     this._holdGuard = 0;
     this._punishCooldown = 0;
+    this._ultimaAmeaca = null;
     resetCommand(this.cmd);
   }
 }

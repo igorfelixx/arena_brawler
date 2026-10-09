@@ -52,7 +52,12 @@ export class CombatCamera {
     this._dir = new THREE.Vector3();
     this._right = new THREE.Vector3();
     this._tmp = new THREE.Vector3();
+    this._pivo = new THREE.Vector3();
     this._fov = TUNING.camera.fov;
+
+    /* Obstáculos do modo arena (main.js injeta). Vazio no duelo — e então
+     * `_encurtar` sai no primeiro teste e a câmera é a de sempre. */
+    this.obstaculos = null;
   }
 
   /** Aplica o movimento de mouse/stick. */
@@ -174,9 +179,19 @@ export class CombatCamera {
     }
 
     // --- suavização independente de framerate ---
-    const kPos = 1 - Math.exp(-C.followLag * dt);
-    const kLook = 1 - Math.exp(-C.rotateLag * dt);
+    /* Lag por estado: em alta velocidade o erro de regime (v/followLag) cresce
+     * linearmente com v, então um lag fixo deixa o jogador de costas na ponta
+     * da tela. `lagPorEstado` (TUNING.camera) só sobe o lag nos estados RÁPIDOS;
+     * todos os outros caem no lag base. Medido na Etapa 2: dash 62 m/s com lag
+     * fixo 11 arrastava 5,14 m — com 24, ~2,6 m. */
+    const lag = (C.lagPorEstado && C.lagPorEstado[player.state]) || null;
+    const kPos = 1 - Math.exp(-(lag ? lag.followLag : C.followLag) * dt);
+    const kLook = 1 - Math.exp(-(lag ? lag.rotateLag : C.rotateLag) * dt);
+    this._encurtar(player, this._desiredPos);
     this.pos.lerp(this._desiredPos, kPos);
+    // De novo depois da suavização: o lerp pode cortar caminho por DENTRO de
+    // uma coluna mesmo com os dois extremos fora dela.
+    this._encurtar(player, this.pos);
     this.look.lerp(this._desiredLook, kLook);
 
     // --- aplica na câmera, somando o tremor ---
@@ -184,16 +199,43 @@ export class CombatCamera {
     this.cam.position.set(this.pos.x + s.x, this.pos.y + s.y, this.pos.z + s.z);
     this.cam.lookAt(this.look);
 
-    // --- FOV: base + velocidade + punch zoom ---
+    // --- FOV: base + velocidade (suavizado) + punch zoom (sem suavizar) ---
     const speedFov = Math.min(speed * C.speedFovPerUnit, C.speedFovMax);
-    const targetFov = C.fov + speedFov + (juice ? juice.punchZoom : 0);
-    // O FOV também precisa de suavização, senão pulsa a cada mudança de velocidade.
+    const targetFov = C.fov + speedFov;
+    // O FOV também precisa de suavização, senão pulsa a cada mudança de
+    // velocidade — mas o punch zoom NÃO entra aqui. O pulso do juice dura só
+    // 10 frames (easeOutCubic) e a suavização de rate 9 o filtrava em duas
+    // vezes (curva do juice + esta): o pico medido era 3,9° dos 7,0°
+    // configurados. Ele é impacto, não estado — chega crudo em cam.fov.
     this._fov += (targetFov - this._fov) * (1 - Math.exp(-9 * dt));
+    const fovFinal = this._fov + (juice ? juice.punchZoom : 0);
 
-    if (Math.abs(this.cam.fov - this._fov) > 0.01) {
-      this.cam.fov = this._fov;
+    if (Math.abs(this.cam.fov - fovFinal) > 0.01) {
+      this.cam.fov = fovFinal;
       this.cam.updateProjectionMatrix();
     }
+  }
+
+  /**
+   * BRAÇO DE MOLA: se há coluna entre você e a câmera, a câmera vem pra
+   * frente dela. É o `USpringArmComponent` com `bDoCollisionTest` do Unreal.
+   *
+   * Encurtar (e não atravessar com transparência) pro JOGADOR porque câmera
+   * dentro de geometria mostra o interior da malha — ilegível. A
+   * transparência fica pras colunas entre a câmera e o ALVO (obstacles.render),
+   * que o braço não tem como proteger sem girar a câmera — e girar sozinha é
+   * o que mais desorienta.
+   */
+  _encurtar(player, ponto) {
+    const obs = this.obstaculos;
+    if (!obs || obs.lista.length === 0) return;
+    this._pivo.copy(player.position);
+    this._pivo.y += TUNING.camera.height * 0.7;
+    const t = obs.tracar(this._pivo, ponto);
+    if (t >= 1) return;
+    const L = this._pivo.distanceTo(ponto);
+    const tt = Math.max(0.04, t - TUNING.obstacles.cameraMargin / Math.max(L, 1e-3));
+    ponto.sub(this._pivo).multiplyScalar(tt).add(this._pivo);
   }
 
   /** Base horizontal pro movimento relativo à câmera. */
@@ -202,7 +244,22 @@ export class CombatCamera {
     out.forward.y = 0;
     if (out.forward.lengthSq() < 1e-6) out.forward.set(0, 0, 1);
     out.forward.normalize();
-    out.right.crossVectors(out.forward, UP).normalize().negate();
+    /* SEM `.negate()` — e esse negate esteve aqui desde o primeiro commit.
+     *
+     * Num sistema destro com Y pra cima, `forward × up` JÁ é a direita:
+     *     forward (0,0,-1) × up (0,1,0) = (1,0,0) = +X = direita
+     * O `.negate()` devolvia a ESQUERDA chamada de `right`, e o efeito era A
+     * andar pra direita e D pra esquerda.
+     *
+     * Passou despercebido porque só o JOGADOR sofria. A IA calcula `moveX` com
+     * `worldDir.dot(basis.right)` e o Fighter aplica `basis.right * moveX` — os
+     * dois usam a mesma base invertida e o erro se cancela. Bot com controle
+     * invertido anda certo; humano não.
+     *
+     * Corrigir aqui conserta três coisas de uma vez, porque as três leem esta
+     * base: o movimento lateral, a MIRA POR DIREÇÃO (`targeting.js` escolhia
+     * alvo do lado errado) e a direção do ARREMESSO do grab. */
+    out.right.crossVectors(out.forward, UP).normalize();
     return out;
   }
 

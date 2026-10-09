@@ -188,23 +188,26 @@ export function hitstopFor(move, { guarded = false, perfect = false, counter = f
 /*  Qual golpe sai                                                             */
 /* ========================================================================== */
 /**
- * A direção segurada escolhe o golpe.
+ * O elo da cadeia leve para este `comboCount`.
  *
- *   nada / direita → soco de direita
- *   esquerda       → soco de esquerda
- *   frente/cima    → gancho (levanta)
- *   trás/baixo     → chute descendente (crava)
+ *   comboCount 0 → rush_1 (jab)
+ *   comboCount 1 → rush_2 (gancho)
+ *   …
  *
- * Vertical (Espaço/C) tem prioridade sobre o horizontal: quem aperta Espaço+J
- * está claramente pedindo o gancho, não um soco lateral.
+ * A direção NÃO escolhe mais o golpe — o dono reprovou o rush direcional
+ * ("D+J / W+J é ruim") e a string passou a ser fixa, estilo BT3: um botão,
+ * ordem garantida, coreografia em vez de composição. A ordem mora em
+ * `TUNING.combo.rushChain` (dados, não código): trocar a string de um
+ * personagem é trocar o array.
+ *
+ * `clamp` no fim da lista: apertar J com a rota esgotada devolve o último
+ * elo em vez de `undefined` — o teto de `maxChain` é quem barra a emenda
+ * (em `_tryAttack`), não a leitura do índice. Sem o clamp, um off-by-one
+ * viraria `moveOf(undefined)` e o golpe simplesmente não sairia, sem erro.
  */
-export function rushKeyFor(cmd) {
-  if (cmd.vertical > 0.4) return 'rush_u';
-  if (cmd.vertical < -0.4) return 'rush_d';
-  if (cmd.moveY > 0.4) return 'rush_u';
-  if (cmd.moveY < -0.4) return 'rush_d';
-  if (cmd.moveX < -0.4) return 'rush_l';
-  return 'rush_r';
+export function rushKeyFor(chain, comboCount) {
+  const i = Math.min(comboCount, chain.length - 1);
+  return chain[i];
 }
 
 export function smashKeyFor(dir) {
