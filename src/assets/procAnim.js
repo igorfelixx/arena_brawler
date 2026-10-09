@@ -263,6 +263,66 @@ const P_KICK_R_HIT = mix(P_GUARD_READY, {
   'mixamorig:RightArm':     [  0,  40, 56],
 });
 
+/* --- chute circular de esquerda (elo 4 da cadeia) ------------------------- */
+/* Espelha o de direita no lado, mas sobe MAIS (chute alto) — a diferença de
+ * altura é o que faz os dois chutes não parecerem o mesmo golpe espelhado. */
+const P_KICK_L_WIND = mix(P_GUARD_READY, {
+  'mixamorig:Spine1':       [  6, -18,  0],
+  'mixamorig:LeftUpLeg':    [-38,   0,-16],
+  'mixamorig:LeftLeg':      [ 82,   0,  0],
+  'mixamorig:RightUpLeg':   [ -6,   0,  0],
+  'mixamorig:RightLeg':     [ 14,   0,  0],
+});
+
+const P_KICK_L_HIT = mix(P_GUARD_READY, {
+  'mixamorig:Spine':        [ 12,   0,  0],   // mais inclinação = chute mais alto
+  'mixamorig:Spine1':       [ 10,  28,  0],
+  'mixamorig:Spine2':       [  4,  12,  0],
+  'mixamorig:LeftUpLeg':    [-92, -22, -8],   // 92° contra os 74° do direito
+  'mixamorig:LeftLeg':      [ 10,   0,  0],
+  'mixamorig:LeftFoot':     [ 16,   0,  0],
+  'mixamorig:RightUpLeg':   [  6,   0,  6],
+  'mixamorig:RightLeg':     [ 22,   0,  0],
+  'mixamorig:LeftArm':      [  0,  34, 68],
+  'mixamorig:LeftForeArm':  [  0,  48,  0],
+  'mixamorig:RightArm':     [  0, -32,-70],
+  'mixamorig:RightForeArm': [  0, -36,  0],
+});
+
+/* --- joelhada (elo 5 da cadeia — o "pesado" da string) -------------------- */
+/* Joelhada com o tronco se fechando em cima da vítima. É o único elo da
+ * cadeia em que o corpo quebra a postura de guarda de verdade: o torso
+ * adianta, os braços puxam pra baixo (como se puxasse a cabeça). A pose
+ * final é quase dobrada — daí o recovery maior no frame data. */
+const P_KNEE_WIND = mix(P_GUARD_READY, {
+  'mixamorig:Spine':        [ -8,   0,  0],
+  'mixamorig:Spine1':       [ -6,  16,  0],
+  'mixamorig:RightUpLeg':   [ 28,   0,  8],   // coxa pra trás, joelho flexionado
+  'mixamorig:RightLeg':     [ 92,   0,  0],
+  'mixamorig:LeftUpLeg':    [ -4,   0, -4],
+  'mixamorig:LeftLeg':      [ 12,   0,  0],
+  'mixamorig:RightArm':     [  0, -28,-52],
+  'mixamorig:RightForeArm': [  0,-100,  0],
+  'mixamorig:LeftArm':      [  0,  28, 52],
+  'mixamorig:LeftForeArm':  [  0, 100,  0],
+});
+
+const P_KNEE_HIT = mix(P_GUARD_READY, {
+  'mixamorig:Spine':        [ 26,   0,  0],   // torso fecha em cima
+  'mixamorig:Spine1':       [ 12,  -8,  0],
+  'mixamorig:Spine2':       [  6,  -4,  0],
+  'mixamorig:Neck':         [-10,   0,  0],
+  'mixamorig:Head':         [-14,   0,  0],
+  'mixamorig:RightUpLeg':   [-108,  4,  6],   // joelho em cima, altura do peito
+  'mixamorig:RightLeg':     [104,   0,  0],   // canela ainda flexionada = ponto do joelho
+  'mixamorig:LeftUpLeg':    [ 10,   0, -4],
+  'mixamorig:LeftLeg':      [ 14,   0,  0],
+  'mixamorig:RightArm':     [  0,  42, 48],   // braços puxam pra baixo
+  'mixamorig:RightForeArm': [  0,  96,  0],
+  'mixamorig:LeftArm':      [  0, -40,-46],
+  'mixamorig:LeftForeArm':  [  0, -96,  0],
+});
+
 /* --- SMASH: preparação enorme + descarga ---------------------------------- */
 const P_SMASH_WIND = mix(P_GUARD_READY, {
   'mixamorig:Spine':        [-12,   0,  0],
@@ -365,6 +425,12 @@ const P_PUNCH_L_OVER  = entre(P_PUNCH_L_WIND, P_PUNCH_L_HIT, 1, { ..._tronco(1.0
 
 const P_KICK_R_LEAD = entre(P_KICK_R_WIND, P_KICK_R_HIT, 0.5, _tronco(1));
 const P_KICK_R_OVER  = entre(P_KICK_R_WIND, P_KICK_R_HIT, 1, { ..._tronco(1.04), 'mixamorig:RightUpLeg': 1.10 });
+
+const P_KICK_L_LEAD = entre(P_KICK_L_WIND, P_KICK_L_HIT, 0.5, _tronco(1));
+const P_KICK_L_OVER  = entre(P_KICK_L_WIND, P_KICK_L_HIT, 1, { ..._tronco(1.04), 'mixamorig:LeftUpLeg': 1.10 });
+
+const P_KNEE_LEAD = entre(P_KNEE_WIND, P_KNEE_HIT, 0.5, _tronco(1));
+const P_KNEE_OVER  = entre(P_KNEE_WIND, P_KNEE_HIT, 1, { ..._tronco(1.04), 'mixamorig:RightUpLeg': 1.10 });
 
 const P_UPPER_LEAD = entre(P_UPPER_WIND, P_UPPER_HIT, 0.5, _tronco(1));
 const P_UPPER_OVER  = entre(P_UPPER_WIND, P_UPPER_HIT, 1, { ..._tronco(1.04), 'mixamorig:RightArm': 1.10 });
@@ -590,6 +656,21 @@ const CLIPS = {
     keys: [[0, P_GUARD_READY], [0.05, P_KICK_R_WIND, 'out'], [0.082, P_KICK_R_LEAD, 'in'],
       [0.115, P_KICK_R_HIT, 'out'], [0.15, P_KICK_R_OVER, 'in'], [0.28, P_GUARD_READY, 'out']],
   },
+  attack_light_4: {
+    base: P_GUARD_READY, loop: false,
+    keys: [[0, P_GUARD_READY], [0.055, P_KICK_L_WIND, 'out'], [0.09, P_KICK_L_LEAD, 'in'],
+      [0.125, P_KICK_L_HIT, 'out'], [0.16, P_KICK_L_OVER, 'in'], [0.28, P_GUARD_READY, 'out']],
+  },
+  attack_light_5: {
+    base: P_GUARD_READY, loop: false,
+    keys: [[0, P_GUARD_READY], [0.065, P_KNEE_WIND, 'out'], [0.10, P_KNEE_LEAD, 'in'],
+      [0.135, P_KNEE_HIT, 'out'], [0.17, P_KNEE_OVER, 'in'], [0.33, P_GUARD_READY, 'out']],
+  },
+  /* attack_up / attack_down eram os clipes do rush direcional (J+W / J+S),
+   * abandonado quando a string virou cadeia fixa. Ficam aqui sem move que
+   * os aponte: se um dia o lançador/smash quiser pose própria além do
+   * genérico attack_heavy, é reaproveitar. Remover junto com as poses
+   * P_UPPER_* / P_AXE_* se decidir que não valem a manutenção. */
   attack_up: {
     base: P_GUARD_READY, loop: false,
     keys: [[0, P_GUARD_READY], [0.06, P_UPPER_WIND, 'out'], [0.095, P_UPPER_LEAD, 'in'],
