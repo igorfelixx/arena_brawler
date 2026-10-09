@@ -783,6 +783,20 @@ export const TUNING = {
      * trocam este array, não a máquina de estados. */
     rushChain: ['rush_1', 'rush_2', 'rush_3', 'rush_4', 'rush_5'],
 
+    /* A string AÉREA — a continuation quando a vítima já está em juggle.
+     *
+     * Gatilho: apertar J com o alvo em BLOWAWAY ou KNOCKDOWN (o protótipo não
+     * tem flag "no ar" — todo mundo voa 360° o tempo todo; o que existe é o
+     * estado de lançamento). O tipo da cadeia é TRAVADO no primeiro elo
+     * (`fighter._chainAir`): se a vítima se recuperar no meio, a rota
+     * continua aérea até zerar, porque trocar de string em pleno combo
+     * quebraria a coreografia que a cadeia fixa existe pra criar.
+     *
+     * Três elos e não cinco: no ar a vítima foge (drag do blowaway), a
+     * janela de emenda é curta, e um smash já é o finalizador natural —
+     * BT3 também encurta a air string em relação à ground. */
+    rushChainAir: ['air_1', 'air_2', 'air_3'],
+
     /* Quantos frames sem atacar para a rota zerar e o neutro voltar.
      *
      * É o beat de respiro que o combate não tinha. Baixo demais e martelar
@@ -1371,6 +1385,98 @@ export const TUNING = {
       hitboxRadius: 0.72,
       knockback: 2.4,
       knockup: 0.0,
+      hitstop: 7,
+      shake: 0.16,
+      hitstun: 20,
+      blockstun: 6,
+      chipDamage: 0.5,
+      cancelInto: ['smash_forward', 'smash_up', 'smash_down'],
+      cancelWindow: [7, 20],
+      homingRange: 2.8,
+      homingStrength: 0.85,
+      advanceSpeed: 6.0,
+      advanceFrames: [1, 7],
+      vanishWindow: 10,
+    },
+
+    /* ---- AIR STRING — a rota quando a vítima já está em juggle ----------
+     *
+     * `causesBlowaway: true` em TODOS os elos não é cosmético: sem ele,
+     * `applyHit` manda a vítima pra HITSTUN no primeiro acerto e a string
+     * morre ali (ver o branch `else` do estado resultante). Com ele, cada
+     * golpe RELANÇA — a vítima fica em BLOWAWAY do air_1 ao air_3, que é o
+     * que define "estar no ar" neste protótipo (sem flag de chão: todo
+     * mundo voa 360°; o estado de lançamento é a única âncora).
+     *
+     * knockback 6.0 acima de `blowaway.minSpeedToExit` (4.0) de propósito:
+     * com o drag 1.35, ~15 frames entre elos derradem a velocidade pra
+     * ~4.3 — ainda dentro do estado. Abaixo de 4.0 a vítima sairia de
+     * BLOWAWAY no meio da string e o próximo J cairia em HITSTUN.
+     *
+     * Clips reaproveitados da ground string (sem procAnim novo): o
+     * placeholder não distingue voo de chão na pose, e o que importa no
+     * playtest é o ritmo do frame data, não o osso. */
+
+    air_1: {
+      clip: 'attack_light_1',
+      startup: 4, active: 3, recovery: 8,
+      damage: 5,
+      poiseDamage: 6,
+      socket: 'hand_r',
+      hitboxRadius: 0.68,
+      knockback: 6.0,
+      knockup: 1.2,
+      causesBlowaway: true,
+      hitstop: 4,
+      shake: 0.09,
+      hitstun: 14,
+      blockstun: 4,
+      chipDamage: 0.3,
+      cancelInto: ['air_2',
+                   'smash_forward', 'smash_up', 'smash_down'],
+      cancelWindow: [5, 15],
+      homingRange: 2.8,
+      homingStrength: 0.85,
+      advanceSpeed: 7.0,
+      advanceFrames: [1, 6],
+      vanishWindow: 9,
+    },
+
+    air_2: {
+      clip: 'attack_light_2',
+      startup: 5, active: 3, recovery: 8,
+      damage: 6,
+      poiseDamage: 7,
+      socket: 'hand_l',
+      hitboxRadius: 0.68,
+      knockback: 6.0,
+      knockup: 1.2,
+      causesBlowaway: true,
+      hitstop: 5,
+      shake: 0.12,
+      hitstun: 16,
+      blockstun: 5,
+      chipDamage: 0.4,
+      cancelInto: ['air_3',
+                   'smash_forward', 'smash_up', 'smash_down'],
+      cancelWindow: [6, 17],
+      homingRange: 2.8,
+      homingStrength: 0.85,
+      advanceSpeed: 6.5,
+      advanceFrames: [1, 6],
+      vanishWindow: 9,
+    },
+
+    air_3: {                     // fim da string aérea: só enders depois
+      clip: 'attack_light_5',
+      startup: 6, active: 3, recovery: 11,
+      damage: 9,
+      poiseDamage: 11,
+      socket: 'foot_r',
+      hitboxRadius: 0.72,
+      knockback: 7.0,
+      knockup: 1.6,
+      causesBlowaway: true,
       hitstop: 7,
       shake: 0.16,
       hitstun: 20,

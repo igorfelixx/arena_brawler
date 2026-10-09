@@ -458,8 +458,9 @@ export class BotController {
         /* ROTA ESGOTADA: martelar rush não sai mais (nem a investida). Se a IA
          * insistisse, ela ficaria apertando um botão morto — que é exatamente
          * a experiência que estamos tirando do jogador. Ela tem que tomar a
-         * MESMA decisão que o humano: finalizar ou sair. */
-        if (f.comboCount >= TUNING.combo.maxChain) {
+         * MESMA decisão que o humano: finalizar ou sair.
+         * O teto é o da cadeia ativa (3 no ar, 5 no chão). */
+        if (f.comboCount >= f.comboCeiling) {
           if (dist <= A.attackRange * 1.3) {
             c.smash = true;
             c.smashDir = this._pickSmashDir(foe, ctx);

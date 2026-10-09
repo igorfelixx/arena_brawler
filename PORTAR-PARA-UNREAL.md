@@ -186,6 +186,16 @@ só resta o smash — ou esperar `chainResetFrames`. O gancho-launcher e o
 chute-cravado não sumiram: viraram `smash_up` e `smash_down`, que já existiam.
 A direção agora mora onde ela é decisão de finalização, não de digitador.
 
+**String aérea** (`rushChainAir`, 3 elos) — mesma tecla `J`, outro gatilho:
+quando o ALVO está em `BLOWAWAY` ou `KNOCKDOWN` no primeiro elo, a rota é a
+aérea (`air_1..3`) em vez da de chão. O tipo é **travado** no primeiro elo
+(`fighter._chainAir`): se a vítima se recuperar no meio, a string continua
+aérea até zerar. Os `air_*` têm `causesBlowaway: true` de propósito — sem
+isso `applyHit` manda a vítima pra HITSTUN no primeiro acerto e a string
+morre ali. knockback ≥ 6.0 acima de `blowaway.minSpeedToExit` (4.0) pra ela
+não sair do estado entre elos. O teto é `comboCeiling` (min(maxChain, 3)),
+não `maxChain` — nos três placeschecks (fighter×2, bot×1).
+
 **Smash** (`K`, com direção) — o finalizador. Lento, telegrafado, quebra guarda,
 e manda o adversário voando. **Três direções:**
 

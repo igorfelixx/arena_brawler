@@ -102,6 +102,10 @@ Cada elo só emenda no **próximo** da lista (não dá pra pular). Ao chegar no
 importando no **finalizador**: `Espaço+K` sobe, `C+K` crava, `K` solto manda
 pra longe (ring-out).
 
+Quem já está **lançado** (voando sem controle, depois de um smash ou de uma
+quebra de poise) toma uma string **aérea** de 3 golpes no lugar da de 5 —
+mesmo botão `J`, a vítima em juggle é o gatilho. No chão continua a de 5.
+
 ### Lock-on: travado vs. livre
 
 Com **lock-on** (padrão) você orbita o alvo, o personagem sempre o encara e os

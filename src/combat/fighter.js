@@ -162,6 +162,11 @@ export class Fighter {
     this.dashHits = new Set();   // quem já foi trombado neste dash (1 toque cada)
     this.comboCount = 0;         // elos da rota atual (teto em combo.maxChain)
     this.chainResetTimer = 0;    // enquanto corre, a rota ainda é a mesma
+    /* Qual cadeia a rota atual está usando — travada no primeiro elo.
+     * Falso = rushChain (chão); verdadeiro = rushChainAir (juggle). O tipo
+     * não muda no meio porque trocar de string em pleno combo quebraria a
+     * coreografia que a cadeia fixa existe pra criar. */
+    this._chainAir = false;
 
     /* JANELA DE PERSEGUIÇÃO. Aberta quando VOCÊ lança alguém; enquanto correr,
      * o dash vira perseguição em vez de locomoção. É a segunda disputa. */
@@ -297,6 +302,13 @@ export class Fighter {
   get maxPoise() { return TUNING.fighter.maxPoise; }
   get maxGuardStamina() { return TUNING.defense.guard.maxStamina; }
   get maxChain() { return TUNING.combo.maxChain; }
+  /* Teto da rota ATUAL: a cadeia aérea tem 3 elos, a do chão 5. Usar
+   * `maxChain` fixo em qualquer placecheck deixaria a air string continuar
+   * lendo air_3 (clamp de rushKeyFor) por dois elos a mais. */
+  get comboCeiling() {
+    const chain = this._chainAir ? TUNING.combo.rushChainAir : TUNING.combo.rushChain;
+    return Math.min(this.maxChain, chain.length);
+  }
 
   /* ---- Max Power e exaustão (§18, §19) ----------------------------- */
   get inMaxPower() { return this.maxPowerFrames > 0; }
@@ -786,7 +798,7 @@ export class Fighter {
 
     // Rota esgotada: a investida também não sai. Sem isto, J te levava até o
     // alvo e não acontecia nada — pior que o botão simplesmente não responder.
-    if (this.comboCount >= TUNING.combo.maxChain) return false;
+    if (this.comboCount >= this.comboCeiling) return false;
 
     const d = this.position.distanceTo(this.target.position);
     if (d <= A.attackAt || d > A.range) return false;
@@ -2163,11 +2175,20 @@ export class Fighter {
    * Espaço+J está claramente pedindo o gancho, não um soco lateral.
    */
   /* Cadeia fixa: o índice É o progresso. `comboCount` conta elos não-ender
-   * da rota atual, então J nº N dispara `rushChain[N]` — sem ler direção.
-   * Trocar a string (personagens diferentes) é trocar `TUNING.combo.rushChain`;
-   * a máquina de estados não muda. */
+   * da rota atual, então J nº N dispara a cadeia ativa[N] — sem ler direção.
+   *
+   * O TIPO da cadeia (chão vs aérea) é escolhido no primeiro elo e travado:
+   * com o alvo em BLOWAWAY/KNOCKDOWN, J abre a air string; nos outros
+   * estados, a ground. Se a vítima se recuperar no meio, a rota continua
+   * aérea até zerar — trocar de string em pleno combo quebraria a
+   * coreografia que a cadeia fixa existe pra criar. */
   _rushKey() {
-    return rushKeyFor(TUNING.combo.rushChain, this.comboCount);
+    if (this.comboCount === 0) {
+      const t = this.target;
+      this._chainAir = !!(t && (t.state === S.BLOWAWAY || t.state === S.KNOCKDOWN));
+    }
+    const chain = this._chainAir ? TUNING.combo.rushChainAir : TUNING.combo.rushChain;
+    return rushKeyFor(chain, this.comboCount);
   }
 
   /**
@@ -2194,8 +2215,10 @@ export class Fighter {
      *
      * Agora, esgotada a rota, rush NÃO SAI até a interação resetar
      * (`chainResetFrames` sem atacar). Sobram os enders e o reposicionamento —
-     * que é exatamente o ponto de decisão que faltava. */
-    if (!ender && this.comboCount >= this.maxChain) return false;
+     * que é exatamente o ponto de decisão que faltava.
+     *
+     * O teto é o da cadeia ATIVA (`comboCeiling`): 3 na aérea, 5 no chão. */
+    if (!ender && this.comboCount >= this.comboCeiling) return false;
 
     // Reavalia a mira. Com lock-on solto, cada golpe procura o melhor alvo na
     // direção apontada — é assim que se troca de vítima no meio da sequência.

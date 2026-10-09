@@ -49,6 +49,11 @@ para os números):
   direção agora só escolhe o smash (`Espaço+K` / `C+K` / `K`). Gancho-launcher
   e chute-cravado viraram `smash_up`/`smash_down`. **Não jogado por humano
   ainda** — a cadeia nova é mecânica, não playtest
+- **string aérea** (`combo.rushChainAir`, `air_1..3`): mesma tecla `J`, mas
+  com o ALVO em BLOWAWAY/KNOCKDOWN no primeiro elo a rota vira a aérea (3
+  elos, `comboCeiling`). Tipo travado no início (`_chainAir`); `air_*` têm
+  `causesBlowaway` pra vítima não cair em HITSTUN no meio. Validada no
+  navegador (air_1→3, teto 3, chão intacto), **não jogada por humano**
 - smash nas 3 direções, blowaway, ring-out
 - vanish, guarda direcional, guard break, step, recuperação aérea
 - ki blasts, feixe de ultimate
