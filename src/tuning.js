@@ -157,81 +157,49 @@ export const TUNING = {
     // Ki baixo bloqueia as ferramentas de escape — é o que gera pressão.
     lowKiThreshold: 20,
 
-    /* ================================================================
-     *  EXAUSTÃO  —  o fundo do poço tem consequência
-     * ================================================================
-     *  `lowKiThreshold` avisava que o ki estava baixo e era só isso: a barra
-     *  ficava vermelha e o jogo continuava igual. Gastar até o zero não custava
-     *  nada além de esperar — e recurso que não tem fundo não é recurso, é
-     *  cronômetro.
-     *
-     *  Agora zerar o ki tem um estado próprio. Durante a exaustão NENHUMA ação
-     *  que custa ki sai: nem dash, nem vanish, nem perseguição, nem blast. Você
-     *  fica com o kit básico (voar, rush, smash, guarda) e tem que sobreviver
-     *  com ele.
-     *
-     *  O regen durante a exaustão é MAIOR que o passivo de propósito. A punição
-     *  é perder as ferramentas por um instante, não ficar de castigo: castigo
-     *  longo pune quem está aprendendo (que gasta ki errado) muito mais do que
-     *  pune quem já sabe. */
-    exhaustFrames: 90,            // 1,5 s sem nenhuma ferramenta de ki
-    exhaustRegenPerSec: 7.0,      // sobe mais rápido que o passivo (2.2)
-    /* Sair da exaustão exige um mínimo de ki na barra, não só tempo. Sem isso
-     * você voltava com 1 de ki, gastava num dash e caía de novo na exaustão —
-     * um serrote em vez de uma recuperação. */
-    exhaustExitKi: 12,
   },
 
   /* ================================================================== */
-  /*  MAX POWER  —  o estado de poder máximo                             */
+  /*  MAX POWER (SPARKING)  —  o estado de poder máximo                  */
   /* ================================================================== */
-  /*  A ferramenta que faltava pro ki ser DECISÃO e não só combustível.
+  /*  Adaptado do "Max Power com exaustão" pro SPARKING do BT3 (§4.5).
+   *  A estrutura de ENTRADA é a mesma de propósito — era boa: exigir
+   *  carregar até o topo, parado, é a posição mais vulnerável do jogo,
+   *  então acender é uma decisão, não um botão de vitória.
    *
-   *  Antes, ki servia pra três coisas (dash, vanish, blast) e todas eram
-   *  compras pequenas. Não havia nada em que apostar a barra inteira, e por isso
-   *  não havia momento de "agora eu vou pra cima": carregar ki era uma pausa.
+   *      ki CHEIO (+ blast gauge cheio)  →  segurar `enterHoldFrames`
+   *                              ↓
+   *                      SPARKING (drena ki por frame)
+   *                              ↓
+   *                      ki = 0  →  sem ferramentas de ki até recarregar
    *
-   *  A entrada é DELIBERADA e custa caro:
+   *  O que MUDOU: o estado não tem mais duração própria nem termina em
+   *  um estado de EXAUSTÃO separado (que foi removido de `ki`) — o
+   *  sparking drena a barra até zero e o ESVaziamento é o fim. Contar
+   *  com isso é apostar: quem sobrevive à sua própria barra fica sem
+   *  vanish/dash/blast na reta final, que é o counterplay.
    *
-   *      carregar ki (R)  →  ki >= enterKiThreshold  →  segurar enterHoldFrames
-   *                                      ↓
-   *                              MAX POWER (durationFrames)
-   *                                      ↓
-   *                            acaba  →  EXAUSTÃO
-   *
-   *  O counterplay é o que impede isto de ser "apertei botão, fiquei
-   *  invencível", e ele não é uma regra nova — sai da própria estrutura:
-   *
-   *    1. a entrada exige ficar PARADO carregando, que é a posição mais
-   *       vulnerável do jogo. Quem lê entra em cima e interrompe.
-   *    2. o estado DRENA ki, então as ferramentas de escape (vanish,
-   *       perseguição) ficam cada vez mais caras justamente enquanto você está
-   *       sendo agressivo
-   *    3. acabar joga direto na EXAUSTÃO. Quem sobreviveu ao Max Power ganha
-   *       uma janela em que o outro não tem vanish, não tem dash e não tem
-   *       perseguição. Aguentar é uma estratégia legítima.
-   *
-   *  Ou seja: não é um botão de vitória, é uma APOSTA com prazo.               */
+   *  O dreno vive em `bt3.gauges.maxPowerDrainPerFrame` (0,22/f ≈ 7,5 s
+   *  com a barra cheia). Aqui ficam só os campos de entrada e os
+   *  modificadores que o runtime lê neste bloco.                       */
   maxPower: {
-    enterKiThreshold: 78,         // abaixo disto não entra
-    enterHoldFrames: 26,          // frames carregando ACIMA do limiar
-    enterKiCost: 22,              // o preço de acender
-    entryFrames: 18,              // estado de entrada (o clarão), invulnerável
-    durationFrames: 420,          // 7 s
-    drainPerSec: 11,              // a barra escorre enquanto durar
+    enterKiThreshold: 100,         // precisa estar com o ki CHEIO (§4.5)
+    enterBlastThreshold: 100,      // blast gauge CHEIO também (§4.5 — ver wp1-requests.md)
+    enterHoldFrames: 26,           // frames segurando com as barras cheias
+    entryFrames: 18,               // estado de entrada (o clarão), invulnerável
 
     /* Modificadores. Deliberadamente MODESTOS: um multiplicador grande
      * transformaria o estado em "quem acender primeiro ganha", que é o oposto
-     * de um jogo de leitura. O valor do Max Power está em CONSISTÊNCIA (ki mais
-     * barato, poise mais duro, sai do hitstun antes), não em dano bruto. */
+     * de um jogo de leitura. O valor do estado está em CONSISTÊNCIA (ki mais
+     * barato, sai do hitstun antes), não em dano bruto. */
     damageMul: 1.20,
-    kiCostMul: 0.65,              // vanish/dash/perseguição ficam baratos
+    kiCostMul: 0.65,               // vanish/dash/blast ficam baratos
     speedMul: 1.12,
-    poiseMul: 1.6,                // muito mais difícil de arrancar da pressão
-    hitstunTakenMul: 0.82,        // sai do stun um pouco antes
-    /* Acabar cai na exaustão. É o que dá ao defensor uma razão pra AGUENTAR em
-     * vez de entrar em pânico — e é o contrapeso do estado inteiro. */
-    endsInExhaustion: true,
+    hitstunTakenMul: 0.82,         // sai do stun um pouco antes
+    // (`durationFrames`/`drainPerSec` sumiram: a duração É kiCheio ÷ taxa
+    //  de dreno, em bt3.gauges. `poiseMul` sumiu junto com o poise.
+    //  `endsInExhaustion`/`enterKiCost`: sem exaustão separada — o preço
+    //  de acender é a barra gasta e o tempo parado carregando.)
   },
 
   /* ================================================================== */
@@ -305,24 +273,6 @@ export const TUNING = {
     //  brigaria com o homing e com o avanço do golpe, e o combate ficaria
     //  escorregadio justamente na distância em que ele acontece.)
 
-    /* POISE — o disjuntor anti-stunlock.
-     *
-     * Ele existia, armava e disparava. E não desarmava nada.
-     *
-     * Ao quebrar, a vítima ia pra BLOWAWAY carregando a velocidade DO GOLPE
-     * que quebrou — um rush, 1.8 m/s. Só que o blowaway só se sustenta acima
-     * de `blowaway.minSpeedToExit` (4.0), então o estado terminava no frame
-     * seguinte. Medido: o poise quebrou 16 vezes em 30 s de martelada e o
-     * blowaway durou 4 FRAMES em média. A vítima voltava exatamente pro lugar
-     * onde estava apanhando.
-     *
-     * Agora a quebra tem impulso PRÓPRIO, independente do golpe. Ele existe
-     * pra fazer uma coisa só: SEPARAR OS CORPOS e devolver o neutro. E, de
-     * quebra, abre a janela de perseguição — o disjuntor vira oportunidade em
-     * vez de anticlímax.
-     *
-     * 18 m/s com arrasto 1.35 ≈ 13 m de separação: longe o bastante pra sair
-     * do alcance do rush (2.6 m) e perto o bastante pra valer perseguir. */
     /* ================================================================
      *  REGENERAÇÃO DE VIDA  —  zero no duelo, é o motor do modo ARENA
      * ================================================================
@@ -348,12 +298,6 @@ export const TUNING = {
      *  regeneração só faria a luta não acabar. */
     healthRegenPerSec: 0,
     healthRegenDelaySec: 0,
-
-    maxPoise: 34,
-    poiseRegenPerSec: 14,
-    poiseBreakStunFrames: 30,
-    poiseBreakKnockback: 18.0,
-    poiseBreakKnockup: 4.0,
   },
 
   /* ================================================================== */
@@ -701,1274 +645,465 @@ export const TUNING = {
   },
 
   /* ================================================================== */
-  /*  REGRAS DE COMBO                                                    */
+  /*  BT3  —  tabelas de mecânica idêntica ao Tenkaichi 3 (blueprint §5) */
   /* ================================================================== */
-  combo: {
-    /* Só dá pra emendar no próximo elo se o golpe ENCOSTOU (acerto ou defesa).
+  /*  ESTE BLOCO É O PRODUTO DO ARQUIVO. Ele substitui moves/combo/
+   *  defenseMatrix/launch/smashCharge/pursuit/homing/rushApproach por
+   *  dados no SHAPE do decompilado (z3xox/Tenkaichi3Decomp), porque o
+   *  pedido é um caminho só: nada de `if (bt3Mode)`. Os campos marcados
+   *  abaixo como congelados são contrato com o WP2 — o código de combate
+   *  passa a ler AQUI, não de seções inventadas.
+   *
+   *  UNIDADES (blueprint §1, obrigatórias):
+   *    tempo    → frames @60fps (parâmetros BT3 em “segundos” ×30 no decomp
+   *               foram convertidos: segundos ×60)
+   *    ki       → 0..100 (decomp 0..100000 ÷ 1000)
+   *    velocidade → m/s (decomp km/h ÷ 3,6; campos “10 km/h” do decomp
+   *               também converteram para m/s)
+   *
+   *  O QUE VEM DO DECOMP (mecânica/constante estrutural) vs [AUTORADO]
+   *  (números por golpe): startup/active/recovery por golpe NÃO são
+   *  extraíveis — a janela de hit é evento do arquivo de animação
+   *  binário (bobj_a.h) e os attack records vêm de AFS ilegível sem a
+   *  ISO. Todo dano/duração/janela por golpe abaixo é [AUTORADO],
+   *  calibrado nos baselines do protótipo que este arquivo já carregava.
+   *  Quando a ISO chegar (`port/tools/extract_disc.py`), estes são os
+   *  primeiros números a substituir. */
+  bt3: {
+
+    /* ---------------------------------------------------------------
+     *  ATTACK RECORDS  (BtlAtkRecord 0x30 B, btl_tech_a.h:59-96)
+     * ---------------------------------------------------------------
+     *  Chave = attack id do BT3. Cobrem o kit do MVP Goku (blueprint
+     *  §4.6 / §5): rush 0..10, smash carregável 0x13..0x21 (5 direções
+     *  × 3 níveis de carga: fraco <0,3 / médio <0,99 / cheio),
+     *  throws 0x55/0x56, finishers 0x59..0x5E (ações 0x64/0x65 por
+     *  carga). Técnicas não estão aqui: elas vivem em `supers`
+     *  (BtlSuperData), como no decomp.
      *
-     * É a regra que impede martelar botão de ser a jogada ótima, e é padrão
-     * em jogo de luta ("chain on hit/block"). Sem ela o combo emenda no vazio,
-     * o atacante nunca fica exposto, e não existe brecha pra punir — medido:
-     * martelar J ganhava de todo o resto, e a IA estava CERTA em não tentar
-     * revidar, porque janela segura de fato não havia.
+     *  Ordem das 5 direções em 0x13..0x21 [AUTORADO — decomp mapeia as
+     *  animações 0x58, 0x5B, 0x52, 0x55, 0x4C|0x4F, mas a ordem das
+     *  direções é deduzida dos inputs 0x35..0x38 = cima/baixo/esq/dir
+     *  + contextual sem direção]:
+     *    índice 0 cima · 1 baixo · 2 esquerda · 3 direita · 4 frente
+     *    0x13..0x17 fracos · 0x18..0x1C médios · 0x1D..0x21 cheios
      *
-     * Com ela, as duas coisas que o jogo precisa acontecem ao mesmo tempo:
-     *   acertou  → o combo flui, é gostoso, qualquer um consegue
-     *   errou    → come o recovery inteiro e leva punição
-     *
-     * Ou seja: o piso continua baixo (encostar é fácil) e o teto sobe
-     * (atacar no vazio passa a custar caro). */
-    cancelOnlyOnContact: true,
+     *  pushHit/pushGuard/launchSpeed: m/s (decomp: unidades de 10 km/h).
+     *  shakeTime: frames (decomp: décimos de segundo). launchA/B: graus
+     *  (yaw/pitch). flags: bits do decomp; 0x200000 = pitch de lançamento
+     *  vem do HitPose.90 (btl_char_hit.h). priority: maior vence em trade
+     *  igual-clash; armadura do golpe = flags 0x200 + armorIgnore. */
+    records: {
 
-    /* E BLOQUEAR conta como "encostou"?  NÃO.
-     *
-     * Esta é a regra que o comentário do bloco `moves` sempre afirmou e que o
-     * código nunca implementou: "quem BLOQUEIA sai do stun antes de quem
-     * atacou, e ganha o turno". Não ganhava, porque a emenda era liberada por
-     * QUALQUER contato — inclusive bloqueio. Na prática:
-     *
-     *   bloqueei o golpe 1 → ele emenda no 2 → emenda no 3 → …
-     *
-     * O atacante nunca ficava exposto contra a guarda, então defender não
-     * cobrava preço nenhum e a única saída era gastar ki no vanish. Com
-     * `cancelOnBlock: false` as três situações passam a ser distintas:
-     *
-     *   acertou   → emenda, o combo flui           (piso baixo, é gostoso)
-     *   bloqueou  → NÃO emenda, come o recovery    (o turno vira)
-     *   errou     → NÃO emenda, come o recovery    (punição)
-     *
-     * Com o rush_1 (recovery 8, blockstun 4) isso dá ~+8 de vantagem pro
-     * defensor: tempo de sobra pra revidar com um rush de 4 de startup. É o
-     * que obriga o atacante a misturar SMASH (que quebra guarda) em vez de
-     * martelar — e é o eixo ATAQUE ↔ BLOCK ↔ COUNTER que faltava.
-     *
-     * Está no painel (P) porque é a alavanca mais forte do arquivo: ligar isto
-     * devolve o comportamento antigo na hora, pra comparar lado a lado. */
-    cancelOnBlock: false,
+      /* ---- RUSH (ação 0x44): elos 0..9, anim unkD60 + 0x37 ----
+       * id 0 = primeiro hit da anim 0x37, id 1 = hits seguintes dela,
+       * ids 2..10 = elos 1..9 (animações 0x38..0x40). Baseline de dano
+       * do protótipo (rush_1..5: 5/5/6/6/8) distribuída na string de 10. */
+      '0':  { flags: 0, damage: 5, guardDamage: 6, guardKi: 2, kiGain: 6, pushHit: 2.0, pushGuard: 1.0, launchSpeed: 0, launchA: 0, launchB: 0, shakePower: 1, shakeTime: 6, react: 5, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 1, hitSound: 0, voice: 1, priority: 1, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 0 },  // [AUTORADO]
+      '1':  { flags: 0, damage: 5, guardDamage: 6, guardKi: 2, kiGain: 6, pushHit: 2.0, pushGuard: 1.0, launchSpeed: 0, launchA: 0, launchB: 0, shakePower: 1, shakeTime: 6, react: 5, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 1, hitSound: 0, voice: 1, priority: 1, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 0 },  // [AUTORADO]
+      '2':  { flags: 0, damage: 5, guardDamage: 6, guardKi: 2, kiGain: 6, pushHit: 2.0, pushGuard: 1.0, launchSpeed: 0, launchA: 0, launchB: 0, shakePower: 1, shakeTime: 6, react: 5, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 1, hitSound: 0, voice: 1, priority: 1, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 0 },  // [AUTORADO]
+      '3':  { flags: 0, damage: 5, guardDamage: 6, guardKi: 2, kiGain: 6, pushHit: 2.0, pushGuard: 1.0, launchSpeed: 0, launchA: 0, launchB: 0, shakePower: 1, shakeTime: 6, react: 5, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 1, hitSound: 0, voice: 1, priority: 1, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 0 },  // [AUTORADO]
+      '4':  { flags: 0, damage: 6, guardDamage: 8, guardKi: 2, kiGain: 7, pushHit: 2.2, pushGuard: 1.0, launchSpeed: 0, launchA: 0, launchB: 0, shakePower: 2, shakeTime: 7, react: 5, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 1, hitSound: 0, voice: 1, priority: 1, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 0 },  // [AUTORADO]
+      '5':  { flags: 0, damage: 6, guardDamage: 8, guardKi: 2, kiGain: 7, pushHit: 2.2, pushGuard: 1.0, launchSpeed: 0, launchA: 0, launchB: 0, shakePower: 2, shakeTime: 7, react: 5, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 1, hitSound: 0, voice: 1, priority: 1, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 0 },  // [AUTORADO]
+      '6':  { flags: 0, damage: 6, guardDamage: 8, guardKi: 3, kiGain: 7, pushHit: 2.4, pushGuard: 1.2, launchSpeed: 0, launchA: 0, launchB: 0, shakePower: 2, shakeTime: 7, react: 7, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 2, hitSound: 0, voice: 1, priority: 1, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 0 },  // [AUTORADO]
+      '7':  { flags: 0, damage: 7, guardDamage: 8, guardKi: 3, kiGain: 8, pushHit: 2.4, pushGuard: 1.2, launchSpeed: 0, launchA: 0, launchB: 0, shakePower: 2, shakeTime: 7, react: 7, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 2, hitSound: 0, voice: 1, priority: 1, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 0 },  // [AUTORADO]
+      '8':  { flags: 0, damage: 7, guardDamage: 9, guardKi: 3, kiGain: 8, pushHit: 2.6, pushGuard: 1.2, launchSpeed: 0, launchA: 0, launchB: 0, shakePower: 3, shakeTime: 8, react: 7, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 2, hitSound: 1, voice: 2, priority: 1, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 0 },  // [AUTORADO]
+      '9':  { flags: 0, damage: 8, guardDamage: 10, guardKi: 3, kiGain: 9, pushHit: 2.8, pushGuard: 1.4, launchSpeed: 0, launchA: 0, launchB: 0, shakePower: 3, shakeTime: 8, react: 9, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 3, hitSound: 1, voice: 2, priority: 1, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 0 },  // [AUTORADO]
+      '10': { flags: 0, damage: 9, guardDamage: 11, guardKi: 4, kiGain: 10, pushHit: 3.0, pushGuard: 1.6, launchSpeed: 0, launchA: 0, launchB: 0, shakePower: 4, shakeTime: 9, react: 9, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 3, hitSound: 1, voice: 2, priority: 1, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 0 },  // [AUTORADO]
 
-    /* ================================================================
-     *  A ROTA — e por que o teto antigo não segurava nada
-     * ================================================================
-     *  `maxChain` existia e era verificado assim:
-     *
-     *      const emendando = this.state === S.ATTACK;
-     *      if (emendando && comboCount >= maxChain) return false;
-     *
-     *  Ou seja: só valia DENTRO do estado de ataque. Quando o último elo
-     *  terminava sozinho, `_sAttack` zerava `comboCount` e voltava pra IDLE —
-     *  e o próximo J começava uma cadeia nova do zero.
-     *
-     *  Medido, martelando J por 30 s contra boneco parado:
-     *      elo máximo atingido     6     (o teto "funcionava")
-     *      acertos                126    (21 cadeias de 6, emendadas)
-     *      vítima presa           77% do tempo
-     *      janelas livres >=12f     5    em 30 segundos
-     *
-     *  A correção é que a ROTA tem dono e tem fim. Ao esgotar, rush deixa de
-     *  sair — de verdade, inclusive vindo da IDLE — até a interação resetar.
-     *  Sobram os ENDERS (smash) e o reposicionamento. É a diferença entre
-     *  "quem segura o combo?" e "quem ganha a próxima troca?".
-     *
-     *  Subiu de 4 pra 5 com a cadeia fixa estilo BT3: são cinco golpes
-     *  DISTINTOS na lista (não mais quatro direções repetíveis), então o
-     *  mesmo teto agora cobre uma string inteira de coreografia.
-     */
-    maxChain: 5,
+      /* ---- SMASH CARREGÁVEL (0x47..0x4C → ids 0x13..0x21) ----
+       * Baselines do protótipo: smash frente dano 16 / empurrão 46 m/s;
+       * cima 14 / 38 de subida; baixo 18 / 42 de cravada. Níveis de carga
+       * escalam ~0,8 / ~1,0 / ~1,5 sobre a base — substitui o Perfect
+       * Smash por QUANTIDADE DE CARGA (blueprint §4.3). */
+      // — fracos (carga < 0,3) —
+      '0x13': { flags: 0x200000, damage: 11, guardDamage: 18, guardKi: 5, kiGain: 8, pushHit: 22, pushGuard: 8, launchSpeed: 22, launchA: 0, launchB: 70, shakePower: 4, shakeTime: 9, react: 9, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 2, hitSound: 1, voice: 2, priority: 2, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 1 },   // cima [AUTORADO]
+      '0x14': { flags: 0, damage: 13, guardDamage: 18, guardKi: 5, kiGain: 8, pushHit: 26, pushGuard: 10, launchSpeed: 26, launchA: 0, launchB: -50, shakePower: 5, shakeTime: 10, react: 9, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 2, hitSound: 1, voice: 2, priority: 2, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 1 },  // baixo [AUTORADO]
+      '0x15': { flags: 0, damage: 12, guardDamage: 18, guardKi: 5, kiGain: 8, pushHit: 30, pushGuard: 10, launchSpeed: 30, launchA: -25, launchB: 5, shakePower: 5, shakeTime: 10, react: 9, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 2, hitSound: 1, voice: 2, priority: 2, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 1 },  // esquerda [AUTORADO]
+      '0x16': { flags: 0, damage: 12, guardDamage: 18, guardKi: 5, kiGain: 8, pushHit: 30, pushGuard: 10, launchSpeed: 30, launchA: 25, launchB: 5, shakePower: 5, shakeTime: 10, react: 9, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 2, hitSound: 1, voice: 2, priority: 2, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 1 },   // direita [AUTORADO]
+      '0x17': { flags: 0, damage: 13, guardDamage: 18, guardKi: 5, kiGain: 8, pushHit: 30, pushGuard: 10, launchSpeed: 30, launchA: 0, launchB: 8, shakePower: 5, shakeTime: 10, react: 9, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 2, hitSound: 1, voice: 2, priority: 2, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 1 },   // frente (contextual) [AUTORADO]
+      // — médios (0,3 ≤ carga < 0,99) —
+      '0x18': { flags: 0x200000, damage: 15, guardDamage: 22, guardKi: 6, kiGain: 10, pushHit: 26, pushGuard: 12, launchSpeed: 26, launchA: 0, launchB: 70, shakePower: 6, shakeTime: 11, react: 10, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 3, hitSound: 1, voice: 2, priority: 3, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 1 },  // cima [AUTORADO]
+      '0x19': { flags: 0, damage: 17, guardDamage: 22, guardKi: 6, kiGain: 10, pushHit: 34, pushGuard: 14, launchSpeed: 34, launchA: 0, launchB: -50, shakePower: 6, shakeTime: 11, react: 24, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 3, hitSound: 1, voice: 2, priority: 3, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 1 },  // baixo [AUTORADO]
+      '0x1A': { flags: 0, damage: 16, guardDamage: 22, guardKi: 6, kiGain: 10, pushHit: 40, pushGuard: 14, launchSpeed: 40, launchA: -25, launchB: 5, shakePower: 6, shakeTime: 11, react: 19, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 3, hitSound: 1, voice: 2, priority: 3, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 1 },  // esquerda [AUTORADO]
+      '0x1B': { flags: 0, damage: 16, guardDamage: 22, guardKi: 6, kiGain: 10, pushHit: 40, pushGuard: 14, launchSpeed: 40, launchA: 25, launchB: 5, shakePower: 6, shakeTime: 11, react: 19, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 3, hitSound: 1, voice: 2, priority: 3, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 1 },  // direita [AUTORADO]
+      '0x1C': { flags: 0, damage: 16, guardDamage: 22, guardKi: 6, kiGain: 10, pushHit: 40, pushGuard: 14, launchSpeed: 40, launchA: 0, launchB: 8, shakePower: 6, shakeTime: 11, react: 19, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 3, hitSound: 1, voice: 2, priority: 3, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 1 },  // frente [AUTORADO]
+      // — cheios (carga ≥ 0,99) — o empurrão daqui é o que causa ring-out
+      '0x1D': { flags: 0x200000, damage: 21, guardDamage: 26, guardKi: 8, kiGain: 12, pushHit: 28, pushGuard: 16, launchSpeed: 28, launchA: 0, launchB: 70, shakePower: 8, shakeTime: 12, react: 10, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 4, hitSound: 2, voice: 3, priority: 3, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 1 },  // cima [AUTORADO]
+      '0x1E': { flags: 0, damage: 24, guardDamage: 26, guardKi: 8, kiGain: 12, pushHit: 44, pushGuard: 16, launchSpeed: 44, launchA: 0, launchB: -50, shakePower: 8, shakeTime: 12, react: 25, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 4, hitSound: 2, voice: 3, priority: 3, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 1 },  // baixo [AUTORADO]
+      '0x1F': { flags: 0, damage: 22, guardDamage: 26, guardKi: 8, kiGain: 12, pushHit: 48, pushGuard: 16, launchSpeed: 48, launchA: -25, launchB: 5, shakePower: 8, shakeTime: 12, react: 17, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 4, hitSound: 2, voice: 3, priority: 3, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 1 },  // esquerda [AUTORADO]
+      '0x20': { flags: 0, damage: 22, guardDamage: 26, guardKi: 8, kiGain: 12, pushHit: 48, pushGuard: 16, launchSpeed: 48, launchA: 25, launchB: 5, shakePower: 8, shakeTime: 12, react: 17, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 4, hitSound: 2, voice: 3, priority: 3, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 1 },  // direita [AUTORADO]
+      '0x21': { flags: 0, damage: 24, guardDamage: 26, guardKi: 8, kiGain: 12, pushHit: 52, pushGuard: 16, launchSpeed: 52, launchA: 0, launchB: 8, shakePower: 9, shakeTime: 13, react: 17, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 4, hitSound: 2, voice: 3, priority: 3, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 1 },  // frente [AUTORADO]
 
-    /* A ordem da cadeia leve. `fighter._rushKey` lê isto com `comboCount`
-     * como índice: J nº N dispara `rushChain[N]`. Tirar um elo daqui remove
-     * o golpe da string sem apagar a definição em `moves` — e acrescentar
-     * um número (rush_6) funciona sozinho enquanto existir o move e o clip.
-     * É dados, não código: personagens com strings diferentes no futuro
-     * trocam este array, não a máquina de estados. */
-    rushChain: ['rush_1', 'rush_2', 'rush_3', 'rush_4', 'rush_5'],
+      /* ---- ARREMESSOS (ações 0xB4..0xBC; record 0x55 = pegada+throw,
+       * 0x56 = variante, btl_tech_a.h:44). A guarda NÃO responde a grab
+       * (btl_char_hit.c:346+); escape é por nível (CheckThrowBreak). ---- */
+      '0x55': { flags: 0, damage: 13, guardDamage: 0, guardKi: 0, kiGain: 0, pushHit: 34, pushGuard: 0, launchSpeed: 34, launchA: 0, launchB: 12, shakePower: 7, shakeTime: 12, react: 17, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 3, hitSound: 1, voice: 2, priority: 0, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 1 },   // throw baseline do protótipo [AUTORADO]
+      '0x56': { flags: 0, damage: 11, guardDamage: 0, guardKi: 0, kiGain: 0, pushHit: 30, pushGuard: 0, launchSpeed: 30, launchA: 0, launchB: -30, shakePower: 6, shakeTime: 11, react: 24, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 3, hitSound: 1, voice: 2, priority: 0, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 1 },   // variante (cravada) [AUTORADO]
 
-    /* A string AÉREA — a continuation quando a vítima já está em juggle.
-     *
-     * Gatilho: apertar J com o alvo em BLOWAWAY ou KNOCKDOWN (o protótipo não
-     * tem flag "no ar" — todo mundo voa 360° o tempo todo; o que existe é o
-     * estado de lançamento). O tipo da cadeia é TRAVADO no primeiro elo
-     * (`fighter._chainAir`): se a vítima se recuperar no meio, a rota
-     * continua aérea até zerar, porque trocar de string em pleno combo
-     * quebraria a coreografia que a cadeia fixa existe pra criar.
-     *
-     * Três elos e não cinco: no ar a vítima foge (drag do blowaway), a
-     * janela de emenda é curta, e um smash já é o finalizador natural —
-     * BT3 também encurta a air string em relação à ground. */
-    rushChainAir: ['air_1', 'air_2', 'air_3'],
-
-    /* Quantos frames sem atacar para a rota zerar e o neutro voltar.
-     *
-     * É o beat de respiro que o combate não tinha. Baixo demais e martelar
-     * volta a funcionar; alto demais e o jogo fica lento e punitivo com quem
-     * está aprendendo. 36f = 0,6 s — tempo de o defensor decidir alguma coisa,
-     * não só de segurar guarda. */
-    chainResetFrames: 36,
-
-    /* Acertar o ENDER (smash) libera a rota na hora. Finalizar direito é
-     * recompensado: você fica livre pra reengajar ou perseguir sem esperar. */
-    enderClearsChain: true,
-  },
-
-  /* ================================================================== */
-  /*  INVESTIDA DE RUSH  —  apertar ataque de longe te LEVA até o inimigo */
-  /* ================================================================== */
-  /*  A mecânica que faltava, e a mais importante deste arquivo pro jogo
-   *  ser divertido.
-   *
-   *  Sem ela, medido em 25 s de luta real: 0 de dano dos dois lados,
-   *  distância mediana de 14,7 m, 20% do tempo dentro do alcance. Os dois
-   *  lutadores voavam sem nunca se tocar. O motivo é que atacar CONGELA o
-   *  movimento (o estado de ataque não lê o direcional), então martelar o
-   *  botão deixava o jogador parado enquanto o adversário se afastava.
-   *
-   *  No Tenkaichi, apertar rush a média distância faz você voar até o
-   *  adversário e emendar o combo. O ataque É a ferramenta de aproximação.
-   *
-   *  Isto baixa o piso (qualquer um encosta no inimigo) sem baixar o teto:
-   *  a investida é comprometida e em linha reta, então dá pra ser bloqueada,
-   *  punida com smash, ou passada com vanish. Quem lê ganha. */
-  rushApproach: {
-    /* 17 m era uma COLEIRA, não uma ferramenta de engajar: qualquer distância
-     * criada abaixo disso era anulada por um único J, inclusive logo depois de
-     * um lançamento. 9 m ainda resolve o problema que a investida veio
-     * resolver (armadilha 8.14 — sem ela, 0 de dano em 25 s de luta), mas
-     * deixa de cobrir meia arena. Acima disso, aproximar é trabalho do Dragon
-     * Dash — que custa ki e é uma decisão. */
-    range: 9.0,                 // até esta distância, J vira investida
-    speed: 40.0,                // m/s
-    turnSpeed: 13.0,            // rad/s — persegue bem, o alvo se move
-    maxFrames: 50,              // desiste depois disso
-    attackAt: 2.3,              // ao chegar aqui, emenda no rush direcional
-    kiCost: 0,                  // de graça: é a ferramenta básica de engajar
-  },
-
-  /* ================================================================== */
-  /*  HOMING  —  assistência de mira, NÃO ímã                            */
-  /* ================================================================== */
-  /*  O homing era a maior causa isolada do "boneco gruda no adversário".
-   *
-   *  Ele escreve em POSITION direto, não em velocidade — o corpo atravessa o
-   *  espaço sem física. Com `homingRange: 5.0` e nenhum teto, medido durante
-   *  os 4 frames de startup de um rush:
-   *
-   *      de 2 m → 1.34 m   (puxou 0.66 m)
-   *      de 3 m → 1.52 m   (puxou 1.48 m)
-   *      de 4 m → 1.71 m   (puxou 2.29 m)
-   *      de 5 m → 1.89 m   (puxou 3.11 m)   ← três metros em 4 frames
-   *
-   *  Apertar J resolvia distância, ângulo e trajetória sozinho. O jogador não
-   *  contribuía com posicionamento nenhum, e é por isso que o combate parecia
-   *  uma macro de teclado em vez de uma disputa.
-   *
-   *  A correção NÃO é remover (ver armadilha 8.4 do doc de passagem: sem
-   *  homing os dois primeiros socos erram e o jogador culpa o controle). É
-   *  limitar o que ele resolve:
-   *
-   *    1. alcance curto  — ele fecha o ÚLTIMO pedaço, não a distância toda
-   *    2. teto por golpe — nunca puxa mais que `maxPull` metros
-   *
-   *  Resultado pretendido: dentro de ~2,8 m o soco perdoa a mira; fora disso
-   *  você precisa ter chegado com movimento. Posição volta a ser do jogador. */
-  homing: {
-    // Teto absoluto de quanto um único golpe pode te puxar. É este número que
-    // separa "assistência" de "teleporte".
-    maxPull: 1.1,
-    // Distância que o homing tenta manter (centro a centro). Encostado, mas
-    // não dentro do outro.
-    idealGap: 1.4,
-  },
-
-  /* ================================================================== */
-  /*  PURSUIT  —  a segunda disputa, depois do lançamento                */
-  /* ================================================================== */
-  /*  A peça que faltava pro combate ter IDA E VOLTA.
-   *
-   *  Antes, lançar alguém era um beco sem saída: o corpo voava, você
-   *  re-aproximava com um J (a investida cobria 17 m) e recomeçava a mesma
-   *  cadeia. O lançamento não era um evento — era uma pausa.
-   *
-   *  No Tenkaichi, o lançamento ABRE uma janela em que o atacante precisa
-   *  ESCOLHER, e o defensor precisa responder:
-   *
-   *      LANÇOU ──→ ╔══════ JANELA DE PERSEGUIÇÃO ══════╗
-   *                 ║  Shift  perseguir (custa ki)      ║
-   *                 ║  K      spike / re-lançar         ║
-   *                 ║  L      blast à distância         ║
-   *                 ║  nada   deixar voltar, reposicionar║
-   *                 ╚═══════════════════╤═══════════════╝
-   *      defensor:  recuperar / vanish / cair e levantar
-   *
-   *  REGRA QUE NÃO PODE SER QUEBRADA: perseguir NÃO é combo infinito.
-   *  A perseguição custa ki, é comprometida em linha reta, e o defensor tem
-   *  recuperação aérea pra puni-la. Ela é uma LEITURA, não uma continuação.
-   *
-   *  O prêmio de acertar a leitura é uma ROTA NOVA (`clearsChainOnArrive`):
-   *  é assim que a pressão se estende por mérito, e não por martelar.        */
-  /*  ---------------------------------------------------------------------
-   *  TRÊS TIPOS, E POR QUE NÃO UM SÓ
-   *  ---------------------------------------------------------------------
-   *  A primeira versão tinha um `pursuit()` que fazia tudo: voava até o alvo,
-   *  alcançava e dava rota nova. Funcionava, mas só havia UMA resposta certa —
-   *  se você tinha 12 de ki, perseguir era sempre melhor que não perseguir.
-   *  Decisão sem alternativa não é decisão.
-   *
-   *  Agora o lançamento faz uma PERGUNTA com três respostas, cada uma boa numa
-   *  situação diferente e ruim nas outras:
-   *
-   *    DIRETA (Shift)            barata, viaja pelo espaço, dá ROTA NOVA.
-   *                              É a que rende dano — e a única que pode ERRAR:
-   *                              o defensor que recupera no tempo certo te vê
-   *                              chegando em linha reta.
-   *
-   *    VANISH (Shift+V)          caríssima e INFALÍVEL: você aparece do lado
-   *                              dele, não há como evitar. Mas NÃO dá rota
-   *                              nova — só te põe em posição. É a resposta pra
-   *                              "ele vai se recuperar e eu preciso estar lá".
-   *
-   *    ALTA VELOCIDADE (Shift+K) acerta sozinha um spike que RE-LANÇA, o que a
-   *                              torna a ferramenta de ring-out: dois desses
-   *                              seguidos atravessam meia arena. O preço é o
-   *                              recovery mais longo do jogo se ela não pegar.
-   *
-   *  A regra que amarra as três: SÓ A DIRETA dá rota nova. Se todas dessem, a
-   *  perseguição viraria o combo infinito que o `maxChain` existe pra impedir.
-   *  As outras duas compram POSIÇÃO e DANO, não tempo de pressão.
-   *
-   *  Entrada sem tecla nova (§29): a perseguição é sempre Shift, e o que você
-   *  está SEGURANDO junto escolhe o tipo.                                     */
-  pursuit: {
-    // Quanto tempo a janela fica aberta depois de você lançar alguém.
-    windowFrames: 75,
-    speed: 52.0,                // m/s — mais rápido que voar, menos que dash
-    turnSpeed: 12.0,
-    maxFrames: 60,
-    attackAt: 2.4,              // chegou: devolve o controle EM ALCANCE
-    /* Quanto da velocidade do alvo você HERDA ao alcançá-lo.
-     *
-     * Medido no navegador: sem isto, a perseguição terminava com você parado
-     * e a vítima ainda voando a 12 m/s — você encostava e ela ia embora no
-     * mesmo instante. "Alcancei" virava "toquei". Herdando a velocidade, os
-     * dois viajam juntos por um momento, que é o tempo de você emendar o
-     * golpe e é a imagem que esses jogos vendem: dois corpos cruzando o céu
-     * na mesma trajetória. */
-    carryVelocity: 0.88,
-    /* Por quantos frames você VOA JUNTO com ele depois de alcançar.
-     *
-     * Só herdar a velocidade não bastou: medido no navegador, o controle de
-     * voo normal desacelera pra zero no frame seguinte (não há direcional
-     * apertado) e a vítima ia embora do mesmo jeito — o banner dizia
-     * "ALCANÇOU!" e a distância virava 13 m. Estes frames são a janela em que
-     * os dois corpos cruzam o céu na mesma trajetória e você decide o
-     * follow-up. É a imagem que esses jogos vendem. */
-    carryFrames: 18,
-    kiCost: 12,                 // perseguir é decisão, não reflexo
-    /* Chegar perseguindo abre uma rota nova. É a recompensa por ler o
-     * lançamento — e é o que separa "estender a pressão por perícia" de
-     * "estender a pressão por martelar". */
-    clearsChainOnArrive: true,
-
-    /* Alcance máximo da perseguição. Sem teto, um lançamento de 40 m ainda era
-     * perseguível e o defensor nunca conseguia criar espaço de verdade. */
-    range: 70.0,
-
-    /* ----------------------------------------------------------------
-     *  Os três tipos. O que não estiver listado num tipo vem dos campos
-     *  acima — mesmo padrão dos perfis de IA, e pelo mesmo motivo: um
-     *  slider arrastado no painel continua valendo pra todos.
-     * ---------------------------------------------------------------- */
-    types: {
-      /* DIRETA — o comportamento medido nesta sessão, preservado inteiro.
-       * É a linha de base: barata, rende rota nova, e é evitável. */
-      direct: {
-        label: 'DIRETA',
-      },
-
-      /* VANISH PURSUIT — paga pra não errar.
-       *
-       * Não viaja: reaparece ao lado do alvo. Como não há trajetória, não há
-       * como o defensor ver chegando — e é por isso que ela NÃO pode dar rota
-       * nova, senão seria estritamente melhor que a direta. O que ela compra é
-       * estar lá quando ele se recuperar.
-       *
-       * O custo é quase o dobro de um vanish normal de propósito: é a ação mais
-       * cara do kit fora do ultimate, e gastar isto significa não ter vanish
-       * defensivo depois. Essa é a troca. */
-      vanish: {
-        label: 'VANISH',
-        kiCost: 26,
-        teleport: true,
-        appearDistance: 2.0,      // ao lado dele, não dentro
-        startupFrames: 6,         // curto, mas não instantâneo
-        iframes: 12,
-        windowFrames: 34,         // janela MENOR: exige decidir rápido
-        clearsChainOnArrive: false,
-        carryFrames: 24,          // voa junto por mais tempo (é o prêmio)
-        recoveryFrames: 10,
-        range: 40.0,
-      },
-
-      /* ALTA VELOCIDADE — a ferramenta de ring-out.
-       *
-       * Acerta sozinha ao chegar (`autoHit`) com um spike que RE-LANÇA. É o
-       * único jeito de encadear lançamentos, e por isso é o que atravessa a
-       * arena — mas justamente por isso não dá rota nova: ela troca pressão por
-       * DISTÂNCIA.
-       *
-       * O risco é real: `recoveryFrames: 26` é mais longo que o recovery do
-       * smash frente (24). Perseguir assim e não pegar é o maior convite a
-       * punição do jogo. */
-      highSpeed: {
-        label: 'ALTA VELOCIDADE',
-        kiCost: 20,
-        speed: 78.0,
-        turnSpeed: 7.0,           // curva mal: comprometida de verdade
-        maxFrames: 44,
-        attackAt: 2.8,
-        autoHit: true,
-        spikeMove: 'pursuit_spike',
-        clearsChainOnArrive: false,
-        carryFrames: 10,
-        recoveryFrames: 26,       // o maior recovery do kit. É o preço.
-        range: 90.0,
-      },
-    },
-  },
-
-  /* ================================================================== */
-  /*  MATRIZ ATAQUE ↔ DEFESA                                             */
-  /* ================================================================== */
-  /*  "Cada defesa responde a uma situação diferente" era verdade no papel e
-   *  mentira no código: a resolução de acerto testava vanish → Z-Counter →
-   *  guarda na mesma ordem pra QUALQUER golpe. Na prática toda defesa servia
-   *  contra tudo, e a escolha entre elas era só uma questão de quanto ki você
-   *  tinha — não de que ataque estava vindo.
-   *
-   *  Aqui a matriz fica explícita e em DADOS. Cada CATEGORIA de ataque lista as
-   *  defesas que funcionam contra ela; o que não está na lista simplesmente não
-   *  responde. É isso que faz o grab existir como ameaça (a guarda não o para)
-   *  e o que dá ao smash um conjunto de respostas diferente do rush.
-   *
-   *      ataque     defesas que funcionam
-   *      ──────     ─────────────────────────────────────
-   *      rush       guarda · sway · vanish · Z-Counter
-   *      smash      step · vanish · Z-Counter · recuperação
-   *      grab       ESCAPE e nada mais    ← a guarda não salva
-   *      blast      movimento · guarda · dash · rebate
-   *      pursuit    vanish · Z-Counter · recuperação
-   *
-   *  A assimetria do grab é o ponto todo: ele é a resposta a quem segura F pra
-   *  sempre, e só existe como resposta porque a guarda NÃO está na lista dele.
-   *
-   *  Ler a matriz daqui (e não de um `if`) é o que permite um personagem ter um
-   *  golpe que fura sway, ou um grab que a guarda para, sem tocar no código.  */
-  defenseMatrix: {
-    rush:    ['guard', 'sway', 'vanish', 'zcounter'],
-    smash:   ['guard', 'step', 'sway', 'vanish', 'zcounter'],
-    grab:    ['escape'],
-    blast:   ['guard', 'deflect', 'step', 'vanish'],
-    pursuit: ['guard', 'vanish', 'zcounter'],
-    dash:    ['guard', 'vanish', 'step'],
-  },
-
-  /* ================================================================== */
-  /*  PROPRIEDADES PADRÃO DE GOLPE  (§21)                                */
-  /* ================================================================== */
-  /*  Todo golpe passa por uma normalização no boot (ver combat/moves.js) que
-   *  preenche o que falta com estes valores. O motivo é a armadilha 8.19 do doc
-   *  de passagem — "frame data que ninguém lê é pior que frame data errado":
-   *  se `armor` existe em três golpes e não nos outros, ninguém sabe se o campo
-   *  vale zero ou não existe. Com default explícito, vale zero.               */
-  moveDefaults: {
-    /* PRIORIDADE — quem ganha quando dois golpes se encontram no mesmo frame.
-     *
-     * Sem isto, dois lutadores socando ao mesmo tempo simplesmente se acertavam
-     * os dois (cada um aplicava dano no outro), e trocar golpe às cegas era
-     * neutro. Com prioridade, o golpe mais comprometido VENCE o mais rápido —
-     * que é o que dá sentido a escolher o smash sabendo que vai ser trocado.
-     *
-     *   rush 1 · smash 3 · pursuit spike 4 · grab 0 (perde de tudo)
-     *
-     * Diferença menor que `tradeWindow` = CLASH: os dois ricocheteiam. */
-    priority: 1,
-
-    /* ARMOR — quanto de `poiseDamage` o golpe AGUENTA sem ser interrompido
-     * durante o startup. Zero = qualquer toque cancela.
-     *
-     * É a ferramenta que permite um personagem pesado atravessar um jab. Fica em
-     * zero por padrão porque armor barato destrói o jogo de turnos: se o smash
-     * comum tivesse armor, martelar rush pararia de ser punido e a regra do
-     * `cancelOnBlock` perderia o sentido. */
-    armor: 0,
-
-    /* Janela de invulnerabilidade PRÓPRIA do golpe, em frames [de, até].
-     * null = nenhuma. Usada por golpes que atravessam (o spike de perseguição). */
-    invulnerability: null,
-
-    /* Dano à estamina de guarda. null = usa `defense.guard.staminaPerHit`.
-     * Explícito por golpe é o que permite um golpe "quebra-guarda" sem ter que
-     * ser um smash. */
-    guardDamage: null,
-
-    // Um golpe pode superar o Sonic Sway: quem esquivou cedo demais come mesmo
-    // assim. É o que impede o sway de ser resposta universal (§14).
-    beatsSway: false,
-
-    // Este golpe pode ser contra-atacado com Z-Counter?
-    zCounterable: true,
-  },
-
-  /* ================================================================== */
-  /*  TRADES  —  dois golpes que se encontram                            */
-  /* ================================================================== */
-  trade: {
-    enabled: true,
-    /* Diferença de prioridade ATÉ a qual é CLASH em vez de vitória.
-     *
-     * Zero = só prioridade IGUAL dá clash. Tem que ser zero pra que o grab
-     * (prioridade 0) perca do rush (1) em vez de empatar com ele — "grab perde
-     * de qualquer golpe" é uma das três relações que o §17 pede, e com
-     * clashWindow 1 ela não existiria. */
-    clashWindow: 0,
-    // Alcance em que dois golpes ativos são considerados "se encontrando".
-    range: 3.2,
-    loserStunFrames: 26,        // quem perdeu a troca fica exposto
-    clashKnockback: 16.0,
-    clashStunFrames: 14,
-    hitstop: 20,
-    shake: 0.7,
-    slowMoFrames: 14,
-    slowMoScale: 0.35,
-  },
-
-  /* ================================================================== */
-  /*  SMASH CARREGADO E PERFECT SMASH  (§7, §8)                          */
-  /* ================================================================== */
-  /*  O smash era um toque: 13 frames de startup e saía. Forte, lento, evitável
-   *  — funcionava, mas era a única ferramenta do jogo sem NENHUMA decisão
-   *  dentro dela. Você apertava e assistia.
-   *
-   *  Agora segurar K SUSPENDE o golpe no meio do startup, e soltar é que o
-   *  dispara. Isso cria duas coisas de uma vez:
-   *
-   *  1. MIND GAME DE TIMING (o que o §34 chama de "A changes timing").
-   *     O defensor precisa adivinhar QUANDO o golpe vem pra cronometrar sway,
-   *     Z-Counter ou vanish. Segurar meio segundo e soltar bate a antecipação
-   *     dele — e não custa número nenhum, só exposição.
-   *
-   *  2. PERFECT SMASH — uma JANELA, não uma rampa.
-   *
-   *  ATENÇÃO, a decisão mais importante deste bloco: soltar fora da janela dá
-   *  EXATAMENTE os números do smash normal. `chargedDamageMul` é 1.0 e vai
-   *  continuar sendo.
-   *
-   *  O pedido era explícito: "não deve ser simplesmente hold longer = more
-   *  damage". Se segurar rendesse dano crescente, o jogo ótimo seria sempre
-   *  segurar o máximo, a janela perfeita seria irrelevante e a mecânica viraria
-   *  uma barra de carregamento. Segurar não paga dano: paga CONTROLE DO TEMPO.
-   *  O bônus vem de acertar a janela, e só.
-   *
-   *      0        holdAt        janela perfeita         maxHold
-   *      |──startup──|───────────[■■■■■■■]──────────────|
-   *                  ^           ^     ^               ^
-   *                  congela     18    26              56 → solta sozinho
-   *                  aqui        Perfect Smash          (sem bônus)
-   *
-   *  A janela é larga (9 frames) de propósito. O §34 quer que um iniciante
-   *  consiga acertar às vezes; estreitar isso é ajuste de playtest, e é por
-   *  isso que está no painel (P).                                             */
-  smashCharge: {
-    enabled: true,
-    holdAtFrame: 6,             // em que frame do startup o golpe congela
-    minHoldFrames: 3,           // abaixo disto é um toque: smash normal
-    maxHoldFrames: 56,          // estourou: dispara sozinho, sem bônus
-    perfectWindow: [18, 26],    // frames de carga em que soltar dá Perfect
-
-    /* Soltar carregado mas FORA da janela = smash normal. Estes multiplicadores
-     * são 1.0 e é de propósito (ver a nota acima). Ficam aqui, explícitos, pra
-     * que a próxima pessoa saiba que a escolha foi feita e não esquecida. */
-    chargedDamageMul: 1.0,
-    chargedKnockbackMul: 1.0,
-
-    /* PERFECT SMASH — a recompensa por precisão. */
-    perfectDamageMul: 1.55,
-    perfectKnockbackMul: 1.45,
-    perfectPoiseMul: 1.5,
-    perfectHitstop: 26,         // congela muito mais: o impacto tem que gritar
-    perfectShake: 1.25,
-    perfectSlowMoFrames: 22,
-    perfectSlowMoScale: 0.3,
-    /* Perfect Smash fura a guarda mesmo em golpe que não é guardBreak. É o que
-     * o torna a resposta ao turtle: não é dano, é a guarda deixar de funcionar. */
-    perfectGuardBreak: true,
-    // Devolve um pouco de ki: acertar o timing sustenta a próxima leitura.
-    perfectKiRefund: 10,
-
-    /* Aviso visual quando a janela abre. Sem isto a janela é invisível e o
-     * Perfect Smash vira sorte — e mecânica de timing que não se vê não é
-     * mecânica de timing. */
-    telegraphFrames: 2,
-  },
-
-  /* ================================================================== */
-  /*  LAUNCH SYSTEM  (§9, §23)                                           */
-  /* ================================================================== */
-  /*  "Acertar" e "lançar" eram a mesma coisa com um booleano de diferença
-   *  (`causesBlowaway`), e a direção do empurrão era sempre
-   *  `knockback` na horizontal + `knockup` na vertical. Isso bastou pra três
-   *  smashes e trava na hora de ter personagens: não há como descrever "manda
-   *  na diagonal a 30° pra fora da arena", que é justamente o golpe que um
-   *  arena fighter de ring-out mais precisa.
-   *
-   *  Agora cada golpe declara um RESULTADO, e o resultado tem tipo:
-   *
-   *      hitstun    empurra e prende. O combo continua sendo do atacante.
-   *      blowaway   voando sem controle. ABRE PERSEGUIÇÃO — a segunda disputa.
-   *      slam       crava pro chão. Quica, abre cratera, pode virar knockdown.
-   *      knockdown  derruba direto.
-   *
-   *  E a FORÇA pode ser escrita de duas formas, porque as duas são úteis:
-   *
-   *      knockback + knockup   (componentes)  ← forma dos golpes atuais
-   *      speed + angle         (polar)        ← forma de quem desenha um kit
-   *
-   *  Os golpes existentes continuam em componentes de propósito: são os números
-   *  MEDIDOS desta sessão, e reescrevê-los em polar mudaria o jogo por causa de
-   *  arredondamento. Os dois formatos convivem; a conversão é uma função só.  */
-  launch: {
-    // Tipo assumido quando o golpe não diz nada.
-    defaultType: 'hitstun',
-    /* Só `blowaway` e `slam` abrem a janela de perseguição. `hitstun` não —
-     * senão todo jab abriria perseguição e a segunda disputa perderia o sentido
-     * de ser uma consequência do LANÇAMENTO. */
-    opensPursuit: ['blowaway', 'slam'],
-    // Teto duro de velocidade de lançamento (anti-explosão numérica).
-    maxSpeed: 90.0,
-  },
-
-  /* ================================================================== */
-  /*  RUSH COMBO  —  a cadeia fixa de socos e chutes                     */
-  /* ================================================================== */
-  /*  Cada elo é curto e emenda no SEGUINTE da ordem fixa (estilo BT3):
-   *  apertar J avança a string — soco, soco, chute, chute alto, joelhada.
-   *  Não há direção no meio do caminho: a coreografia é a sequência.
-   *  O ÚLTIMO elo é o SMASH (K, com direção): lento, forte, manda voando.
-   *
-   *  POR QUE TROCOU do rush direcional (J+W = gancho, J+S = chute...):
-   *  o dono jogou e reprovou — "D+J / W+J é ruim", "é só J ou só K".
-   *  No BT3 a string leve é um botão só, e a direção fica COM O PESADO
-   *  (Triângulo + cima/baixo escolhe o finisher). O gancho-launcher e o
-   *  chute-cravado não sumiram: viraram smash_up e smash_down, que já
-   *  existiam. A direção agora mora onde ela é decisão de finalização,
-   *  não de digitador.
-   *
-   *  REGRA DE BALANCEAMENTO: `blockstun` é MENOR que o recovery do golpe.
-   *  Isso significa que quem BLOQUEIA sai do stun antes de quem atacou, e
-   *  ganha o turno. É o que pune martelar botão na guarda alheia — sem isso,
-   *  o atacante mantém a vez pra sempre e apertar rush vira a jogada ótima.  */
-  moves: {
-    /* ---- CADEIA LEVE (J) — ordem fixa, cada elo com peso próprio ----
-     *
-     *   J  rush_1  jab direto            rápido, prende
-     *   J  rush_2  gancho de esquerda    prende
-     *   J  rush_3  chute circular        sobe o dano
-     *   J  rush_4  chute alto            sobe o dano
-     *   J  rush_5  joelhada              o "pesado" da string — mais dano
-     *                                     e stun, ainda prende
-     *
-     * `combo.rushChain` é a ordem; `combo.maxChain` é o teto. CancelInto é
-     * SEQUENCIAL (só no próximo da lista) — é isso que faz a coreografia
-     * ser coreografia em vez de martelada: você não pula o chute. */
-
-    rush_1: {
-      clip: 'attack_light_1',
-      startup: 4, active: 3, recovery: 8,
-      damage: 5,
-      poiseDamage: 6,
-      socket: 'hand_r',
-      hitboxRadius: 0.68,
-      knockback: 1.8,
-      knockup: 0.0,
-      hitstop: 4,
-      shake: 0.09,
-      hitstun: 14,
-      blockstun: 4,
-      chipDamage: 0.3,
-      cancelInto: ['rush_2',
-                   'smash_forward', 'smash_up', 'smash_down'],
-      cancelWindow: [5, 15],
-      homingRange: 2.8,
-      homingStrength: 0.85,
-      advanceSpeed: 7.0,
-      advanceFrames: [1, 6],
-      vanishWindow: 9,
+      /* ---- FINISHERS do rush (0x59..0x5E: ações 0x64/0x65 por carga,
+       * btl_tech_a.h:46). Identificação aproximada dos records — confirmar
+       * quando a ISO liberar os AFS. [AUTORADO] ---- */
+      '0x59': { flags: 0, damage: 10, guardDamage: 14, guardKi: 4, kiGain: 8, pushHit: 22, pushGuard: 8, launchSpeed: 22, launchA: 0, launchB: 30, shakePower: 5, shakeTime: 10, react: 9, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 2, hitSound: 1, voice: 2, priority: 2, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 0 },
+      '0x5A': { flags: 0, damage: 10, guardDamage: 14, guardKi: 4, kiGain: 8, pushHit: 22, pushGuard: 8, launchSpeed: 22, launchA: 0, launchB: 30, shakePower: 5, shakeTime: 10, react: 9, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 2, hitSound: 1, voice: 2, priority: 2, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 0 },
+      '0x5B': { flags: 0, damage: 14, guardDamage: 18, guardKi: 5, kiGain: 10, pushHit: 30, pushGuard: 10, launchSpeed: 30, launchA: 0, launchB: 30, shakePower: 6, shakeTime: 11, react: 19, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 3, hitSound: 1, voice: 2, priority: 2, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 0 },
+      '0x5C': { flags: 0, damage: 14, guardDamage: 18, guardKi: 5, kiGain: 10, pushHit: 30, pushGuard: 10, launchSpeed: 30, launchA: 0, launchB: 30, shakePower: 6, shakeTime: 11, react: 19, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 3, hitSound: 1, voice: 2, priority: 2, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 0 },
+      '0x5D': { flags: 0, damage: 19, guardDamage: 24, guardKi: 7, kiGain: 12, pushHit: 38, pushGuard: 14, launchSpeed: 38, launchA: 0, launchB: 40, shakePower: 8, shakeTime: 12, react: 17, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 4, hitSound: 2, voice: 3, priority: 3, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 1 },
+      '0x5E': { flags: 0, damage: 19, guardDamage: 24, guardKi: 7, kiGain: 12, pushHit: 38, pushGuard: 14, launchSpeed: 38, launchA: 0, launchB: 40, shakePower: 8, shakeTime: 12, react: 17, reactB: 0, reactD: 0, reactE: 0, reactC: 0, hitFx: 4, hitSound: 2, voice: 3, priority: 3, guardB: 0, guardC: 0, guardA: 0, guardE: 0, guardFlagSel: 0, armorIgnore: 1 },
     },
 
-    rush_2: {
-      clip: 'attack_light_2',
-      startup: 4, active: 3, recovery: 8,
-      damage: 5,
-      poiseDamage: 6,
-      socket: 'hand_l',
-      hitboxRadius: 0.68,
-      knockback: 1.8,
-      knockup: 0.0,
-      hitstop: 4,
-      shake: 0.09,
-      hitstun: 14,
-      blockstun: 4,
-      chipDamage: 0.3,
-      cancelInto: ['rush_3',
-                   'smash_forward', 'smash_up', 'smash_down'],
-      cancelWindow: [5, 15],
-      homingRange: 2.8,
-      homingStrength: 0.85,
-      advanceSpeed: 7.0,
-      advanceFrames: [1, 6],
-      vanishWindow: 9,
-    },
-
-    rush_3: {
-      clip: 'attack_light_3',
-      startup: 5, active: 3, recovery: 9,
-      damage: 6,
-      poiseDamage: 8,
-      socket: 'foot_r',
-      hitboxRadius: 0.70,
-      knockback: 2.0,
-      knockup: 0.0,
-      hitstop: 5,
-      shake: 0.12,
-      hitstun: 16,
-      blockstun: 5,
-      chipDamage: 0.4,
-      cancelInto: ['rush_4',
-                   'smash_forward', 'smash_up', 'smash_down'],
-      cancelWindow: [6, 17],
-      homingRange: 2.8,
-      homingStrength: 0.85,
-      advanceSpeed: 6.5,
-      advanceFrames: [1, 6],
-      vanishWindow: 9,
-    },
-
-    rush_4: {
-      clip: 'attack_light_4',
-      startup: 5, active: 3, recovery: 9,
-      damage: 6,
-      poiseDamage: 8,
-      socket: 'foot_l',
-      hitboxRadius: 0.70,
-      knockback: 2.0,
-      knockup: 0.0,
-      hitstop: 5,
-      shake: 0.12,
-      hitstun: 16,
-      blockstun: 5,
-      chipDamage: 0.4,
-      cancelInto: ['rush_5',
-                   'smash_forward', 'smash_up', 'smash_down'],
-      cancelWindow: [6, 17],
-      homingRange: 2.8,
-      homingStrength: 0.85,
-      advanceSpeed: 6.5,
-      advanceFrames: [1, 6],
-      vanishWindow: 9,
-    },
-
-    rush_5: {                     // joelhada: fim da string leve
-      clip: 'attack_light_5',
-      startup: 6, active: 3, recovery: 11,
-      damage: 8,
-      poiseDamage: 11,
-      socket: 'foot_r',
-      hitboxRadius: 0.72,
-      knockback: 2.4,
-      knockup: 0.0,
-      hitstop: 7,
-      shake: 0.16,
-      hitstun: 20,
-      blockstun: 6,
-      chipDamage: 0.5,
-      cancelInto: ['smash_forward', 'smash_up', 'smash_down'],
-      cancelWindow: [7, 20],
-      homingRange: 2.8,
-      homingStrength: 0.85,
-      advanceSpeed: 6.0,
-      advanceFrames: [1, 7],
-      vanishWindow: 10,
-    },
-
-    /* ---- AIR STRING — a rota quando a vítima já está em juggle ----------
+    /* ---------------------------------------------------------------
+     *  MOTIONS  —  motionId → { clip, durationFrames, events[] }
+     * ---------------------------------------------------------------
+     *  Substitui startup/active/recovery como FONTE DA JANELA DE HIT:
+     *  no BT3 a janela abre e fecha por evento do motion (bobj_a.h:13-37,
+     *  teste no intervalo (prevFrame, frame]). Tipos de evento espelham
+     *  os canais do decomp: hitBegin/hitEnd (janela), swing (whoosh —
+     *  evento 2), impactLight (0x100) / impactHeavy (0x80), kiFire
+     *  (evento 4), vibrate (45), shake (46).
      *
-     * `causesBlowaway: true` em TODOS os elos não é cosmético: sem ele,
-     * `applyHit` manda a vítima pra HITSTUN no primeiro acerto e a string
-     * morre ali (ver o branch `else` do estado resultante). Com ele, cada
-     * golpe RELANÇA — a vítima fica em BLOWAWAY do air_1 ao air_3, que é o
-     * que define "estar no ar" neste protótipo (sem flag de chão: todo
-     * mundo voa 360°; o estado de lançamento é a única âncora).
-     *
-     * knockback 6.0 acima de `blowaway.minSpeedToExit` (4.0) de propósito:
-     * com o drag 1.35, ~15 frames entre elos derradem a velocidade pra
-     * ~4.3 — ainda dentro do estado. Abaixo de 4.0 a vítima sairia de
-     * BLOWAWAY no meio da string e o próximo J cairia em HITSTUN.
-     *
-     * Clips reaproveitados da ground string (sem procAnim novo): o
-     * placeholder não distingue voo de chão na pose, e o que importa no
-     * playtest é o ritmo do frame data, não o osso. */
+     *  `clip` é a TABELA DE MAPEAMENTO motion→pose procedural
+     *  (procAnim.js): o que não existe vira o clip mais próximo e o gap
+     *  está listado no bloco WP5 no fim desta seção. */
+    motions: {
 
-    air_1: {
-      clip: 'attack_light_1',
-      startup: 4, active: 3, recovery: 8,
-      damage: 5,
-      poiseDamage: 6,
-      socket: 'hand_r',
-      hitboxRadius: 0.68,
-      knockback: 6.0,
-      knockup: 1.2,
-      causesBlowaway: true,
-      hitstop: 4,
-      shake: 0.09,
-      hitstun: 14,
-      blockstun: 4,
-      chipDamage: 0.3,
-      cancelInto: ['air_2',
-                   'smash_forward', 'smash_up', 'smash_down'],
-      cancelWindow: [5, 15],
-      homingRange: 2.8,
-      homingStrength: 0.85,
-      advanceSpeed: 7.0,
-      advanceFrames: [1, 6],
-      vanishWindow: 9,
+      /* Sparking (anim 0x36 do blueprint §4.5) — pose de carga. */
+      '0x36': { clip: 'charge', durationFrames: 18, events: [ { frame: 0, type: 'vibrate' } ] },
+
+      /* ---- RUSH: animações 0x37..0x40 = elos 0..9 ----
+       * Janelas derivadas dos startups do protótipo (4..6 de startup,
+       * 3 de active) escaladas ao longo da string de 10. [AUTORADO] */
+      '0x37': { clip: 'attack_light_1', durationFrames: 15, events: [ { frame: 2, type: 'swing' }, { frame: 4, type: 'hitBegin' }, { frame: 7, type: 'hitEnd' }, { frame: 7, type: 'impactLight' } ] },
+      '0x38': { clip: 'attack_light_2', durationFrames: 15, events: [ { frame: 2, type: 'swing' }, { frame: 4, type: 'hitBegin' }, { frame: 7, type: 'hitEnd' }, { frame: 7, type: 'impactLight' } ] },
+      '0x39': { clip: 'attack_light_3', durationFrames: 16, events: [ { frame: 3, type: 'swing' }, { frame: 5, type: 'hitBegin' }, { frame: 8, type: 'hitEnd' }, { frame: 8, type: 'impactLight' } ] },
+      '0x3A': { clip: 'attack_light_4', durationFrames: 16, events: [ { frame: 3, type: 'swing' }, { frame: 5, type: 'hitBegin' }, { frame: 8, type: 'hitEnd' }, { frame: 8, type: 'impactLight' } ] },
+      '0x3B': { clip: 'attack_light_5', durationFrames: 17, events: [ { frame: 3, type: 'swing' }, { frame: 5, type: 'hitBegin' }, { frame: 8, type: 'hitEnd' }, { frame: 8, type: 'impactLight' } ] },
+      '0x3C': { clip: 'attack_light_1', durationFrames: 17, events: [ { frame: 3, type: 'swing' }, { frame: 5, type: 'hitBegin' }, { frame: 8, type: 'hitEnd' }, { frame: 8, type: 'impactLight' } ] },
+      '0x3D': { clip: 'attack_light_2', durationFrames: 17, events: [ { frame: 3, type: 'swing' }, { frame: 5, type: 'hitBegin' }, { frame: 8, type: 'hitEnd' }, { frame: 8, type: 'impactLight' } ] },
+      '0x3E': { clip: 'attack_light_3', durationFrames: 18, events: [ { frame: 4, type: 'swing' }, { frame: 6, type: 'hitBegin' }, { frame: 9, type: 'hitEnd' }, { frame: 9, type: 'impactHeavy' } ] },
+      '0x3F': { clip: 'attack_light_4', durationFrames: 19, events: [ { frame: 4, type: 'swing' }, { frame: 6, type: 'hitBegin' }, { frame: 9, type: 'hitEnd' }, { frame: 9, type: 'impactHeavy' } ] },
+      '0x40': { clip: 'attack_light_5', durationFrames: 20, events: [ { frame: 4, type: 'swing' }, { frame: 6, type: 'hitBegin' }, { frame: 9, type: 'hitEnd' }, { frame: 9, type: 'impactHeavy' } ] },
+
+      /* ---- SMASH: animações carregáveis por direção ----
+       * Janelas dos smashes do protótipo (cima 12/4/22, baixo 14/4/26,
+       * lado/frente 13/4/24). As animações do smash CHEIO (flag 0x84)
+       * reaproveitam estas mesmas com pausa de carga no startup — o que
+       * muda é o record (0x1D..0x21), não a janela. [AUTORADO] */
+      '0x4C': { clip: 'attack_heavy', durationFrames: 41, events: [ { frame: 8, type: 'swing' }, { frame: 13, type: 'hitBegin' }, { frame: 17, type: 'hitEnd' }, { frame: 17, type: 'impactHeavy' }, { frame: 40, type: 'shake' } ] },  // frente
+      '0x4F': { clip: 'attack_heavy', durationFrames: 41, events: [ { frame: 8, type: 'swing' }, { frame: 13, type: 'hitBegin' }, { frame: 17, type: 'hitEnd' }, { frame: 17, type: 'impactHeavy' }, { frame: 40, type: 'shake' } ] },  // frente (alt.)
+      '0x52': { clip: 'attack_heavy', durationFrames: 41, events: [ { frame: 8, type: 'swing' }, { frame: 13, type: 'hitBegin' }, { frame: 17, type: 'hitEnd' }, { frame: 17, type: 'impactHeavy' }, { frame: 40, type: 'shake' } ] },  // lateral
+      '0x55': { clip: 'attack_heavy', durationFrames: 41, events: [ { frame: 8, type: 'swing' }, { frame: 13, type: 'hitBegin' }, { frame: 17, type: 'hitEnd' }, { frame: 17, type: 'impactHeavy' }, { frame: 40, type: 'shake' } ] },  // lateral
+      '0x58': { clip: 'attack_up', durationFrames: 38, events: [ { frame: 7, type: 'swing' }, { frame: 12, type: 'hitBegin' }, { frame: 16, type: 'hitEnd' }, { frame: 16, type: 'impactHeavy' }, { frame: 37, type: 'shake' } ] },     // cima
+      '0x5B': { clip: 'attack_down', durationFrames: 44, events: [ { frame: 9, type: 'swing' }, { frame: 14, type: 'hitBegin' }, { frame: 18, type: 'hitEnd' }, { frame: 18, type: 'impactHeavy' }, { frame: 43, type: 'shake' } ] },  // baixo
+
+      /* ---- VANISH ---- */
+      '0x20': { clip: 'vanish', durationFrames: 7, events: [] },   // vanishing step (btl_act_e.c:468)
+      '0x21': { clip: 'vanish', durationFrames: 7, events: [] },
+      '0x22': { clip: 'vanish', durationFrames: 7, events: [] },
+      '0x23': { clip: 'vanish', durationFrames: 7, events: [] },
+      '0x24': { clip: 'vanish', durationFrames: 14, events: [] },  // vanish behind [AUTORADO duração]
+      '0x2B': { clip: 'attack_light_2', durationFrames: 16, events: [ { frame: 2, type: 'swing' }, { frame: 4, type: 'hitBegin' }, { frame: 7, type: 'hitEnd' }, { frame: 7, type: 'impactLight' } ] },  // vanish strike [AUTORADO]
+      '0x2C': { clip: 'attack_light_2', durationFrames: 16, events: [ { frame: 2, type: 'swing' }, { frame: 4, type: 'hitBegin' }, { frame: 7, type: 'hitEnd' }, { frame: 7, type: 'impactLight' } ] },
+      '0x2D': { clip: 'attack_light_3', durationFrames: 17, events: [ { frame: 3, type: 'swing' }, { frame: 5, type: 'hitBegin' }, { frame: 8, type: 'hitEnd' }, { frame: 8, type: 'impactLight' } ] },
+      '0x2E': { clip: 'attack_light_3', durationFrames: 17, events: [ { frame: 3, type: 'swing' }, { frame: 5, type: 'hitBegin' }, { frame: 8, type: 'hitEnd' }, { frame: 8, type: 'impactHeavy' } ] },
+
+      /* ---- GUARDA E CONTADOR ---- */
+      '0x38': { clip: 'block', durationFrames: 24, events: [] },            // guarda (segurar; loop visual)
+      '0x39': { clip: 'attack_light_1', durationFrames: 24, events: [ { frame: 6, type: 'swing' }, { frame: 10, type: 'hitBegin' }, { frame: 13, type: 'hitEnd' }, { frame: 13, type: 'impactHeavy' } ] },  // contador 0x89/0x8A/0x8B [AUTORADO]
+      '0x3B': { clip: 'block_impact', durationFrames: 14, events: [ { frame: 4, type: 'impactHeavy' } ] },  // rebate [AUTORADO]
+      '0x3D': { clip: 'block_impact', durationFrames: 14, events: [ { frame: 4, type: 'impactHeavy' } ] },
+
+      /* ---- KI BLAST ---- */
+      '0xAE': { clip: 'blast', durationFrames: 16, events: [ { frame: 4, type: 'kiFire' } ] },   // tiro A [AUTORADO janela]
+      '0xAF': { clip: 'blast', durationFrames: 18, events: [ { frame: 5, type: 'kiFire' } ] },   // tiro B [AUTORADO]
+      '0x95': { clip: 'blast', durationFrames: 30, events: [ { frame: 4, type: 'kiFire' }, { frame: 10, type: 'kiFire' }, { frame: 16, type: 'kiFire' } ] },  // volley; 30f = timer entre rajadas
+
+      /* ---- GRAB / THROW (0xB4..0xBC) ---- */
+      '0xB4': { clip: 'attack_light_1', durationFrames: 38, events: [ { frame: 4, type: 'swing' }, { frame: 8, type: 'hitBegin' }, { frame: 12, type: 'hitEnd' } ] },  // dash de grab [AUTORADO]
+      '0xB5': { clip: 'attack_heavy', durationFrames: 22, events: [ { frame: 2, type: 'impactHeavy' } ] },  // throw [AUTORADO]
+      '0xB6': { clip: 'attack_heavy', durationFrames: 22, events: [ { frame: 2, type: 'impactHeavy' } ] },
+      '0xB7': { clip: 'attack_heavy', durationFrames: 26, events: [ { frame: 3, type: 'impactHeavy' } ] },  // lift throw [AUTORADO]
+      '0xB8': { clip: 'attack_light_1', durationFrames: 12, events: [] },   // escape/reação de pegada
+      '0xB9': { clip: 'attack_heavy', durationFrames: 24, events: [ { frame: 2, type: 'impactHeavy' } ] },
+      '0xBA': { clip: 'attack_light_1', durationFrames: 12, events: [] },
+      '0xBB': { clip: 'attack_heavy', durationFrames: 26, events: [ { frame: 3, type: 'impactHeavy' } ] },
+      '0xBC': { clip: 'attack_heavy', durationFrames: 24, events: [ { frame: 2, type: 'impactHeavy' } ] },
+
+      /* ---- RECUPERAÇÃO ---- */
+      '0xC9': { clip: 'recover', durationFrames: 18, events: [] },   // recuperação aérea (chão)
+      '0xCA': { clip: 'recover', durationFrames: 18, events: [] },   // recuperação aérea (ar)
+      '0xE6': { clip: 'dodge', durationFrames: 18, events: [] },     // recuperação de voo [AUTORADO]
+
+      /* ---- REAÇÕES (durações estruturais quando conhecidas) ---- */
+      '0xD3': { clip: 'hit_react', durationFrames: 15, events: [] },        // stun em pé — tiers 15/30/45 via stunTime
+      '0xD4': { clip: 'launched', durationFrames: 45, events: [] },         // knockback — duração unkFC8×15 [AUTORADO base]
+      '0xD5': { clip: 'launched', durationFrames: 50, events: [] },         // blowaway tipo 1 (1000 km/h)
+      '0xD6': { clip: 'launched', durationFrames: 15, events: [] },         // blowaway tipo 2 (2000 km/h)
+      '0xDF': { clip: 'launched', durationFrames: 32, events: [] },         // blowaway tipo 3 (2000 km/h)
+      '0xCE': { clip: 'launched', durationFrames: 60, events: [] },         // lançado — recuperação a partir do frame 9 [AUTORADO base]
+      '0xE0': { clip: 'launched', durationFrames: 15, events: [] },         // stun aéreo — tiers 15/30/45
+
+      /* ---- TÉCNICAS ---- */
+      '0x105': { clip: 'ultimate', durationFrames: 40, events: [ { frame: 40, type: 'kiFire' } ] },  // pose de técnica (hit-stop nível 2)
+      '0x106': { clip: 'ultimate', durationFrames: 130, events: [ { frame: 40, type: 'kiFire' }, { frame: 110, type: 'shake' } ] },  // feixe (subset Goku) [AUTORADO duração]
+
+      /* ---- CLASH ---- */
+      '0x130': { clip: 'block_impact', durationFrames: 12, events: [ { frame: 2, type: 'impactHeavy' } ] },
+      '0x131': { clip: 'block_impact', durationFrames: 12, events: [ { frame: 2, type: 'impactHeavy' } ] },
+      '0x132': { clip: 'block_impact', durationFrames: 12, events: [ { frame: 2, type: 'impactHeavy' } ] },
+
+      /* WP5 — lista de poses a criar (clip mais próximo já usado acima
+       * como placeholder; formato: // WP5: criar pose — <motionId> <motivo>) */
+      // WP5: criar pose — 0x2B vanish strike — não existe pose de strike saindo de vanish (clip: attack_light_2)
+      // WP5: criar pose — 0x2C vanish strike — idem (clip: attack_light_2)
+      // WP5: criar pose — 0x2D vanish strike — idem (clip: attack_light_3)
+      // WP5: criar pose — 0x2E vanish strike — idem (clip: attack_light_3)
+      // WP5: criar pose — 0x39 contragolpe do contador — reaproveita jab (clip: attack_light_1)
+      // WP5: criar pose — 0x3B rebate de ki blast — reaproveita block_impact; pose é repelir com a mão
+      // WP5: criar pose — 0x3D rebate de ki blast — idem
+      // WP5: criar pose — 0x95 rajada de volley — reaproveita blast; pose é três tiros em sequência
+      // WP5: criar pose — 0xB4 dash de grab — reaproveita jab; pose é mergulho de pegada
+      // WP5: criar pose — 0xE6 recuperação de voo — reaproveita dodge; pose é estabilizar no ar
+      // WP5: criar pose — 0x130 clash — reaproveita block_impact; pose é choque de guarda
+      // WP5: criar pose — 0x131 clash — idem
+      // WP5: criar pose — 0x132 clash — idem
+      // WP5: criar pose — smash cheio (flag 0x84) — mesma animação do carregável com pausa
+      //   de carga; se o playtest pedir leitura visual própria, é aqui.
     },
 
-    air_2: {
-      clip: 'attack_light_2',
-      startup: 5, active: 3, recovery: 8,
-      damage: 6,
-      poiseDamage: 7,
-      socket: 'hand_l',
-      hitboxRadius: 0.68,
-      knockback: 6.0,
-      knockup: 1.2,
-      causesBlowaway: true,
-      hitstop: 5,
-      shake: 0.12,
-      hitstun: 16,
-      blockstun: 5,
-      chipDamage: 0.4,
-      cancelInto: ['air_3',
-                   'smash_forward', 'smash_up', 'smash_down'],
-      cancelWindow: [6, 17],
-      homingRange: 2.8,
-      homingStrength: 0.85,
-      advanceSpeed: 6.5,
-      advanceFrames: [1, 6],
-      vanishWindow: 9,
+    /* ---------------------------------------------------------------
+     *  OS 9 RESULTADOS DA GUARDA  (BtlHit_ApplyGuard, btl_char_hit.h:27-36)
+     * ---------------------------------------------------------------
+     *  Substituem a antiga matriz de defesa: cada golpe lista QUAL
+     *  resultado produz (guardA/B/C/E no record), e cada resultado tem
+     *  efeito próprio. Campos: stopLen (hit-stop em frames), ki (saldo
+     *  aplicado ao reservatório da guarda, 0..100), blastGain (blast
+     *  gauge devolvido, 0..100), chip (aplica dano residual), flags. */
+    guardResults: {
+      0: { name: 'PLAIN',      stopLen: 6,  ki: 0, blastGain: 0,  chip: true,  flags: 0 },                    // guarda comum [stopLen AUTORADO]
+      1: { name: 'FLAG40',     stopLen: 6,  ki: 0, blastGain: 0,  chip: true,  flags: 0x40 },                 // só contra atk id < 0xB
+      2: { name: 'TIMED_A',    stopLen: 8,  ki: 0, blastGain: 0,  chip: true,  flags: 0x41 },                 // timed guard janela A (flag 0x68); exige atk flag 0x10
+      3: { name: 'TIMED_B',    stopLen: 8,  ki: 0, blastGain: 0,  chip: true,  flags: 0x41 },                 // janela B (0x69)
+      4: { name: 'TIMED_C',    stopLen: 8,  ki: 0, blastGain: 0,  chip: true,  flags: 0x41 },                 // janela C (0x6A)
+      5: { name: 'KI',         stopLen: 6,  ki: 0, blastGain: 0,  chip: true,  flags: 0x40 },                 // consome o reservatório unkD80; zerou → colapso (ação 0xEA)
+      6: { name: 'PUSH',       stopLen: 0,  ki: 0, blastGain: 50, chip: true,  flags: 0 },                    // empurra o atacante + meio stock de blast [stopLen AUTORADO]
+      7: { name: 'PUSH_STOP',  stopLen: 10, ki: 0, blastGain: 50, chip: true,  flags: 0, voice: 0x12 },       // PUSH + hit-stop + voz 0x12 [stopLen AUTORADO]
+      8: { name: 'COUNTER',    stopLen: 16, ki: 0, blastGain: 0,  chip: false, flags: 0, counterActions: [0x89, 0x8A, 0x8B] },  // contador por nível (def+atk)%3; SEM chip [stopLen AUTORADO]
     },
 
-    air_3: {                     // fim da string aérea: só enders depois
-      clip: 'attack_light_5',
-      startup: 6, active: 3, recovery: 11,
-      damage: 9,
-      poiseDamage: 11,
-      socket: 'foot_r',
-      hitboxRadius: 0.72,
-      knockback: 7.0,
-      knockup: 1.6,
-      causesBlowaway: true,
-      hitstop: 7,
-      shake: 0.16,
-      hitstun: 20,
-      blockstun: 6,
-      chipDamage: 0.5,
-      cancelInto: ['smash_forward', 'smash_up', 'smash_down'],
-      cancelWindow: [7, 20],
-      homingRange: 2.8,
-      homingStrength: 0.85,
-      advanceSpeed: 6.0,
-      advanceFrames: [1, 7],
-      vanishWindow: 10,
+    /* ---------------------------------------------------------------
+     *  REAÇÕES  —  reactionId → ação enfileirada (QueueReaction)
+     * ---------------------------------------------------------------
+     *  Tabela extraída de btl_act_j.c:719-726 (comentário do decomp).
+     *  Um hit não interrompe o ATACANTE — muda o DEFENSOR via reação
+     *  enfileirada (blueprint §4.1). Reações 5..13 e 35/36/42/45..47
+     *  tomadas 2+ vezes viram 0x10 (gira na direção do hit); morto vira
+     *  0xF. `stunFrames` só onde o decomp define (23..28 → 0xD3/0xE0). */
+    reactions: {
+      1:  { action: 0xC0 },        // nada
+      2:  { action: 0xC0 },        // no flinch (só morto reage)
+      4:  { action: 0xC1 },
+      5:  { action: 0xC2 },
+      6:  { action: 0xC3 },
+      7:  { action: 0xC4 },
+      8:  { action: 0xC5 },
+      9:  { action: 0xC6 },
+      10: { action: 0xCE },        // lançado (sobe 1200 km/h, cai 1000)
+      11: { action: 0xCD },
+      12: { action: 0xCB },
+      13: { action: 0xCC },
+      14: { action: 0xDA },
+      15: { action: 0xCF },
+      16: { action: 0xD0 },
+      17: { action: 0xD5 },        // blowaway tipo 1 (50 f a 1000 km/h)
+      18: { action: 0xD6 },        // blowaway tipo 2 (15 f a 2000 km/h)
+      19: { action: 0xD4 },        // knockback (700 km/h)
+      20: { action: 0xB8 },
+      22: { action: 0xBA },
+      23: { action: 0xD3, stunFrames: 15 },  // stun em pé, tier 1
+      24: { action: 0xD3, stunFrames: 30 },  // stun em pé, tier 2
+      25: { action: 0xD3, stunFrames: 45 },  // stun em pé, tier 3
+      26: { action: 0xE0, stunFrames: 15 },  // stun aéreo, tier 1
+      27: { action: 0xE0, stunFrames: 30 },  // stun aéreo, tier 2
+      28: { action: 0xE0, stunFrames: 45 },  // stun aéreo, tier 3
+      29: { action: 0x131 },       // + unkE9C (contexto do 0x131)
+      30: { action: 0x131 },
+      31: { action: 0xDB },
+      32: { action: 0xDC },
+      33: { action: 0xDD },
+      34: { action: 0x137 },       // + unkE9C
+      35: { action: 0xC7 },
+      36: { action: 0xC8 },
+      37: { action: 0xBC },
+      38: { action: 0xD1 },
+      39: { action: 0xCB },
+      40: { action: 0xDF },        // blowaway tipo 3 (32 f a 2000 km/h)
+      41: { action: 0x134 },       // + unkFF4
+      42: { action: 0xC6 },
+      43: { action: 0xC4 },
+      44: { action: 0xC5 },
+      45: { action: 0xC6 },
+      46: { action: 0xC4 },
+      47: { action: 0xC6 },
+      48: { action: 0xC6 },
+      49: { action: 0xBF },
     },
 
-    /* ---- SMASH ATTACKS — o que manda o inimigo pra fora da arena ---- */
-
-    smash_forward: {            // direção + soco: manda reto pra longe
-      clip: 'attack_heavy',
-      startup: 13, active: 4, recovery: 24,
-      damage: 16,
-      poiseDamage: 40,
-      socket: 'hand_r',
-      hitboxRadius: 0.75,
-      knockback: 46.0,          // ← É ISTO que causa ring-out. Mexa aqui primeiro.
-      knockup: 3.0,
-      hitstop: 16,
-      shake: 0.8,
-      hitstun: 55,
-      blockstun: 26,
-      chipDamage: 3.0,
-      guardBreak: true,
-      cancelInto: [],
-      cancelWindow: null,
-      homingRange: 3.2,
-      homingStrength: 0.9,
-      // Impulso pra frente durante o golpe. Sem isto, atacar congela
-      // o movimento e o adversário simplesmente anda pra trás.
-      advanceSpeed: 11.0,
-      advanceFrames: [6, 16],
-      vanishWindow: 14,         // janela generosa — smash tem que ser evitável
-      causesBlowaway: true,     // vítima entra em estado "voando descontrolado"
-      trail: true,
-      punchZoom: true,
-      /* Smash ganha de rush numa troca (prioridade 3 contra 1). É o que faz
-       * valer a pena escolher o golpe lento contra quem está martelando: você
-       * come o jab e o atravessa. */
-      priority: 3,
-      chargeable: true,         // segurar K suspende no startup — ver smashCharge
-      launch: { type: 'blowaway' },
+    /* ---------------------------------------------------------------
+     *  GAUGES  —  ki e blast gauge (btl_char_action.c:804-956)
+     * ---------------------------------------------------------------
+     *  Bloqueados por hit-stop/fora de luta. Ki regenera com motion flag
+     *  0x10000 abaixo de `kiRegenLimit` (carga sustentada ×4); blast
+     *  gauge com flag 0x20000. Taxas por FRAME @60. */
+    gauges: {
+      kiRecoverRate: 0.10,           // recuperação de ki fora de hit-stop [AUTORADO]
+      kiRegenRate: 0.05,             // regen passivo (≈ 3/s; baseline ki.passiveRegenPerSec 2,2) [AUTORADO]
+      kiRegenLimit: 60,              // teto do regen passivo [AUTORADO]
+      chargeRate: 0.767,             // carregando ki (≈ 46/s = antigo ki.chargeRatePerSec) [AUTORADO]
+      chargeSustainMul: 4,           // carga sustentada ×4 (estrutural, decomp)
+      blastGain: 0.8,                // blast gauge por acerto limpo [AUTORADO]
+      blastVolleyFrames: 30,         // timer entre rajadas de ki blast (btl_act_c.c:1312+)
+      /* SPARKING (maxPower): drena por frame até zerar — o fim É o
+       * esvaziamento, sem estado de exaustão à parte (blueprint §4.5).
+       * 0,22/f ≈ 7,5 s com a barra cheia. [AUTORADO] */
+      maxPowerDrainPerFrame: 0.22,
+      /* Reservatório da guarda (unkD80, btl_char_hit.h:128): 0..100,
+       * drena 400/100000 por frame segurando guarda (blueprint §10). */
+      guardKiMax: 100,
+      guardKiDrainPerFrame: 0.4,
     },
 
-    smash_up: {                 // manda pra cima — prepara perseguição aérea
-      clip: 'attack_heavy',
-      startup: 12, active: 4, recovery: 22,
-      damage: 14,
-      poiseDamage: 38,
-      socket: 'hand_l',
-      hitboxRadius: 0.72,
-      knockback: 12.0,
-      knockup: 38.0,
-      hitstop: 14,
-      shake: 0.65,
-      hitstun: 50,
-      blockstun: 24,
-      chipDamage: 2.6,
-      guardBreak: true,
-      cancelInto: [],
-      cancelWindow: null,
-      homingRange: 3.2,
-      homingStrength: 0.9,
-      // Impulso pra frente durante o golpe. Sem isto, atacar congela
-      // o movimento e o adversário simplesmente anda pra trás.
-      advanceSpeed: 10.0,
-      advanceFrames: [6, 15],
-      vanishWindow: 14,
-      causesBlowaway: true,
-      trail: true,
-      priority: 3,
-      chargeable: true,
-      launch: { type: 'blowaway' },
+    /* VANISH — duas mecânicas (btl_act_e.c:468): step direcional barato
+     * e behind caro. stepFrames: 7 (estrutural). Custos em ki 0..100. */
+    vanish: { stepFrames: 7, stepKi: 10, behindKi: 20 },
+
+    /* Smash carregável: cheia em 1,5 s, mínimo 0,75 s (btl_act_a.c:194-197). */
+    chargeSmash: { fullFrames: 90, minFrames: 45 },
+
+    /* Hit-stop de clash: mesmo tipo 6 f, misto 2 f (blueprint §4.5). */
+    clash: { sameStop: 6, mixedStop: 2 },
+
+    /* Stun tiers 15/30/45 f (reações 23..28 → 0xD3 em pé / 0xE0 aéreo). */
+    stunTiers: [15, 30, 45],
+
+    /* Blowaway (0xD5/0xD6/0xDF): duração e velocidade reais do decomp
+     * (1000/2000/2000 km/h ÷ 3,6). [frames, m/s] */
+    blowaway: [
+      { frames: 50, speed: 277.8 },
+      { frames: 15, speed: 555.6 },
+      { frames: 32, speed: 555.6 },
+    ],
+
+    /* Knockback (0xD4): 700 km/h ÷ 3,6 (btl_act_a.c:3056+). */
+    knockback: { speed: 194.4 },
+
+    /* Lançado (0xCE): sobe 1200 km/h, cai 1000 km/h, recuperação a
+     * partir do frame 9 (btl_act_a.c:2828+). */
+    launched: { up: 333.3, down: 277.8, recoverFromFrame: 9 },
+
+    /* Mash-out de blowaway: 4 + 12×(fraqueza) apertadas (btl_act_a.c). */
+    mashOut: { base: 4, perWeakness: 12 },
+
+    /* ---------------------------------------------------------------
+     *  KI BLASTS  —  13 records (BtlKiBlastData 0x34 B, btl_tech_b.h:42-49)
+     * ---------------------------------------------------------------
+     *  Kinds 0/4/8 = sem carga; 1-3 / 5-7 / 9-11 = 3 níveis de carga
+     *  (<0,3 / <0,99 / cheio); 12 = volley (ação 0x95). `speed` m/s
+     *  (decomp: 10 km/h), `time` em frames (decomp: segundos), `turn`
+     *  em graus/s (homing), `ki` 0..100, `hits` espalha dano/push. */
+    kiBlasts: {
+      '0':  { flags: 0,    type: 0, damage: 5,  guardDamage: 3,  ki: 4,  speed: 48, turn: 120, time: 156, push: 5,  guardPush: 3,  react: 5,  reactS800: 0, reactS4000: 0, reactS200: 0, hits: 1 },  // A solto (baseline ki_blast) [AUTORADO]
+      '1':  { flags: 0,    type: 1, damage: 12, guardDamage: 6,  ki: 8,  speed: 40, turn: 140, time: 168, push: 12, guardPush: 6,  react: 5,  reactS800: 0, reactS4000: 0, reactS200: 0, hits: 1 },  // A carga 1 [AUTORADO]
+      '2':  { flags: 0,    type: 2, damage: 22, guardDamage: 10, ki: 12, speed: 36, turn: 100, time: 180, push: 20, guardPush: 10, react: 7,  reactS800: 0, reactS4000: 0, reactS200: 0, hits: 1 },  // A carga 2 [AUTORADO]
+      '3':  { flags: 0,    type: 3, damage: 34, guardDamage: 14, ki: 16, speed: 32, turn: 60,  time: 192, push: 30, guardPush: 14, react: 17, reactS800: 0, reactS4000: 0, reactS200: 0, hits: 1 },  // A carga 3 (baseline charged_blast) [AUTORADO]
+      '4':  { flags: 0,    type: 0, damage: 6,  guardDamage: 3,  ki: 4,  speed: 52, turn: 100, time: 150, push: 5,  guardPush: 3,  react: 5,  reactS800: 0, reactS4000: 0, reactS200: 0, hits: 1 },  // B solto [AUTORADO]
+      '5':  { flags: 0,    type: 1, damage: 13, guardDamage: 6,  ki: 8,  speed: 44, turn: 120, time: 162, push: 12, guardPush: 6,  react: 5,  reactS800: 0, reactS4000: 0, reactS200: 0, hits: 1 },  // B carga 1 [AUTORADO]
+      '6':  { flags: 0,    type: 2, damage: 24, guardDamage: 10, ki: 12, speed: 40, turn: 90,  time: 174, push: 20, guardPush: 10, react: 7,  reactS800: 0, reactS4000: 0, reactS200: 0, hits: 1 },  // B carga 2 [AUTORADO]
+      '7':  { flags: 0,    type: 3, damage: 36, guardDamage: 15, ki: 16, speed: 36, turn: 50,  time: 186, push: 32, guardPush: 14, react: 17, reactS800: 0, reactS4000: 0, reactS200: 0, hits: 1 },  // B carga 3 [AUTORADO]
+      '8':  { flags: 0,    type: 0, damage: 4,  guardDamage: 2,  ki: 3,  speed: 56, turn: 80,  time: 138, push: 4,  guardPush: 2,  react: 5,  reactS800: 0, reactS4000: 0, reactS200: 0, hits: 1 },  // C solto [AUTORADO]
+      '9':  { flags: 0,    type: 1, damage: 10, guardDamage: 5,  ki: 7,  speed: 48, turn: 100, time: 150, push: 10, guardPush: 5,  react: 5,  reactS800: 0, reactS4000: 0, reactS200: 0, hits: 1 },  // C carga 1 [AUTORADO]
+      '10': { flags: 0,    type: 2, damage: 20, guardDamage: 9,  ki: 11, speed: 42, turn: 80,  time: 162, push: 18, guardPush: 9,  react: 7,  reactS800: 0, reactS4000: 0, reactS200: 0, hits: 1 },  // C carga 2 [AUTORADO]
+      '11': { flags: 0,    type: 3, damage: 30, guardDamage: 13, ki: 15, speed: 38, turn: 45,  time: 174, push: 28, guardPush: 13, react: 17, reactS800: 0, reactS4000: 0, reactS200: 0, hits: 1 },  // C carga 3 [AUTORADO]
+      '12': { flags: 0x20, type: 4, damage: 18, guardDamage: 9,  ki: 10, speed: 50, turn: 90,  time: 150, push: 8,  guardPush: 4,  react: 5,  reactS800: 0, reactS4000: 0, reactS200: 0, hits: 3 },  // volley (0x95) — 3 tiros [AUTORADO]
     },
 
-    smash_down: {               // crava pro chão — slam com cratera
-      clip: 'attack_heavy',
-      startup: 14, active: 4, recovery: 26,
-      damage: 18,
-      poiseDamage: 42,
-      socket: 'hand_r',
-      hitboxRadius: 0.75,
-      knockback: 8.0,
-      knockup: -42.0,           // negativo = pra baixo
-      hitstop: 18,
-      shake: 0.9,
-      hitstun: 58,
-      blockstun: 28,
-      chipDamage: 3.4,
-      guardBreak: true,
-      cancelInto: [],
-      cancelWindow: null,
-      homingRange: 3.2,
-      homingStrength: 0.9,
-      // Impulso pra frente durante o golpe. Sem isto, atacar congela
-      // o movimento e o adversário simplesmente anda pra trás.
-      advanceSpeed: 11.0,
-      advanceFrames: [7, 17],
-      vanishWindow: 14,
-      causesBlowaway: true,
-      groundSlam: true,         // impacto extra + cratera ao bater no chão
-      trail: true,
-      punchZoom: true,
-      priority: 3,
-      chargeable: true,
-      launch: { type: 'slam' },
-    },
-
-    /* ================================================================
-     *  GRAB / THROW  —  a resposta a quem só segura a guarda  (§17)
-     * ================================================================
-     *  O buraco que ele preenche, e que a medição desta sessão escancarou: o
-     *  perfil DEFESA passa 37% do tempo em guarda e leva 88 golpes limpos
-     *  contra 32 aparados. Ou seja, contra a guarda o ataque tinha UMA resposta
-     *  — o smash, que é lento e telegrafado. Faltava a segunda.
-     *
-     *  A relação que o §17 pede, e que a matriz de defesa implementa:
-     *
-     *      GRAB  vence  GUARDA      (a guarda não está na lista dele)
-     *      GRAB  perde  ESCAPE      (a vítima aperta guarda na janela)
-     *      GRAB  perde  qualquer golpe (prioridade 0: perde de tudo)
-     *
-     *  Essa terceira linha é o que impede o grab de virar a jogada dominante:
-     *  ele só funciona contra quem está DEFENDENDO. Contra quem ataca, você
-     *  perde a troca; contra quem espera, come o escape. Grab é uma leitura,
-     *  não um botão bom.
-     *
-     *  Entrada: F+J. É o idioma clássico de arremesso (guarda+ataque) e não
-     *  gasta tecla nova, que era um pedido explícito (§29).                   */
-    grab: {
-      clip: 'attack_light_1',
-      startup: 8, active: 4, recovery: 26,
-      /* Recovery ENORME de propósito: 26 frames é mais que o smash frente.
-       * Errar um grab tem que ser a coisa mais punível do jogo, senão tentar
-       * grab às cegas seria barato e ele viraria spam. */
-      damage: 0,                // o dano está no ARREMESSO, não na pegada
-      poiseDamage: 0,
-      socket: 'hand_r',
-      hitboxRadius: 0.62,
-      knockback: 0,
-      knockup: 0,
-      hitstop: 6,
-      shake: 0.2,
-      hitstun: 0,
-      blockstun: 0,
-      chipDamage: 0,
-      cancelInto: [],
-      cancelWindow: null,
-      homingRange: 2.2,         // alcance curto: tem que estar colado
-      homingStrength: 0.9,
-      advanceSpeed: 5.0,
-      advanceFrames: [1, 7],
-      vanishWindow: 6,          // dá pra vanishar de um grab, mas é apertado
-      priority: 0,              // perde de QUALQUER golpe
-      type: 'grab',
-      category: 'grab',
-      ignoresGuard: true,       // é isto que a matriz de defesa materializa
-      zCounterable: false,      // Z-Counter é contra golpe, não contra pegada
-      isGrab: true,
-    },
-
-    /* O ARREMESSO. Sai sozinho quando a pegada segura o tempo do `holdFrames`
-     * sem escape. A direção segurada escolhe pra onde — é aqui que o grab vira
-     * ferramenta de ring-out: agarrar perto da borda e arremessar pra fora. */
-    grab_throw: {
-      clip: 'attack_heavy',
-      startup: 2, active: 2, recovery: 18,
-      damage: 13,
-      poiseDamage: 0,           // já está indefeso: poise não se aplica
-      socket: 'hand_r',
-      hitboxRadius: 0.8,
-      knockback: 34.0,
-      knockup: 6.0,
-      hitstop: 16,
-      shake: 0.7,
-      hitstun: 48,
-      blockstun: 0,
-      chipDamage: 0,
-      cancelInto: [],
-      cancelWindow: null,
-      homingRange: 0,
-      homingStrength: 0,
-      vanishWindow: 0,          // não há como vanishar de dentro do arremesso
-      priority: 3,
-      type: 'grab',
-      category: 'grab',
-      causesBlowaway: true,
-      launch: { type: 'blowaway' },
-      trail: true,
-      punchZoom: true,
-      unblockable: true,
-    },
-
-    /* ================================================================
-     *  SPIKE DE PERSEGUIÇÃO  —  o golpe da perseguição de alta velocidade
-     * ================================================================
-     *  Sai SOZINHO quando a perseguição de alta velocidade alcança o alvo. Não
-     *  tem entrada própria: você o compra ao escolher aquele tipo de
-     *  perseguição, e o risco já foi pago na escolha.
-     *
-     *  Ele RE-LANÇA (`blowaway` de novo), e é o único golpe do jogo que faz
-     *  isso. É assim que se atravessa a arena — e é por isso que a perseguição
-     *  de alta velocidade não dá rota nova: ela já paga em distância.          */
-    pursuit_spike: {
-      clip: 'attack_heavy',
-      startup: 3, active: 4, recovery: 16,
-      damage: 12,
-      poiseDamage: 30,
-      socket: 'hand_r',
-      hitboxRadius: 1.1,        // generoso: a perseguição já mirou por você
-      knockback: 40.0,
-      knockup: 4.0,
-      hitstop: 18,
-      shake: 0.85,
-      hitstun: 50,
-      blockstun: 22,
-      chipDamage: 2.4,
-      guardBreak: true,         // perseguir bem fura a guarda
-      cancelInto: [],
-      cancelWindow: null,
-      homingRange: 3.4,
-      homingStrength: 0.95,
-      advanceSpeed: 12.0,
-      advanceFrames: [1, 6],
-      vanishWindow: 12,
-      priority: 4,              // a maior do jogo: atravessa qualquer coisa
-      type: 'pursuit',
-      category: 'pursuit',
-      causesBlowaway: true,
-      launch: { type: 'blowaway' },
-
-      /* NÃO LIBERA A ROTA, e isto foi um vazamento pego medindo.
-       *
-       * O spike é um "ender" (tipo `pursuit`), e `combo.enderClearsChain` zera a
-       * rota de todo ender. Medido no navegador: a rota ia de 3 pra 0 no frame do
-       * spike — ou seja, a perseguição de alta velocidade RE-LANÇAVA e ainda
-       * devolvia rota nova, apesar de `clearsChainOnArrive: false` dizer o
-       * contrário. Ela virava estritamente melhor que a direta: mais dano, mais
-       * distância E a mesma recompensa de pressão.
-       *
-       * A regra que o §10 pede é que só a DIRETA compre tempo de pressão. As
-       * outras duas compram posição e dano. Este campo é o que faz a intenção
-       * declarada valer no código. */
-      noChainClear: true,
-      // Invulnerável enquanto atravessa — senão o spike trocava com o corpo
-      // que está voando e os dois se anulavam.
-      invulnerability: [0, 6],
-      trail: true,
-      punchZoom: true,
-    },
-  },
-
-  /* ================================================================== */
-  /*  BLASTS  —  projéteis de ki                                         */
-  /* ================================================================== */
-  blasts: {
-    ki_blast: {                 // tiro rápido, spam barato
-      startup: 6, recovery: 10,
-      kiCost: 4,
-      damage: 5,
-      speed: 48,
-      radius: 0.35,
-      lifetimeSec: 2.6,
-      homingStrength: 0.30,     // curva atrás do alvo — perdoa mira ruim
-      knockback: 5.0,
-      hitstop: 5,
-      shake: 0.12,
-      hitstun: 12,
-      color: 0x55ccff,
-      deflectable: true,        // dá pra rebater com guarda no timing
-    },
-
-    charged_blast: {            // segurar pra carregar
-      startup: 10, recovery: 22,
-      kiCost: 18,
-      minChargeFrames: 20,
-      maxChargeFrames: 90,
-      damage: 12,               // no mínimo de carga
-      damageAtFull: 34,
-      speed: 34,
-      radius: 0.9,
-      radiusAtFull: 1.9,
-      lifetimeSec: 3.4,
-      homingStrength: 0.18,
-      knockback: 26.0,
-      knockbackAtFull: 44.0,
-      hitstop: 14,
-      shake: 0.6,
-      hitstun: 44,
-      color: 0x66eaff,
-      causesBlowaway: true,
-      deflectable: false,
-    },
-
-    ultimate: {                 // o Kamehameha. Caro, lento, decide a luta.
-      startup: 40,              // telegrafadíssimo de propósito
-      recovery: 60,
-      kiCost: 70,
-      damage: 52,
-      beamLengthMax: 70,
-      beamRadius: 2.2,
-      durationFrames: 70,
-      tickDamageFrames: 6,      // dano a cada N frames enquanto o feixe pega
-      knockback: 70.0,
-      hitstop: 24,
-      shake: 1.6,
-      hitstun: 90,
-      color: 0x88f0ff,
-      cinematicFrames: 46,      // câmera dramática na largada
-      causesBlowaway: true,
-      // 0 = a mira trava no disparo e o feixe vai reto (padrão, e o certo:
-      // um feixe que persegue é indesviável). Suba um pouco só se acertar
-      // estiver difícil demais. Acima de ~0.3 vira teleguiado.
-      aimTracking: 0,
+    /* ---------------------------------------------------------------
+     *  TÉCNICAS  —  BtlSuperData SoA (btl_tech_b.h:110-163)
+     * ---------------------------------------------------------------
+     *  Array paralelo por SLOT (0=TECH_A, 1=TECH_B, 2=ULTIMATE —
+     *  BTL_SLOT_*). Campos selecionados do SoA; `time` em frames
+     *  (decomp: segundos), `shotSpeed`/`push` em m/s (decomp: 10 km/h),
+     *  `ki` 0..100, `damage` total do técnico. Baselines do antigo
+     *  `blasts.ultimate` no slot 2. [AUTORADO] */
+    supers: {
+      flagsA: [0, 0, 0],
+      flags: [0, 0, 0x20],
+      id: [0, 0, 0],
+      shotTime: [24, 18, 40],       // frames de pose antes do disparo
+      shotSpeed: [120, 90, 80],     // m/s
+      shotTurn: [0, 0, 0],          // graus/s (0 = feixe trava no disparo)
+      shots: [1, 1, 1],
+      hitsB: [3, 2, 6],
+      hitsC: [0, 0, 1],
+      steps: [1, 1, 1],
+      lastStep: [0, 0, 0],
+      hitDirKind: [0, 0, 0],
+      type: [1, 1, 1],
+      react: [18, 18, 18],
+      reactAlt: [0, 0, 0],
+      reactS800: [0, 0, 0],
+      reactAltS800: [0, 0, 0],
+      guardKind: [0, 0, 0],
+      hitSound: [[1, 1, 2], [1, 1, 2]],
+      push: [40, 50, 70],
+      guardPush: [12, 16, 24],
+      damage: [28, 36, 52],
+      guardDamage: [12, 16, 24],
+      ki: [30, 40, 70],
+      recoil: [0, 0, 0],
+      drain: [0, 0, 0],
+      cooldown: [180, 240, 0],      // frames
+      chargeLimit: [0, 0, 0],       // frames
+      chargeScale: [1, 1, 1],
+      throwAngleA: [0, 0, 0],       // graus
+      throwAngleB: [0, 0, 0],
+      rushSpeed: [0, 0, 0],         // m/s
     },
   },
 
   /* ================================================================== */
   /*  DEFESA E ESCAPE                                                    */
   /* ================================================================== */
+  /*  Reduzida de propósito. O que saiu daqui foi substituído, não
+   *  perdido — cada peça mudou de casa pro lado BT3:
+   *
+   *    vanish / vanishBattle / zCounter / sonicSway  →  não existem no
+   *        BT3 (blueprint §4.4: o kit defensivo BT3 é guarda, timed
+   *        guard, step, vanish e throw). Os 9 resultados de guarda e a
+   *        tabela de reações estão em `bt3.guardResults` /
+   *        `bt3.reactions`.
+   *    estamina de guarda + quebra por exaustão  →  reservatório de ki
+   *        da guarda (`bt3.gauges.guardKi*`, btl_char_hit.h:128) — no
+   *        BT3 a guarda drena KI, não uma estamina própria, e o colapso
+   *        é ação 0xEA, não um stun inventado.
+   *    smash como quebra de guarda  →  o guard-break por SMASH do
+   *        protótipo virou o fluxo de resultado PUSH/COUNTER dos
+   *        records (guardA/B/C/E), sem chave própria aqui.
+   *
+   *  Ficaram os três sistemas de MOVIMENTO que o BT3 também tem e que
+   *  são lidos pelo runtime atual como estavam: step, recuperação e a
+   *  interação de grab (os tempos do THROW estão em
+   *  `bt3.records['0x55']`; aqui fica a INTERAÇÃO pegou→escape). */
   defense: {
     guard: {
-      damageReduction: 0.80,
-      knockbackReduction: 0.60,
-      // (`enterFrames`/`exitFrames` removidos: nunca foram lidos — a guarda
-      //  sempre foi instantânea. E deve continuar: responder na hora é o §7.1,
-      //  e o preço de defender agora é a ESTAMINA abaixo, que é um custo de
-      //  decisão, não de latência.)
-      kiPerHit: 3,              // guarda gasta ki no Tenkaichi
-
-      /* ESTAMINA DE GUARDA — o relógio que impede turtle.
-       *
-       * O campo `guardStamina` existia no Fighter desde o começo: era
-       * inicializado, regenerado e zerado no guard break. E NUNCA era lido por
-       * ninguém. Mecânica fantasma — segurar F era essencialmente grátis.
-       *
-       * Agora ela é o contrapeso de `combo.cancelOnBlock: false`. Se bloquear
-       * devolve o turno, defender precisa custar ALGUMA coisa, senão a resposta
-       * ótima vira "segure F pra sempre" e o jogo trava no outro extremo.
-       *
-       * O drena por TEMPO (segurar) e por HIT (aguentar pressão) são separados
-       * de propósito: segurar guarda no vazio é barato, aguentar um combo é
-       * caro. Ao zerar, a guarda arrebenta sozinha — e aí você fica exposto em
-       * pé por `breakStunFrames`, que é punível mas não é morte.
-       *
-       * Note a diferença deliberada entre as DUAS quebras de guarda:
-       *   por SMASH     → blowaway, voa longe  → é a ferramenta de RING-OUT
-       *   por EXAUSTÃO  → stun em pé, punível  → é a ferramenta de PRESSÃO
-       */
-      maxStamina: 100,
-      staminaPerHit: 13,          // cada golpe aparado
-      staminaDrainPerSec: 8,      // custo de só ficar segurando
-      staminaRegenPerSec: 26,
-      staminaRegenDelayFrames: 34, // só volta a encher N frames depois de soltar
-      breakStunFrames: 42,        // exposto em pé após a guarda arrebentar
-
-      /* Rebater ki blast. `deflectWindowFrames` existia e não era usado: o
-       * projétil voltava por SÓ ESTAR de guarda, sem timing nenhum — perícia
-       * zero. Agora exige apertar a guarda perto do impacto; segurar guarda
-       * continua ABSORVENDO (o normal), mas só o timing rebate. */
+      damageReduction: 0.80,     // dano absorvido pela guarda comum [AUTORADO]
+      knockbackReduction: 0.60,  // empurrão absorvido pela guarda comum [AUTORADO]
+      /* O rebate de ki blast continua sendo janela de timing sobre a
+       * guarda (btl_char_hit: a guarda é resultado 5 KI / 0 PUSH, o
+       * timing decide qual). O resultado em si está em
+       * `bt3.guardResults`. */
       deflectWindowFrames: 8,
       deflectSpeedMul: 1.25,
-    },
-
-    /* VANISH — a mecânica assinatura. Some e reaparece atrás do atacante.
-     * Custa ki. Se o atacante também tiver ki, ele pode contra-vanishar:
-     * é assim que nascem as trocas em alta velocidade do Tenkaichi. */
-    vanish: {
-      kiCost: 20,
-      // Só funciona se apertado dentro do `vanishWindow` do golpe recebido.
-      startupFrames: 2,
-      recoveryFrames: 12,
-      reappearDistance: 1.9,    // metros atrás do atacante
-      reappearBehind: true,
-      hitstop: 12,
-      slowMoFrames: 16,         // câmera lenta no vanish — leitura dramática
-      slowMoScale: 0.3,
-      shake: 0.35,
-      afterimageCount: 5,       // rastro de imagens residuais
-      afterimageLifeSec: 0.32,
-      // Chain limit: impede vanish-war infinito entre dois jogadores cheios.
-      maxChain: 4,
-      chainKiMultiplier: 1.4,   // cada vanish seguido custa 40% a mais
-
-      /* ERRAR O VANISH PRECISA CUSTAR.
-       *
-       * Antes você só pagava ki quando o vanish FUNCIONAVA. Apertar V no vazio
-       * era de graça, então martelar V era estritamente melhor que ler o
-       * adversário — e a mecânica assinatura do jogo virava botão de pânico
-       * sem multa. Não existe leitura onde chutar não custa.
-       *
-       * Agora, se o toque expira sem nenhum golpe ter chegado, cobra-se uma
-       * fração do ki e um cooldown curto. Pequeno de propósito: é pra punir
-       * quem MARTELA, não quem tenta e erra o timing por pouco. */
-      whiffKiCost: 7,
-      whiffCooldownFrames: 22,
-      /* A partir de quantos frames um toque de vanish é considerado chute.
-       * Tem que ser >= a maior `vanishWindow` de qualquer golpe (hoje 14, do
-       * smash), senão você seria cobrado por um vanish que ainda ia funcionar. */
-      maxUsefulWindow: 16,
-    },
-
-    /* ================================================================
-     *  Z-COUNTER  —  a guarda que REVERTE em vez de aguentar
-     * ================================================================
-     *  O buraco que ele preenche: a defesa era toda passiva. Guardar dava
-     *  +8 frames, o step tirava você da frente e o vanish te punha atrás —
-     *  nenhuma delas TOMAVA o turno de volta na hora. Faltava a opção de alto
-     *  risco e alta recompensa, que é o que dá teto competitivo.
-     *
-     *  Regra: TOCAR a guarda (não segurar) dentro de `window` frames do golpe
-     *  que está chegando. Acertou — você não toma dano, o atacante trava em
-     *  `attackerStunFrames`, e a rota dele zera. Você fica com a vez.
-     *
-     *  Por que TOCAR e não segurar: é a mesma gramática do rebate de ki blast
-     *  (`deflectWindowFrames`). O botão de guarda passa a ter profundidade —
-     *  segurar absorve e gasta estamina, tocar no tempo certo vira a mesa.
-     *
-     *  ANTI-MARTELADA: cada TOQUE de guarda arma o contador UMA vez e trava
-     *  por `attemptCooldownFrames`. Sem isso, martelar F daria uma janela
-     *  quase permanente — que é exatamente o defeito que passamos esta
-     *  sessão inteira tirando do jogo do outro lado.
-     *
-     *  Ninguém reage a 4 frames de startup (ver 8.15). Isto é ANTECIPAÇÃO:
-     *  você conta com o golpe vindo. Errar custa a guarda que você não segurou.
-     */
-    zCounter: {
-      window: 5,                  // frames desde o toque
-      kiCost: 12,
-      attemptCooldownFrames: 24,  // um contador armado a cada 0,4 s
-
-      /* TENTADO E REVERTIDO — multa por tentativa desperdiçada.
-       *
-       * Martelar F a cada 6 frames dava 8 contras em 30 golpes contra 10 de
-       * quem lê — perto demais. A correção óbvia era cobrar ki da tentativa
-       * que expira sem contra-atacar. Medindo depois: quem LÊ caiu de 10 para
-       * 4 contras e quem martela não se moveu.
-       *
-       * A causa é que a multa cobrava da pessoa errada. Se o ATACANTE erra o
-       * golpe, a tentativa do defensor expira sem que houvesse o que
-       * contra-atacar — e ele pagava por um erro que não foi dele, com um
-       * cooldown de 40 frames que engolia o golpe seguinte. Em cascata.
-       *
-       * Fica registrado porque a ideia vai reaparecer: martelar F JÁ é pior
-       * que ler (8 contras contra 10) e JÁ custa mais dano (90 contra 80),
-       * porque quem martela não está segurando guarda. O desequilíbrio que
-       * parecia existir é menor do que o número solto sugere. Se um dia
-       * precisar mesmo apertar, estreite a JANELA — não invente multa.        */
-      attackerStunFrames: 34,     // o atacante fica exposto — é aqui que se pune
-      iframes: 10,                // o contra-atacante não come o golpe seguinte
-      hitstop: 16,
-      slowMoFrames: 20,
-      slowMoScale: 0.28,
-      shake: 0.5,
-      /* Reverter a situação devolve a rota: quem leu o golpe ganha o direito
-       * de atacar, e não só de não apanhar. */
-      clearsChain: true,
-    },
-
-    /* ================================================================
-     *  SONIC SWAY  —  o step que sai no tempo certo
-     * ================================================================
-     *  NÃO é um botão novo. É o `step` que já existe, reconhecido quando foi
-     *  bem cronometrado — a mesma tecla, resultado diferente conforme o
-     *  timing. Preferi isto a inventar mais uma entrada: o pedido era melhor
-     *  INTERAÇÃO entre as mecânicas existentes, não mais mecânicas.
-     *
-     *  Step normal    esquiva e recua       → você sai da frente
-     *  Sonic Sway     esquiva NO impacto    → sai da frente E ganha a vez
-     *
-     *  O que o separa do vanish: o sway é GRÁTIS mas exige ANTECIPAR e
-     *  comprometer uma direção; o vanish é caro mas responde depois. Um é
-     *  leitura barata e arriscada, o outro é recurso. */
-    sonicSway: {
-      /* Quão cedo nos i-frames o golpe precisa cair pra contar como perfeito.
-       * Os i-frames do step vão de 2 a 11: parado aqui em 2..6, de modo que
-       * stepar muito antes ainda te salva, mas não premia. */
-      window: 4,
-      kiRefund: 6,                // devolve um pouco: esquivar bem é sustentável
-      clearsStepCooldown: true,   // encadeia leitura: pode stepar de novo já
-      clearsChain: true,
-      slowMoFrames: 14,
-      slowMoScale: 0.35,
-      hitstop: 8,
-      shake: 0.22,
     },
 
     /* Step dodge — esquiva curta, barata, sem custo de ki. */
@@ -1997,21 +1132,24 @@ export const TUNING = {
     },
 
     /* ================================================================
-     *  GRAB / THROW  —  a pegada, o arremesso e o escape  (§17)
+     *  GRAB / THROW  —  a pegada, o arremesso e o escape
      * ================================================================
-     *  Ver o comentário do golpe `grab` em `moves` pra saber por que ele existe.
-     *  Aqui ficam os tempos da INTERAÇÃO, que é o que o §17 pede como sistema:
+     *  O record do golpe (dano, janela, o que a guarda faz) está em
+     *  `bt3.records['0x55']` — no BT3 a guarda NÃO responde a grab
+     *  (btl_char_hit.c:346+, atk id 0x55/0x56 fora do alcance do
+     *  guardA/B/C/E), então a única defesa contra pegada é o escape.
+     *  Aqui ficam os tempos da INTERAÇÃO:
      *
      *      pegou  →  [ holdFrames ]  →  arremesso
      *                      │
      *                 escapeWindow: a vítima aperta guarda e se solta
      *
-     *  O escape é a única defesa contra grab (ver `defenseMatrix.grab`), e ele
-     *  é de LEITURA, não de martelada: a janela abre no começo da pegada e
-     *  fecha. Quem martela guarda por reflexo acerta às vezes; quem percebe a
-     *  pegada acerta sempre. É a mesma gramática do Z-Counter, de propósito —
-     *  o botão de guarda tem três significados conforme o timing, e isso é
-     *  profundidade sem tecla nova.                                            */
+     *  O escape é de LEITURA, não de martelada: a janela abre no começo
+     *  da pegada e fecha. Quem martela guarda por reflexo acerta às
+     *  vezes; quem percebe a pegada acerta sempre. É a mesma gramática
+     *  do timing de guarda do BT3 (timed guard / rebate), de propósito —
+     *  o botão de guarda tem vários significados conforme o timing, e
+     *  isso é profundidade sem tecla nova.                                      */
     grab: {
       holdFrames: 20,           // quanto tempo a pegada segura antes de arremessar
       range: 2.2,               // tem que estar colado
@@ -2019,94 +1157,19 @@ export const TUNING = {
       escapeKiCost: 6,          // escapar custa: não é de graça
       /* Escapou: o AGRESSOR fica exposto. A troca é justa — ele apostou numa
        * leitura e errou, e agora come uma punição do tamanho do recovery que
-       * teria comido se tivesse errado o grab inteiro. */
+       * teria comido se tivesse errado o grab inteiro. (BT3: CheckThrowBreak
+       * devolve stun no atacante por nível — ver bt3.guardResults[8]). */
       escapeAttackerStunFrames: 30,
       escapeVictimIframes: 8,
       /* Não dá pra agarrar quem já está indefeso. Sem esta regra, grab depois de
        * um lançamento seria dano garantido e o jogo viraria uma sequência
-       * fechada — exatamente o que o `maxChain` existe pra impedir. */
+       * fechada — uma vítima em blowaway/knockdown não é alvo de pegada. */
       cannotGrabStates: ['blowaway', 'knockdown', 'getup', 'hitstun', 'dead'],
       // Cooldown após um grab (qualquer resultado): impede spam de pegada.
       cooldownFrames: 40,
       hitstop: 8,
       shake: 0.25,
     },
-
-    /* ================================================================
-     *  VANISH BATTLE  —  a troca de leituras em alta velocidade  (§12)
-     * ================================================================
-     *  O vanish já existia e já era bom: você some e reaparece atrás de quem te
-     *  bate. Mas terminava aí. Quem vanishava ganhava a posição e pronto — o
-     *  atacante não tinha resposta, então não havia DISPUTA, só um resultado.
-     *
-     *  A imagem que falta é a mais reconhecível do gênero: dois lutadores
-     *  piscando pelo céu, cada um aparecendo atrás do outro, até que um erra.
-     *
-     *      A ataca
-     *         ↓
-     *      B vanisha            → B atrás de A       (A tem responseFrames)
-     *         ↓
-     *      A contra-vanisha     → A atrás de B       (B tem responseFrames)
-     *         ↓
-     *      B contra-vanisha     → B atrás de A            ...
-     *         ↓
-     *      quem não responder PERDE A POSIÇÃO
-     *      quem chegar ao teto de trocas leva STUN
-     *
-     *  Duas regras impedem o laço infinito que o §12 manda evitar, e elas são
-     *  diferentes de propósito:
-     *
-     *  1. CUSTO CRESCENTE (`chainKiMultiplier`, já existia). Cada troca custa
-     *     40% mais que a anterior. A quarta troca custa ~77 de ki: a barra
-     *     acaba antes da paciência. É o freio ECONÔMICO.
-     *
-     *  2. TETO DE TROCAS com punição no último. Chegar em `maxExchanges` não
-     *     "termina empatado" — quem tinha a vez de responder e não tinha mais
-     *     ki (ou passou do teto) leva `loserStunFrames`. É o freio de RISCO, e é
-     *     o que transforma a troca numa aposta em vez de um desperdício mútuo
-     *     de recurso.
-     *
-     *  A janela de resposta é CURTA (12 frames) porque isto é o topo da curva de
-     *  perícia (nível 🟣 do idea.txt). Não é pra iniciante acertar — é pra ser a
-     *  coisa que dois jogadores bons fazem um com o outro.                     */
-    vanishBattle: {
-      enabled: true,
-      responseFrames: 12,       // janela pra contra-vanishar
-      maxExchanges: 4,
-      /* Quem perde a troca final fica exposto. Menor que o stun do Z-Counter
-       * (34) de propósito: a vanish battle já custou ki dos dois lados, e somar
-       * uma punição longa a isso tornaria a mecânica assustadora de tentar. */
-      loserStunFrames: 24,
-      slowMoFrames: 20,
-      slowMoScale: 0.26,
-      hitstop: 10,
-      shake: 0.4,
-      // O contra-vanish reaparece um pouco mais longe — senão os dois corpos
-      // ficam empilhados e a leitura visual da troca se perde.
-      reappearDistance: 2.3,
-    },
-  },
-
-  /* ================================================================== */
-  /*  BLOWAWAY  —  estado de "voando descontrolado" após um smash         */
-  /* ================================================================== */
-  blowaway: {
-    drag: 1.35,                 // desaceleração no ar (baixo = voa MUITO longe)
-
-    /* A saída do blowaway é por VELOCIDADE, nunca por tempo. Devolver o
-     * controle com o corpo ainda voando rápido cria um estado esquisito em que
-     * o jogador não consegue se mover (a inércia come o input) mas já pode
-     * atacar — parece socar estando desmaiado. */
-    minSpeedToExit: 4.0,        // abaixo disso sai do estado
-    maxFrames: 150,             // a partir daqui começa a FREAR (não solta)
-    overtimeBrake: 6.0,         // força do freio depois do maxFrames
-    overtimeMaxFrames: 120,     // rede de segurança: nunca travar no estado
-    groundBounceRestitution: 0.42,
-    groundBounceDamage: 4,
-    groundBounceShake: 0.35,
-    craterOnImpact: true,
-    // (`chaseWindowFrames` removido: nunca foi lido. A janela de perseguir quem
-    //  está voando já é o próprio tempo de blowaway — não havia segundo relógio.)
   },
 
   /* ================================================================== */
@@ -2807,11 +1870,13 @@ export const TUNING = {
  * ========================================================================== */
 export const DEBUG_SLIDERS = [
   ['__group', 'Smash / Ring-out'],
-  ['moves.smash_forward.knockback', 5, 120, 1,   'Smash frente: empurrão (m/s)'],
-  ['moves.smash_up.knockup',        5, 90,  1,   'Smash cima: levantada'],
-  ['moves.smash_down.knockup',    -90, -5,  1,   'Smash baixo: cravada'],
-  ['blowaway.drag',               0.1, 6,   0.05,'Blowaway: freio no ar'],
-  ['moves.smash_forward.startup',   4, 40,  1,   'Smash: startup (frames)'],
+  ['bt3.records.0x21.pushHit',    5, 120, 1,   'Smash frente cheio: empurrão (m/s)'],
+  ['bt3.records.0x1D.pushHit',    5, 90,  1,   'Smash cima cheio: empurrão (m/s)'],
+  ['bt3.records.0x1E.pushHit',    5, 90,  1,   'Smash baixo cheio: empurrão (m/s)'],
+  ['bt3.records.0x21.damage',     5, 60,  1,   'Smash frente cheio: dano'],
+  ['bt3.blowaway.0.frames',      10, 120, 1,   'Blowaway tipo 1: duração (f)'],
+  ['bt3.blowaway.0.speed',       50, 600, 5,   'Blowaway tipo 1: velocidade (m/s)'],
+  ['bt3.knockback.speed',        50, 400, 5,   'Knockback: velocidade (m/s)'],
 
   ['__group', 'Impacto / Juice'],
   ['juice.hitstopScale',            0, 3,   0.05,'Hitstop (congelamento)'],
@@ -2828,59 +1893,30 @@ export const DEBUG_SLIDERS = [
   ['flight.turnSpeed',              2, 25,  0.5, 'Velocidade de giro'],
   ['camera.speedFovMax',            0, 50,  1,   'FOV extra na velocidade'],
 
-  ['__group', 'Ki'],
+  ['__group', 'Ki / Gauges'],
   ['ki.chargeRatePerSec',           5, 120, 1,   'Velocidade de carregar ki'],
   ['ki.passiveRegenPerSec',         0, 20,  0.2, 'Regen passivo'],
-  ['defense.vanish.kiCost',         0, 60,  1,   'Vanish: custo de ki'],
+  ['bt3.gauges.kiRegenRate',        0, 1,   0.01,'Ki: regen por frame'],
+  ['bt3.gauges.blastGain',          0, 5,   0.1, 'Blast gauge: ganho por acerto'],
+  ['bt3.vanish.stepKi',             0, 60,  1,   'Vanish step: custo de ki'],
+  ['bt3.vanish.behindKi',           0, 60,  1,   'Vanish behind: custo de ki'],
 
-  /* ---- O eixo ataque ↔ defesa. É aqui que mora a maior diferença desta
-   * passada: bloquear passou a devolver o turno, e defender passou a ter um
-   * relógio. Os dois são ajustáveis ao vivo porque o ponto certo entre
-   * "turtle domina" e "pressão domina" só sai de playtest. ---- */
   ['__group', 'Guarda / Turnos'],
-  ['combo.cancelOnBlock',           0, 1,   1,   'Bloqueio deixa emendar? (liga = antigo)'],
-  ['moves.rush_1.blockstun',        0, 30,  1,   'Blockstun do rush'],
-  ['moves.smash_forward.blockstun', 0, 60,  1,   'Blockstun do smash'],
-  ['defense.guard.staminaPerHit',   0, 50,  1,   'Guarda: desgaste por golpe'],
-  ['defense.guard.staminaDrainPerSec', 0, 40, 1, 'Guarda: desgaste por segundo'],
-  ['defense.guard.staminaRegenPerSec', 0, 80, 1, 'Guarda: recuperação'],
-  ['defense.guard.breakStunFrames', 0, 90,  1,   'Exposto após guarda esgotar'],
-  ['defense.guard.deflectWindowFrames', 0, 20, 1,'Janela de rebater blast'],
+  ['defense.guard.damageReduction', 0, 1,   0.05,'Guarda: redução de dano'],
+  ['defense.guard.knockbackReduction', 0, 1, 0.05, 'Guarda: redução de empurrão'],
+  ['defense.guard.deflectWindowFrames', 0, 20, 1, 'Janela de rebater blast'],
+  ['bt3.guardResults.0.stopLen',    0, 30,  1,   'Guarda: hit-stop aparado (f)'],
+  ['bt3.guardResults.8.stopLen',    0, 40,  1,   'Contador: hit-stop (f)'],
+  ['bt3.gauges.guardKiDrainPerFrame', 0, 5, 0.05,'Guarda: dreno de ki /frame'],
+  ['bt3.gauges.guardKiMax',         10, 200, 5,  'Guarda: reservatório de ki máx.'],
 
-  /* Z-Counter e Sonic Sway são as duas opções de ALTO RISCO do kit. O ponto
-   * entre "impossível" e "dominante" é estreito e só sai de playtest — por
-   * isso as janelas estão aqui, e não só no arquivo. */
-  ['__group', 'Z-Counter / Sonic Sway'],
-  ['defense.zCounter.window',       1, 20,  1,   'Z-Counter: janela (frames)'],
-  ['defense.zCounter.kiCost',       0, 40,  1,   'Z-Counter: custo de ki'],
-  ['defense.zCounter.attackerStunFrames', 5, 90, 1, 'Z-Counter: stun no atacante'],
-  ['defense.zCounter.attemptCooldownFrames', 0, 90, 1, 'Z-Counter: recarga da tentativa'],
-  ['defense.sonicSway.window',      0, 12,  1,   'Sonic Sway: janela (frames)'],
-  ['defense.sonicSway.kiRefund',    0, 30,  1,   'Sonic Sway: ki devolvido'],
-
-  /* ---- As mecânicas desta passada. Todas com janela ajustável ao vivo, porque
-   * o ponto entre "impossível" e "dominante" numa janela de timing NÃO sai de
-   * leitura de código — só de jogar e sentir. É a lição mais repetida deste
-   * projeto. ---- */
-  ['__group', 'Smash carregado / Perfect Smash'],
-  ['smashCharge.perfectWindow.0',   1, 60,  1,   'Perfect: início da janela (f)'],
-  ['smashCharge.perfectWindow.1',   1, 80,  1,   'Perfect: fim da janela (f)'],
-  ['smashCharge.holdAtFrame',       1, 20,  1,   'Frame em que o smash congela'],
-  ['smashCharge.maxHoldFrames',    10, 120, 1,   'Carga máxima (solta sozinho)'],
-  ['smashCharge.perfectDamageMul',  1, 3,   0.05,'Perfect: multiplicador de dano'],
-  ['smashCharge.perfectKnockbackMul', 1, 3, 0.05,'Perfect: multiplicador de empurrão'],
-  ['smashCharge.perfectHitstop',    0, 60,  1,   'Perfect: congelamento (f)'],
-  ['smashCharge.perfectKiRefund',   0, 40,  1,   'Perfect: ki devolvido'],
-
-  ['__group', 'Perseguição (3 tipos)'],
-  ['pursuit.windowFrames',          10, 180, 5,  'Janela de perseguição (f)'],
-  ['pursuit.kiCost',                 0, 60,  1,  'DIRETA: custo de ki'],
-  ['pursuit.carryFrames',            0, 60,  1,  'DIRETA: frames voando junto'],
-  ['pursuit.types.vanish.kiCost',    0, 80,  1,  'VANISH: custo de ki'],
-  ['pursuit.types.vanish.windowFrames', 5, 90, 1,'VANISH: janela mais curta (f)'],
-  ['pursuit.types.highSpeed.kiCost', 0, 80,  1,  'ALTA VEL.: custo de ki'],
-  ['pursuit.types.highSpeed.speed', 20, 140, 2,  'ALTA VEL.: velocidade'],
-  ['pursuit.types.highSpeed.recoveryFrames', 0, 90, 1, 'ALTA VEL.: recovery se errar'],
+  ['__group', 'Smash carregável'],
+  ['bt3.chargeSmash.fullFrames',   30, 180, 1,   'Carga cheia (f)'],
+  ['bt3.chargeSmash.minFrames',    10, 90,  1,   'Carga mínima (f)'],
+  ['maxPower.enterHoldFrames',      1, 120, 1,   'Sparking: frames segurando'],
+  ['maxPower.damageMul',            1, 2.5, 0.05,'Sparking: multiplicador de dano'],
+  ['maxPower.kiCostMul',          0.1, 1,   0.05,'Sparking: custo de ki ×'],
+  ['bt3.gauges.maxPowerDrainPerFrame', 0.02, 1, 0.01, 'Sparking: dreno de ki /frame'],
 
   ['__group', 'Grab / Throw'],
   ['defense.grab.range',           1, 6,   0.1, 'Alcance da pegada'],
@@ -2888,34 +1924,14 @@ export const DEBUG_SLIDERS = [
   ['defense.grab.escapeWindow',    0, 40,  1,   'Janela de escape (f)'],
   ['defense.grab.escapeAttackerStunFrames', 0, 90, 1, 'Punição por ser escapado'],
   ['defense.grab.cooldownFrames',  0, 120, 1,   'Recarga do grab'],
-  ['moves.grab.recovery',          5, 60,  1,   'Recovery do grab errado'],
-  ['moves.grab_throw.knockback',   5, 90,  1,   'Arremesso: empurrão'],
+  ['bt3.records.0x55.pushHit',     5, 90,  1,   'Arremesso: empurrão (m/s)'],
+  ['bt3.records.0x55.damage',      0, 40,  1,   'Arremesso: dano'],
   ['ai.grabChance',                0, 1,   0.02,'IA: chance de agarrar quem bloqueia'],
 
-  ['__group', 'Vanish Battle'],
-  ['defense.vanishBattle.responseFrames', 2, 40, 1, 'Janela pra contra-vanishar (f)'],
-  ['defense.vanishBattle.maxExchanges',   1, 10, 1, 'Máx. de trocas'],
-  ['defense.vanishBattle.loserStunFrames',0, 90, 1, 'Punição de quem perde a troca'],
-  ['defense.vanish.chainKiMultiplier',  1, 3, 0.05,'Custo ×N por troca seguida'],
-
-  ['__group', 'Ki: Max Power / Exaustão'],
-  ['maxPower.enterKiThreshold',    20, 100, 1,   'Max Power: ki mínimo'],
-  ['maxPower.enterHoldFrames',      1, 120, 1,   'Max Power: frames segurando R'],
-  ['maxPower.durationFrames',      60, 900, 10,  'Max Power: duração (f)'],
-  ['maxPower.drainPerSec',          0, 40,  0.5, 'Max Power: ki escoado /s'],
-  ['maxPower.damageMul',            1, 2.5, 0.05,'Max Power: multiplicador de dano'],
-  ['maxPower.kiCostMul',          0.1, 1,   0.05,'Max Power: custo de ki ×'],
-  ['ki.exhaustFrames',              0, 300, 5,   'Exaustão: duração (f)'],
-  ['ki.exhaustRegenPerSec',         0, 30,  0.5, 'Exaustão: regen /s'],
-  ['ai.maxPowerChance',             0, 1,   0.02,'IA: chance de acender Max Power'],
-
-  ['__group', 'Trades / Prioridade'],
-  ['trade.enabled',                 0, 1,   1,   'Trades ligados?'],
-  ['trade.range',                   1, 8,   0.2, 'Alcance de uma troca'],
-  ['trade.loserStunFrames',         0, 90,  1,   'Punição de quem perde a troca'],
-  ['trade.clashKnockback',          0, 60,  1,   'Clash: empurrão'],
-  ['moves.smash_forward.priority',  0, 8,   1,   'Prioridade do smash'],
-  ['moves.rush_1.priority',         0, 8,   1,   'Prioridade do rush'],
+  ['__group', 'Clash / Prioridade'],
+  ['bt3.clash.sameStop',           0, 30,  1,   'Clash mesmo tipo: hit-stop (f)'],
+  ['bt3.clash.mixedStop',          0, 30,  1,   'Clash tipos mistos: hit-stop (f)'],
+  ['bt3.stunTiers.1',              0, 90,  1,   'Stun tier médio (f)'],
 
   ['__group', 'Hitstop por categoria'],
   ['juice.hitstopProfiles.normal',   0, 30, 1,   'Hitstop: rush'],
@@ -2926,16 +1942,12 @@ export const DEBUG_SLIDERS = [
   ['juice.hitstopProfiles.guard',    0, 30, 1,   'Hitstop: aparado'],
 
   ['__group', 'Vanish / Defesa'],
-  ['moves.smash_forward.vanishWindow', 0, 30, 1, 'Janela de vanish (smash)'],
-  ['moves.rush_1.vanishWindow',     0, 30,  1,   'Janela de vanish (rush)'],
-  ['defense.vanish.whiffKiCost',    0, 40,  1,   'Custo de ERRAR o vanish'],
-  ['defense.vanish.whiffCooldownFrames', 0, 60, 1, 'Cooldown após errar vanish'],
-  ['combo.maxChain',                1, 12,  1,   'Máx. de elos no combo'],
+  ['defense.recover.kiCost',        0, 30,  1,   'Recuperação aérea: custo de ki'],
+  ['defense.recover.windowAfterFrames', 0, 40, 1, 'Recuperação: espera mínima (f)'],
+  ['defense.step.distance',       0.5, 10,  0.2, 'Distância do step'],
+  ['defense.step.cooldownFrames',    0, 60,  1,   'Step: recarga (f)'],
   ['ai.punishChance',               0, 1,   0.02,'IA: chance de punir recovery'],
   ['ai.anticipateGuardChance',      0, 1,   0.02,'IA: guarda por antecipação'],
-  ['defense.vanish.maxChain',       1, 10,  1,   'Máx. vanishes seguidos'],
-  ['defense.vanish.slowMoScale',  0.05, 1,  0.05,'Câmera lenta no vanish'],
-  ['defense.step.distance',       0.5, 10,  0.2, 'Distância do step'],
 
   ['__group', 'Arena'],
   ['arena.startRadius',            10, 120, 1,   'Raio inicial'],
