@@ -162,6 +162,11 @@ export class Fighter {
     this.dashHits = new Set();   // quem já foi trombado neste dash (1 toque cada)
     this.comboCount = 0;         // elos da rota atual (teto em combo.maxChain)
     this.chainResetTimer = 0;    // enquanto corre, a rota ainda é a mesma
+    /* Qual cadeia a rota atual está usando — travada no primeiro elo.
+     * Falso = rushChain (chão); verdadeiro = rushChainAir (juggle). O tipo
+     * não muda no meio porque trocar de string em pleno combo quebraria a
+     * coreografia que a cadeia fixa existe pra criar. */
+    this._chainAir = false;
 
     /* JANELA DE PERSEGUIÇÃO. Aberta quando VOCÊ lança alguém; enquanto correr,
      * o dash vira perseguição em vez de locomoção. É a segunda disputa. */
@@ -239,6 +244,13 @@ export class Fighter {
     this._armorAbsorbed = 0;
     this.tradeLostFrames = 0;
 
+    /* HITSTOP DESTE CORPO (§22). Ver TUNING.juice.hitstopScope.
+     *
+     * Era um contador global no Juice, e com 16 lutadores o jogo passava 77% do
+     * tempo parado porque sempre havia alguém batendo em alguém. Hitstop é
+     * propriedade de uma TROCA, não do mundo. */
+    this.hitstopFrames = 0;
+
     /* Tipo da perseguição em curso — a telemetria precisa mostrar QUAL saiu. */
     this.pursuitType = 'direct';
     this._pursuitSpec = null;
@@ -290,6 +302,13 @@ export class Fighter {
   get maxPoise() { return TUNING.fighter.maxPoise; }
   get maxGuardStamina() { return TUNING.defense.guard.maxStamina; }
   get maxChain() { return TUNING.combo.maxChain; }
+  /* Teto da rota ATUAL: a cadeia aérea tem 3 elos, a do chão 5. Usar
+   * `maxChain` fixo em qualquer placecheck deixaria a air string continuar
+   * lendo air_3 (clamp de rushKeyFor) por dois elos a mais. */
+  get comboCeiling() {
+    const chain = this._chainAir ? TUNING.combo.rushChainAir : TUNING.combo.rushChain;
+    return Math.min(this.maxChain, chain.length);
+  }
 
   /* ---- Max Power e exaustão (§18, §19) ----------------------------- */
   get inMaxPower() { return this.maxPowerFrames > 0; }
@@ -367,6 +386,22 @@ export class Fighter {
     if (!this.alive) return;
 
     this.events.length = 0;
+
+    /* ================================================================
+     *  CONGELADO NA TROCA  —  este corpo não anda
+     * ================================================================
+     *  Sai ANTES de tudo: nada de stateFrame, nada de timer, nada de física.
+     *  É o que faz o congelamento ser congelamento e não câmera lenta.
+     *
+     *  Só o próprio contador anda. Os DOIS lados de uma troca recebem isto no
+     *  mesmo frame, então o soco e quem levou param juntos — que é a imagem que
+     *  vende o peso. O resto da arena continua correndo, e é justamente essa
+     *  separação que destrava a escala (ver juice.hitstopScope). */
+    if (this.hitstopFrames > 0) {
+      this.hitstopFrames--;
+      return;
+    }
+
     this.stateFrame++;
 
     /* Janela de vanish: guardamos há quantos frames o botão foi apertado.
@@ -468,6 +503,22 @@ export class Fighter {
     // --- regeneração ---
     this.poise = Math.min(this.maxPoise,
       this.poise + TUNING.fighter.poiseRegenPerSec * dt);
+
+    /* VIDA fora de combate. Zero no duelo (ver a nota em `fighter`), é o que
+     * sustenta a partida longa do modo ARENA: sem isto o dano de 30 lutadores
+     * só acumula e a reserva de vida da arena inteira acaba em 81 segundos.
+     *
+     * O relógio reinicia a CADA dano tomado — é em `applyHit`. Quem está sob
+     * pressão contínua nunca regenera, então isto não protege quem está
+     * perdendo a briga; protege quem conseguiu SAIR dela. */
+    const RG = TUNING.fighter.healthRegenPerSec;
+    if (RG > 0 && this.health < TUNING.fighter.maxHealth) {
+      if (this._semDanoFrames === undefined) this._semDanoFrames = 0;
+      this._semDanoFrames++;
+      if (this._semDanoFrames > TUNING.fighter.healthRegenDelaySec * TUNING.sim.fps) {
+        this.health = Math.min(TUNING.fighter.maxHealth, this.health + RG * dt);
+      }
+    }
 
     /* ================================================================
      *  MAX POWER: o relógio e o escoamento  (§19)
@@ -605,7 +656,7 @@ export class Fighter {
     if (cmd.smash && this._tryAttack(this._smashKey(cmd.smashDir), ctx)) return;
     // Rush longe = INVESTIDA (voa até o alvo). Rush perto = soco direcional.
     if (cmd.rush && this._tryRushApproach(ctx)) return;
-    if (cmd.rush && this._tryAttack(this._rushKey(cmd), ctx, cmd)) return;
+    if (cmd.rush && this._tryAttack(this._rushKey(), ctx, cmd)) return;
     if (cmd.blast && this._tryBlast(ctx)) return;
 
     if (cmd.guard) {
@@ -641,7 +692,7 @@ export class Fighter {
        * Curvar devagar é o compromisso de MUDAR DE IDEIA no meio do dash. */
       this.velocity
         .copy(this._dashDirection(cmd, ctx, this._tmp))
-        .multiplyScalar(TUNING.flight.dashSpeed);
+        .multiplyScalar(this._dashSpeedAtual());
 
       this.char.play('dash', { fade: 0.1 });
       return;
@@ -688,7 +739,7 @@ export class Fighter {
     }
 
     // Ataque durante o dash: cancela em rush (a abertura clássica do Tenkaichi).
-    if (cmd.rush && this._tryAttack(this._rushKey(cmd), ctx, cmd)) return;
+    if (cmd.rush && this._tryAttack(this._rushKey(), ctx, cmd)) return;
     if (cmd.smash && this._tryAttack(this._smashKey(cmd.smashDir), ctx, cmd)) return;
 
     const chasing = this._isChasing(cmd);
@@ -704,10 +755,30 @@ export class Fighter {
     cur.normalize();
     cur.lerp(this._tmp, 1 - Math.exp(-turn * dt)).normalize();
 
-    this.velocity.copy(cur).multiplyScalar(TUNING.flight.dashSpeed);
+    this.velocity.copy(cur).multiplyScalar(this._dashSpeedAtual());
     this.yaw = Math.atan2(cur.x, cur.z);
 
     this.char.play('dash', { fade: 0.1 });
+  }
+
+  /**
+   * Velocidade do dash NESTE frame — a rampa, não o degrau.
+   *
+   * Medido na bancada antes desta função existir: `framesAte90pct = 0`, o pico
+   * de 62 m/s no frame 0 do input. O corpo pulava de parado a velocidade de
+   * cruzeiro em um frame, e é exatamente essa descontinuidade que a olhada
+   * lê como "teleporte" em vez de movimento.
+   *
+   * A curva é t² (aceleração crescente): o dash ARRANCA devagar e TERMINA
+   * rápido. É a mesma leitura de anticipation do braço que se prepara antes de
+   * socar — os frames finais são os de maior velocidade, então a saída de
+   * curva continua cortante.
+   */
+  _dashSpeedAtual() {
+    const D = TUNING.dragonDash;
+    const t = Math.min(1, this.dashFrames / Math.max(1, D.startupFrames));
+    const rampa = D.launchSpeedMul + (1 - D.launchSpeedMul) * t * t;
+    return TUNING.flight.dashSpeed * rampa;
   }
 
   /* --- Investida de rush ------------------------------------------- */
@@ -727,7 +798,7 @@ export class Fighter {
 
     // Rota esgotada: a investida também não sai. Sem isto, J te levava até o
     // alvo e não acontecia nada — pior que o botão simplesmente não responder.
-    if (this.comboCount >= TUNING.combo.maxChain) return false;
+    if (this.comboCount >= this.comboCeiling) return false;
 
     const d = this.position.distanceTo(this.target.position);
     if (d <= A.attackAt || d > A.range) return false;
@@ -757,7 +828,7 @@ export class Fighter {
     const d = this.position.distanceTo(this.target.position);
 
     // Chegou: emenda no primeiro elo do combo.
-    if (d <= A.attackAt) { this._tryAttack(this._rushKey(cmd), ctx, cmd); return; }
+    if (d <= A.attackAt) { this._tryAttack(this._rushKey(), ctx, cmd); return; }
 
     // Desistiu (alvo fugiu, ou tempo esgotado).
     if (f > A.maxFrames || d > A.range * 1.4) {
@@ -896,7 +967,7 @@ export class Fighter {
         this._faceTargetNow(junto);
       }
 
-      if (cmd.rush && this._tryAttack(this._rushKey(cmd), ctx, cmd)) return;
+      if (cmd.rush && this._tryAttack(this._rushKey(), ctx, cmd)) return;
       if (cmd.smash && this._tryAttack(this._smashKey(cmd.smashDir), ctx, cmd)) return;
 
       if (this._pursuitCarry === 0) {
@@ -1222,9 +1293,9 @@ export class Fighter {
         if (m.cancelInto.includes(key) && this._tryAttack(key, ctx, cmd)) return;
       }
       if (cmd.rush) {
-        // A direção segurada AGORA escolhe o próximo elo — é assim que o
-        // jogador compõe o combo em vez de seguir uma ordem fixa.
-        const next = this._rushKey(cmd);
+        // Próximo elo da cadeia fixa (índice = comboCount). `cancelInto`
+        // sequencial barra pulos: rush_1 só emenda em rush_2, etc.
+        const next = this._rushKey();
         if (m.cancelInto.includes(next) && this._tryAttack(next, ctx, cmd)) return;
       }
     }
@@ -1893,6 +1964,20 @@ export class Fighter {
   }
 
   /**
+   * Congela ESTE corpo por N frames (hitstop).
+   *
+   * Pega o MAIOR e não soma, pela mesma razão que o Juice global já fazia:
+   * somar faz combos rápidos travarem o lutador por meio segundo. Com vários
+   * adversários batendo no mesmo alvo isso deixaria de ser um detalhe e viraria
+   * uma prisão — exatamente o risco que a escala introduz.
+   */
+  applyHitstop(frames) {
+    if (!TUNING.juice.hitstopEnabled || !frames) return;
+    const f = Math.round(frames * TUNING.juice.hitstopScale);
+    if (f > this.hitstopFrames) this.hitstopFrames = f;
+  }
+
+  /**
    * Trava este lutador por N frames, interrompendo o que ele estava fazendo.
    * Usado pelo Z-Counter: o preço de ter o golpe lido é ficar exposto.
    */
@@ -2089,7 +2174,22 @@ export class Fighter {
    * Vertical (Espaço/C) tem prioridade sobre o horizontal: quem aperta
    * Espaço+J está claramente pedindo o gancho, não um soco lateral.
    */
-  _rushKey(cmd) { return rushKeyFor(cmd); }
+  /* Cadeia fixa: o índice É o progresso. `comboCount` conta elos não-ender
+   * da rota atual, então J nº N dispara a cadeia ativa[N] — sem ler direção.
+   *
+   * O TIPO da cadeia (chão vs aérea) é escolhido no primeiro elo e travado:
+   * com o alvo em BLOWAWAY/KNOCKDOWN, J abre a air string; nos outros
+   * estados, a ground. Se a vítima se recuperar no meio, a rota continua
+   * aérea até zerar — trocar de string em pleno combo quebraria a
+   * coreografia que a cadeia fixa existe pra criar. */
+  _rushKey() {
+    if (this.comboCount === 0) {
+      const t = this.target;
+      this._chainAir = !!(t && (t.state === S.BLOWAWAY || t.state === S.KNOCKDOWN));
+    }
+    const chain = this._chainAir ? TUNING.combo.rushChainAir : TUNING.combo.rushChain;
+    return rushKeyFor(chain, this.comboCount);
+  }
 
   /**
    * @param {object} [cmd]  se vier, o alvo é reavaliado para ESTE golpe —
@@ -2115,8 +2215,10 @@ export class Fighter {
      *
      * Agora, esgotada a rota, rush NÃO SAI até a interação resetar
      * (`chainResetFrames` sem atacar). Sobram os enders e o reposicionamento —
-     * que é exatamente o ponto de decisão que faltava. */
-    if (!ender && this.comboCount >= this.maxChain) return false;
+     * que é exatamente o ponto de decisão que faltava.
+     *
+     * O teto é o da cadeia ATIVA (`comboCeiling`): 3 na aérea, 5 no chão. */
+    if (!ender && this.comboCount >= this.comboCeiling) return false;
 
     // Reavalia a mira. Com lock-on solto, cada golpe procura o melhor alvo na
     // direção apontada — é assim que se troca de vítima no meio da sequência.
@@ -2371,6 +2473,9 @@ export class Fighter {
     }
 
     this.health = Math.max(0, this.health - damage);
+    // Tomar dano reinicia o relógio da regeneração: quem está sob pressão
+    // contínua não se recompõe, e é isso que mantém a briga letal.
+    this._semDanoFrames = 0;
     // Boneco de treino não morre: a sessão precisa durar mais que dez segundos.
     if (this.immortal && this.health <= 0) this.health = 1;
     this.poise -= move.poiseDamage || 0;
@@ -2517,8 +2622,60 @@ export class Fighter {
       if (this.velocity.y > 0) this.velocity.y = 0;
     }
 
+    this._colidirObstaculos(ctx);
+
     const maxV = TUNING.physics.maxFlightSpeed;
     if (this.velocity.lengthSq() > maxV * maxV) this.velocity.setLength(maxV);
+  }
+
+  /* ================================================================== */
+  /*  Colisão com obstáculos (só no modo arena — no duelo a lista é vazia) */
+  /* ================================================================== */
+  /*  TRÊS RESPOSTAS, conforme o estado — ver `TUNING.obstacles`:
+   *
+   *    voando normal   DESLIZA: perde só a componente que entra na coluna.
+   *                    Raspar não pode travar o voo.
+   *    BLOWAWAY        QUICA: componente normal × restituição, metade da
+   *                    tangencial. A coluna é anteparo contra ring-out —
+   *                    decisão registrada no tuning, e temporária por
+   *                    construção (as colunas afundam antes do fim).
+   *    WALL-SLAM       (alavanca, desligada) blowaway acima de
+   *                    `minImpactSpeed`: dano + HITSTUN preso na parede, a
+   *                    versão de parede do groundSlam. */
+  _colidirObstaculos(ctx) {
+    const obs = ctx && ctx.obstaculos;
+    if (!obs || obs.lista.length === 0) return;
+    const c = obs.colidir(this.position, TUNING.fighter.radius);
+    if (!c) return;
+
+    const n = c.normal;
+    const vn = this.velocity.dot(n);
+    if (vn >= 0) return;                         // já está saindo
+
+    const O = TUNING.obstacles;
+    const impacto = -vn;
+
+    if (this.state === S.BLOWAWAY && n.y < 0.5) {
+      const WS = O.wallSlam;
+      if (WS.enabled && impacto >= WS.minImpactSpeed) {
+        this.velocity.set(0, 0, 0);
+        this.health = Math.max(0, this.health - WS.damage);
+        this._stunFrames = WS.stunFrames;
+        this._enter(S.HITSTUN);
+        this.char.play('hit_react', { fade: 0.04, restart: true });
+        this.events.push({ type: 'wallSlam', speed: impacto, normal: n.clone() });
+        return;
+      }
+      // quica: tira a componente normal e devolve uma fração dela, pra fora
+      this.velocity.addScaledVector(n, -vn);                       // só tangencial
+      this.velocity.multiplyScalar(O.bounceTangentKeep);
+      this.velocity.addScaledVector(n, impacto * O.bounceRestitution);
+      if (impacto > 8) this.events.push({ type: 'wallBounce', speed: impacto, normal: n.clone() });
+      return;
+    }
+
+    // desliza
+    this.velocity.addScaledVector(n, -vn);
   }
 
   /* ================================================================== */
@@ -2657,6 +2814,7 @@ export class Fighter {
     this.exhaustFrames = 0;
     this._armorAbsorbed = 0;
     this.tradeLostFrames = 0;
+    this.hitstopFrames = 0;
 
     this.hitThisMove.clear();
     this.hitConfirmThisMove = false;
