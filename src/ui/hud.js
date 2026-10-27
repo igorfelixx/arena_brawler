@@ -49,6 +49,14 @@ export class HUD {
       <div class="lock-reticle" id="lockReticle">
         <span></span><span></span><span></span><span></span>
       </div>
+      <div class="lock-arrow" id="lockArrow">
+        <svg viewBox="0 0 40 24" width="40" height="24" aria-hidden="true">
+          <path d="M2 12 H28 M20 4 L30 12 L20 20" fill="none"
+                stroke="currentColor" stroke-width="3"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <b id="lockArrowLabel"></b>
+      </div>
       <div class="lock-state" id="lockState"></div>
 
       <div class="telemetry" id="telemetry"></div>
@@ -69,6 +77,8 @@ export class HUD {
     this.edgeWarn = $('edgeWarn');
     this.stats = $('stats');
     this.lockReticle = $('lockReticle');
+    this.lockArrow = $('lockArrow');
+    this.lockArrowLabel = $('lockArrowLabel');
     this.lockState = $('lockState');
     this.aliveEl = $('alive');
     this.trainingEl = $('training');
@@ -82,10 +92,101 @@ export class HUD {
     $('help').innerHTML = KEYMAP_HELP
       .map(([k, d]) => `<div><kbd>${k}</kbd><span>${d}</span></div>`).join('');
 
+    /* ================================================================
+     *  BARRA DE VIDA EM CAMADAS
+     * ================================================================
+     *  Resolve um problema MEDIDO: com vida 900, uma rota inteira (4 rushes +
+     *  smash) tira 4,0% da barra e um rush tira 0,56%. O acerto some.
+     *
+     *  Foi o preço de a luta durar 2 minutos em vez de 14 segundos, e o
+     *  conserto certo nunca foi baixar a vida (isso devolve a luta curta) — é
+     *  a barra mostrar o dano numa escala que o olho alcance.
+     *
+     *  Com 5 camadas, a mesma rota tira 20% DA CAMADA ATUAL. O jogador não lê
+     *  "perdi 4% de 900"; lê "comi um quinto da faixa" e vê a cor trocar
+     *  quando a camada quebra. Nenhum número de combate muda.
+     *
+     *  As divisórias são tão importantes quanto a cor: elas dão RÉGUA. Sem
+     *  elas a cor muda mas não há contra o que comparar o quanto caiu.        */
+    this._construirCamadas();
+
     this._ghost = { p1: 1, p2: 1 };
+    this._camada = { p1: 0, p2: 0 };
     this._comboCount = 0;
     this._comboTimer = 0;
     this._bannerTimer = 0;
+  }
+
+  /** Os pontinhos que dizem QUANTAS camadas ainda existem. */
+  _construirCamadas() {
+    const H = TUNING.healthBar;
+    if (!H || !H.showPips || H.layers < 2) return;
+
+    this._pips = {};
+    for (const bloco of this.el.querySelectorAll('.bar-block')) {
+      const barra = bloco.querySelector('.bar.hp');
+      if (!barra) continue;
+      const fila = document.createElement('div');
+      fila.className = 'layer-pips';
+      for (let i = 0; i < H.layers; i++) fila.appendChild(document.createElement('i'));
+      barra.insertAdjacentElement('afterend', fila);
+      this._pips[bloco.classList.contains('left') ? 'p1' : 'p2'] = fila;
+    }
+  }
+
+  /**
+   * UMA CAMADA POR VEZ, CHEIA — e não o total picotado.
+   *
+   * ---------------------------------------------------------------------
+   * Por que isto faz o golpe parecer maior sem mudar número nenhum
+   * ---------------------------------------------------------------------
+   * A barra inteira passa a valer 180 de vida em vez de 900. O mesmo rush que
+   * movia 0,56% da barra move 2,8% — cinco vezes mais. E quando a camada
+   * acaba, a barra ENCHE DE NOVO com outra cor: é nesse instante que o jogador
+   * sente que arrancou alguma coisa, que é o que a versão picotada não dava.
+   *
+   * A conta, com vida h, L camadas e camada de tamanho s = max/L:
+   *     camadas restantes = ceil(h / s)
+   *     índice da cor     = L − restantes
+   *     preenchimento     = (h − (restantes−1)·s) / s
+   *
+   * @returns {{fill:number, quebrou:boolean}} `fill` é a largura 0..1 da
+   *          barra — quem chama usa isso em vez da fração do total.
+   */
+  _aplicarCamada(barra, frac, quem) {
+    const H = TUNING.healthBar;
+    if (!H || H.layers < 2) return { fill: frac, quebrou: false };
+
+    const L = H.layers;
+    const s = 1 / L;                                   // tamanho da camada (0..1)
+    const restantes = Math.max(0, Math.min(L, Math.ceil(frac / s - 1e-9)));
+    const idx = Math.max(0, Math.min(L - 1, L - restantes));
+    const fill = restantes > 0 ? (frac - (restantes - 1) * s) / s : 0;
+
+    const cor = H.colors[Math.min(idx, H.colors.length - 1)];
+    barra.style.background = `linear-gradient(180deg, ${cor}, ${cor}bb)`;
+    barra.style.boxShadow = `0 0 10px ${cor}66`;
+
+    const quebrou = idx > this._camada[quem];
+    this._camada[quem] = idx;
+
+    // pontinhos: acesos = camadas que ainda existem
+    const pips = this._pips?.[quem];
+    if (pips) {
+      for (let i = 0; i < pips.children.length; i++) {
+        const vivo = i < restantes;
+        pips.children[i].style.background = vivo ? cor : 'rgba(255,255,255,.12)';
+        pips.children[i].style.boxShadow = vivo ? `0 0 5px ${cor}aa` : 'none';
+      }
+    }
+
+    if (quebrou && H.flashOnBreak) {
+      barra.classList.remove('layer-break');
+      void barra.offsetWidth;          // reinicia a animação
+      barra.classList.add('layer-break');
+      setTimeout(() => barra.classList.remove('layer-break'), H.breakFlashMs);
+    }
+    return { fill, quebrou };
   }
 
   /* ---------------------------------------------------------------- */
@@ -109,22 +210,77 @@ export class HUD {
   resetCombo() { this._comboCount = 0; this.combo.className = 'combo'; }
 
   /**
-   * Marcador sobre o alvo travado.
+   * Marcador sobre o alvo travado — e, quando ele sai da tela, uma SETA na
+   * borda apontando pra onde ele está.
+   *
+   * ---------------------------------------------------------------------
+   * POR QUE A SETA EXISTE: a legibilidade quebra na ESCALA, não no 1×1
+   * ---------------------------------------------------------------------
+   * A regra anterior era "fora da tela o marcador não ajuda, some com ele" — e
+   * com 2 lutadores está certa: vocês estão sempre perto, e um marcador preso
+   * numa borda só polui.
+   *
+   * Com 16 é o oposto. Medido: 25,8% do tempo sem NINGUÉM num raio de 12 m, e
+   * distância mediana de 11 m ao mais próximo. Numa captura com 16 lutadores a
+   * tela não mostrava uma única pessoa — só cenário — enquanto o HUD dizia
+   * "LOCK-ON" e o canto dizia "dist 58,4 m". O jogador fica travado em alguém
+   * que ele não tem como achar.
+   *
+   * A seta custa uma div e resolve a pergunta "pra onde eu vou?", que é a
+   * pergunta central de um brawler de arena com muita gente. A DISTÂNCIA junto
+   * é o que diferencia "ele está logo ali" de "ele está do outro lado".
+   *
    * @param {boolean} locked
-   * @param {{x:number,y:number,onScreen:boolean}|null} screen  projeção do alvo
+   * @param {{x:number,y:number,onScreen:boolean}|null} screen
+   * @param {number} [dist]  distância em metros até o alvo
    */
-  setLock(locked, screen) {
+  setLock(locked, screen, dist = null) {
     this.lockState.textContent = locked ? 'LOCK-ON' : 'LIVRE  ·  Q trava';
     this.lockState.className = 'lock-state' + (locked ? '' : ' free');
 
-    // Fora da tela o marcador não ajuda — e ainda aparece grudado numa borda
-    // em posição errada, porque a projeção atrás da câmera espelha o ponto.
-    if (!locked || !screen || !screen.onScreen) {
+    if (!locked || !screen) {
       this.lockReticle.style.opacity = 0;
+      this.lockArrow.style.opacity = 0;
       return;
     }
-    this.lockReticle.style.opacity = 1;
-    this.lockReticle.style.transform = `translate(${screen.x}px, ${screen.y}px) translate(-50%, -50%)`;
+
+    if (screen.onScreen) {
+      this.lockArrow.style.opacity = 0;
+      this.lockReticle.style.opacity = 1;
+      this.lockReticle.style.transform =
+        `translate(${screen.x}px, ${screen.y}px) translate(-50%, -50%)`;
+      return;
+    }
+
+    /* FORA DA TELA: gruda a seta na borda, na direção do alvo.
+     *
+     * Projeção de ponto ATRÁS da câmera vem espelhada (a divisão por w negativo
+     * inverte) — por isso `projectToScreen` devolve `onScreen` calculado por
+     * produto escalar, e por isso viramos o vetor quando o alvo está atrás.
+     * Sem isso a seta aponta exatamente pro lado errado, que é pior do que não
+     * ter seta. */
+    this.lockReticle.style.opacity = 0;
+
+    const cx = innerWidth / 2, cy = innerHeight / 2;
+    let dx = screen.x - cx, dy = screen.y - cy;
+    if (screen.behind) { dx = -dx; dy = -dy; }
+
+    const len = Math.hypot(dx, dy) || 1;
+    dx /= len; dy /= len;
+
+    // Encosta na borda com uma margem, pra seta não ficar cortada pela metade.
+    const margem = 64;
+    const escala = Math.min((cx - margem) / Math.abs(dx || 1e-6),
+                            (cy - margem) / Math.abs(dy || 1e-6));
+    const x = cx + dx * escala, y = cy + dy * escala;
+    const ang = Math.atan2(dy, dx) * 180 / Math.PI;
+
+    this.lockArrow.style.opacity = 1;
+    this.lockArrow.style.transform =
+      `translate(${x}px, ${y}px) translate(-50%, -50%) rotate(${ang}deg)`;
+    this.lockArrowLabel.textContent = dist != null ? `${dist.toFixed(0)}m` : '';
+    // O rótulo gira de volta, senão a distância aparece de cabeça pra baixo.
+    this.lockArrowLabel.style.transform = `rotate(${-ang}deg)`;
   }
 
   /* ================================================================== */
@@ -329,14 +485,29 @@ export class HUD {
     const p1 = Math.max(0, player.health / max);
     const p2 = opponent ? Math.max(0, opponent.health / max) : 0;
 
-    // rastro branco perseguindo com atraso
-    this._ghost.p1 += (p1 - this._ghost.p1) * (1 - Math.exp(-3.5 * dt));
-    this._ghost.p2 += (p2 - this._ghost.p2) * (1 - Math.exp(-3.5 * dt));
-    if (this._ghost.p1 < p1) this._ghost.p1 = p1;
-    if (this._ghost.p2 < p2) this._ghost.p2 = p2;
+    /* A LARGURA É A DA CAMADA ATUAL, não a do total.
+     *
+     * É o que faz o golpe parecer grande: a barra inteira passa a valer 180 de
+     * vida em vez de 900, então o mesmo rush move cinco vezes mais. Ver
+     * `_aplicarCamada`. */
+    const c1 = this._aplicarCamada(this.p1hp, p1, 'p1');
+    const c2 = this._aplicarCamada(this.p2hp, p2, 'p2');
 
-    this.p1hp.style.width = (p1 * 100) + '%';
-    this.p2hp.style.width = (p2 * 100) + '%';
+    this.p1hp.style.width = (c1.fill * 100) + '%';
+    this.p2hp.style.width = (c2.fill * 100) + '%';
+
+    /* O rastro branco agora persegue a camada, e ao QUEBRAR uma ele é jogado
+     * no cheio pra drenar a barra nova inteira. Sem isso a barra só trocaria de
+     * cor e o momento de "arranquei uma camada" passaria batido. */
+    const reset = TUNING.healthBar?.ghostResetOnBreak;
+    if (c1.quebrou && reset) this._ghost.p1 = 1;
+    if (c2.quebrou && reset) this._ghost.p2 = 1;
+
+    this._ghost.p1 += (c1.fill - this._ghost.p1) * (1 - Math.exp(-3.5 * dt));
+    this._ghost.p2 += (c2.fill - this._ghost.p2) * (1 - Math.exp(-3.5 * dt));
+    if (this._ghost.p1 < c1.fill) this._ghost.p1 = c1.fill;
+    if (this._ghost.p2 < c2.fill) this._ghost.p2 = c2.fill;
+
     this.p1hpGhost.style.width = (this._ghost.p1 * 100) + '%';
     this.p2hpGhost.style.width = (this._ghost.p2 * 100) + '%';
 
@@ -359,7 +530,23 @@ export class HUD {
     const t = arena.elapsed;
     this.timer.textContent = `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 
-    if (arena.warning) {
+    /* MODO ARENA: a FASE é a informação principal, não o raio.
+     *
+     * "CONFRONTO · 12 vivos · fecha em 1:40" conta onde você está na partida;
+     * "raio 38 m" é um número sem história. Numa partida de 25 minutos o
+     * jogador precisa saber se está no começo tranquilo ou no clímax — é isso
+     * que transforma o encolhimento de cronômetro em arco. */
+    if (arena.fase) {
+      const f = arena.fase;
+      const falta = f.proximaEm === Infinity ? null : Math.max(0, Math.round(f.proximaEm));
+      const mm = falta != null ? `${Math.floor(falta / 60)}:${String(falta % 60).padStart(2, '0')}` : null;
+      this.arenaState.textContent =
+        `${f.label}${f.sub ? ' · ' + f.sub : ''}`
+        + (mm ? `  ·  ${f.proximaLabel} em ${mm}` : '')
+        + `  ·  raio ${arena.radius.toFixed(0)}m`;
+      this.arenaState.className = 'arena-state'
+        + (arena.warning ? ' warn' : arena.shrinking ? ' shrink' : '');
+    } else if (arena.warning) {
       this.arenaState.textContent = 'A ARENA VAI ENCOLHER';
       this.arenaState.className = 'arena-state warn';
     } else if (arena.shrinking) {
@@ -398,6 +585,7 @@ export class HUD {
 
   reset() {
     this._ghost.p1 = this._ghost.p2 = 1;
+    this._camada.p1 = this._camada.p2 = 0;
     this.resetCombo();
     this.banner.className = 'banner';
     this._bannerTimer = 0;

@@ -58,6 +58,8 @@ export class BotController {
     /* Compromisso de carregar ki até acender o Max Power. Ver a nota longa no
      * bloco 2 do update: sorteio por frame não segura botão. */
     this._maxPowerIntent = 0;
+    /* Compromisso de RECUAR, com histerese. Ver o bloco 1.35 no update. */
+    this._recuando = false;
 
     /* Quantos frames ainda vai SEGURAR a guarda.
      *
@@ -93,10 +95,26 @@ export class BotController {
 
     const f = this.f;
     const foe = f.target;
-    if (!f.alive || !foe || !foe.alive) return c;
+    if (!f.alive) return c;
 
     const A = this._cfg();
     if (!A.enabled) return c;
+
+    /* ================================================================
+     *  SEM ALVO = FORA DE COMBATE. E isso é um ESTADO, não um vazio.
+     * ================================================================
+     *  Antes, `target` nulo fazia o bot devolver comando vazio e ficar
+     *  boiando. Com o limite de detecção isso passou a acontecer o tempo todo
+     *  — e é justamente o momento mais interessante taticamente.
+     *
+     *  O que um lutador faz quando não há ninguém por perto é o que dá RITMO à
+     *  partida: ele se recompõe. Carrega ki, se afasta da aglomeração, escolhe
+     *  de onde vai entrar na próxima briga. É o respiro que separa um jogo de
+     *  decisões de uma porradaria contínua.
+     *
+     *  Sem isto, dar ao jogador a opção de fugir não adiantaria: ele fugiria
+     *  pra um vazio em que nada acontece, e voltaria por tédio.               */
+    if (!foe || !foe.alive) return this._foraDeCombate(c, ctx, A);
 
     const diff = A.difficulty;
     const dist = f.position.distanceTo(foe.position);
@@ -231,6 +249,49 @@ export class BotController {
       this._holdGuard = A.guardHoldFrames;
       c.guard = true;
       return c;
+    }
+
+    /* ================================================================
+     *  1.35  RECUAR  —  sair da briga que está perdendo
+     * ================================================================
+     *  Vem depois da defesa imediata (vanish/guarda já rodaram) e antes de
+     *  qualquer coisa ofensiva: quem decidiu sair não persegue, não agarra e
+     *  não procura troca.
+     *
+     *  O compromisso com HISTERESE (`retreatBelowHealth` pra entrar,
+     *  `retreatUntilHealth` pra sair) é o mesmo padrão de `guardHoldFrames`, e
+     *  pela mesma razão registrada na armadilha 8.15: decisão por frame não
+     *  produz comportamento sustentado. Com um limiar só, a IA sairia e
+     *  voltaria no mesmo frame em que a vida cruzasse a linha, e o recuo não
+     *  existiria na prática.
+     *
+     *  Recuar NÃO é fugir em linha reta do adversário: é ir pro espaço ABERTO.
+     *  Correr pro lado oposto do inimigo leva direto pra borda — e num jogo de
+     *  ring-out isso é pior que apanhar. */
+    const vidaFrac = f.health / TUNING.fighter.maxHealth;
+    if (A.retreatBelowHealth > 0) {
+      if (!this._recuando && vidaFrac < A.retreatBelowHealth && this._roll(A.retreatChance)) {
+        this._recuando = true;
+      } else if (this._recuando && vidaFrac >= A.retreatUntilHealth) {
+        this._recuando = false;
+      }
+
+      if (this._recuando) {
+        /* Direção: para LONGE do adversário, mas corrigida pro centro da
+         * arena. Sem a correção, recuar é um jeito elaborado de cometer
+         * ring-out. */
+        _v.copy(_toFoe).multiplyScalar(-1);
+        ctx.arena.towardCenter(f.position, _toFoe);      // reaproveita o temp
+        const perto = ctx.arena.edgeProximity(f.position);
+        _v.lerp(_toFoe, Math.min(1, perto * 1.4)).normalize();
+
+        this._setMoveToward(c, _v, ctx, A.retreatSpeedMul);
+        // Dash pra criar distância de verdade, se houver ki sobrando.
+        if (dist < 12 && f.ki > TUNING.dragonDash.kiCost * 2) c.dash = true;
+        // Guarda no caminho: sair não pode significar comer tudo de graça.
+        if (dist < 5) c.guard = true;
+        return c;
+      }
     }
 
     /* ---------- 1.4 RESPONDER À VANISH BATTLE ----------
@@ -484,6 +545,60 @@ export class BotController {
     return Math.max(1, Math.round(meio + erro));
   }
 
+  /**
+   * FORA DE COMBATE — ninguém ao alcance de detecção.
+   *
+   * Três coisas, em ordem de prioridade, e cada uma existe por uma razão:
+   *
+   *   1. RECOMPOR  ki baixo é o motivo nº 1 de perder a próxima briga, e este
+   *      é o único momento seguro pra carregar. É o que transforma "fugi" em
+   *      "fugi E voltei melhor" — sem isso, fugir seria só adiar.
+   *
+   *   2. NÃO IR PRA BORDA  estar fora de combate não ajuda se você se mata
+   *      sozinho. Num jogo de ring-out, vagar sem rumo é perigoso.
+   *
+   *   3. NÃO VOLTAR CEDO DEMAIS  um compromisso de alguns segundos antes de
+   *      procurar briga de novo. Sem ele o bot sai do alcance de detecção e
+   *      volta no frame seguinte, e o "fora de combate" não dura nada —
+   *      mesmo problema de `guardHoldFrames` (armadilha 8.15).
+   */
+  _foraDeCombate(c, ctx, A) {
+    const f = this.f;
+
+    if (this._respiro === undefined) this._respiro = 0;
+    if (this._respiro > 0) this._respiro--;
+
+    const kiBaixo = f.ki < TUNING.ki.max * 0.7;
+    const naBorda = ctx.arena.edgeProximity(f.position) > 0.5;
+
+    if (naBorda) {
+      ctx.arena.towardCenter(f.position, _v);
+      this._setMoveToward(c, _v, ctx);
+      if (f.position.y > ctx.arena.ceiling * 0.85) c.vertical = -1;
+      return c;
+    }
+
+    if (kiBaixo && !f.exhausted) {
+      c.charge = true;
+      return c;
+    }
+
+    /* Nada urgente: deriva devagar pelo espaço aberto. Devagar de propósito —
+     * voar rápido sem alvo só encurta o tempo até esbarrar em alguém, que é o
+     * contrário do que este estado existe pra produzir. */
+    this._strafeTimer--;
+    if (this._strafeTimer <= 0) {
+      this._strafeTimer = 90 + Math.floor(this._rand() * 90);
+      this._strafeDir *= -1;
+    }
+    ctx.arena.towardCenter(f.position, _v);
+    _v.multiplyScalar(-0.25);                       // afasta um pouco do centro
+    _v.x += this._strafeDir * 0.6;
+    _v.normalize();
+    this._setMoveToward(c, _v, ctx, 0.35);
+    return c;
+  }
+
   /* ---------------------------------------------------------------- */
   _chooseIntent(dist, diff, ctx) {
     const A = this._merged;
@@ -538,6 +653,7 @@ export class BotController {
     this._blastHold = 0;
     this._smashHold = 0;
     this._maxPowerIntent = 0;
+    this._recuando = false;
     this._holdGuard = 0;
     this._punishCooldown = 0;
     resetCommand(this.cmd);

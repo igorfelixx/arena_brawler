@@ -202,7 +202,22 @@ export class CombatCamera {
     out.forward.y = 0;
     if (out.forward.lengthSq() < 1e-6) out.forward.set(0, 0, 1);
     out.forward.normalize();
-    out.right.crossVectors(out.forward, UP).normalize().negate();
+    /* SEM `.negate()` — e esse negate esteve aqui desde o primeiro commit.
+     *
+     * Num sistema destro com Y pra cima, `forward × up` JÁ é a direita:
+     *     forward (0,0,-1) × up (0,1,0) = (1,0,0) = +X = direita
+     * O `.negate()` devolvia a ESQUERDA chamada de `right`, e o efeito era A
+     * andar pra direita e D pra esquerda.
+     *
+     * Passou despercebido porque só o JOGADOR sofria. A IA calcula `moveX` com
+     * `worldDir.dot(basis.right)` e o Fighter aplica `basis.right * moveX` — os
+     * dois usam a mesma base invertida e o erro se cancela. Bot com controle
+     * invertido anda certo; humano não.
+     *
+     * Corrigir aqui conserta três coisas de uma vez, porque as três leem esta
+     * base: o movimento lateral, a MIRA POR DIREÇÃO (`targeting.js` escolhia
+     * alvo do lado errado) e a direção do ARREMESSO do grab. */
+    out.right.crossVectors(out.forward, UP).normalize();
     return out;
   }
 
